@@ -1,0 +1,9 @@
+node_modules
+dist
+.tools
+*.log
+.DS_Store
+release
+
+# Local dev-server config (contains machine-specific paths)
+.claude/
