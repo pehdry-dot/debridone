@@ -62,6 +62,8 @@ data class Track(
     /** Fields the user fixed by hand; a rescan or a metadata lookup never changes these. */
     val lockedFields: Set<String>,
     val offlinePath: String?,
+    /** Played from an online catalogue but not added to the library. Shown in the history only. */
+    val hidden: Boolean = false,
 ) {
     val isLocal: Boolean get() = sourceId == LOCAL_SOURCE_ID
     val displayArtist: String get() = artist ?: albumArtist ?: UNKNOWN_ARTIST
@@ -146,6 +148,8 @@ data class TrackFilter(
     val missingOnly: Boolean = false,
     val offlineOnly: Boolean = false,
     val format: String? = null,
+    /** Also list songs that were only played from an online catalogue. */
+    val includeHidden: Boolean = false,
 )
 
 /** The editable fields of a track, by the names used for locks and for the stored original. */

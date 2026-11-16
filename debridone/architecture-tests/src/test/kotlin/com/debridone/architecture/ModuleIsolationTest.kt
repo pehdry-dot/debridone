@@ -67,7 +67,7 @@ class ModuleIsolationTest {
         val gaming = gaming().apply { start() }
         val manga = manga().apply { start() }
         assertEquals(
-            setOf("local-files", "subsonic", "jellyfin", "stream-url"),
+            setOf("local-files", "audius", "subsonic", "jellyfin", "stream-url"),
             music.plugins.installed.value.map { it.id }.toSet(),
             "Music lists its own source kinds",
         )

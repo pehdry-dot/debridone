@@ -27,6 +27,9 @@ import kotlinx.serialization.json.put
 
 data class SyncSummary(val total: Int, val added: Int, val removed: Int, val artworkFetched: Int)
 
+/** The outcome of setting a plugin up: its connection, and the streams of a list that were left out. */
+data class PluginSetup(val connection: SourceConnection, val problems: List<String>)
+
 /** What the sources are doing right now, for progress display. Keyed by connection id. */
 data class SourceActivity(
     val syncing: Map<Long, String> = emptyMap(),
@@ -48,9 +51,11 @@ class MusicSourceManager(
     private val secrets: ScopedSecretStore,
     private val offlineDirectory: Path,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** The kinds of source this build can talk to. Each is a tested adapter; nothing else is accepted. */
+    val adapters: List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter()),
+    /** Where covers shown while browsing a catalogue are kept. Null: they are fetched each time. */
+    private val artworkCacheDirectory: Path? = null,
 ) {
-    /** The kinds of server-backed source this build can talk to. */
-    val adapters: List<MusicSourceAdapter> = listOf(SubsonicAdapter(), JellyfinAdapter())
 
     private val _activity = MutableStateFlow(SourceActivity())
     val activity: StateFlow<SourceActivity> = _activity.asStateFlow()
@@ -65,19 +70,19 @@ class MusicSourceManager(
 
     /** The radio stations and stream addresses of a profile. */
     fun streams(profileId: Long): List<Track> {
-        val source = connections(profileId).firstOrNull { it.adapter == STREAM_ADAPTER } ?: return emptyList()
-        return library.tracks(profileId, TrackFilter(sourceId = source.id))
+        return connections(profileId).filter { it.adapter == STREAM_ADAPTER }
+            .flatMap { library.tracks(profileId, TrackFilter(sourceId = it.id)) }
     }
 
     /** True when [track] comes from a server it can be downloaded from (not a live stream). */
     fun canDownload(profileId: Long, track: Track): Boolean =
-        !track.isLocal && connection(profileId, track.sourceId)?.let { it.enabled && it.adapter != STREAM_ADAPTER } == true
+        !track.isLocal && connection(profileId, track.sourceId)?.let { it.enabled && adapter(it.adapter)?.allowsDownload == true } == true
 
     // ---------------------------------------------------------------- connections
 
     fun connections(profileId: Long): List<SourceConnection> = database.query(
         """
-        SELECT s.*, (SELECT COUNT(*) FROM music_tracks t WHERE t.source_id = s.id) AS track_count
+        SELECT s.*, (SELECT COUNT(*) FROM music_tracks t WHERE t.source_id = s.id AND t.hidden = 0) AS track_count
         FROM music_sources s WHERE s.profile_id = ? ORDER BY s.priority, s.id
         """.trimIndent(),
         profileId, map = ::mapConnection,
@@ -89,14 +94,15 @@ class MusicSourceManager(
      * Signs in with [draft] and saves the connection only if that works. Nothing is stored for an
      * address that is unreachable, is not that kind of server, or rejects the credentials.
      */
-    fun add(profileId: Long, adapterId: String, draft: SourceDraft): SourceConnection {
+    fun add(profileId: Long, adapterId: String, draft: SourceDraft, pluginId: String? = null): SourceConnection {
         val adapter = adapter(adapterId) ?: throw SourceException("This kind of source is not supported.")
+        val address = draft.baseUrl.ifBlank { adapter.defaultBaseUrl.orEmpty() }
         val session = try {
-            adapter.connect(draft)
+            adapter.connect(draft.copy(baseUrl = address))
         } catch (e: IllegalArgumentException) {
             throw SourceException(e.message ?: "That address is not valid.")
         }
-        val baseUrl = MusicHttp.normalizeBaseUrl(draft.baseUrl)
+        val baseUrl = MusicHttp.normalizeBaseUrl(address)
         val name = draft.name.trim().ifEmpty { session.serverName ?: adapter.displayName }.take(80)
         val now = clock()
         val id = database.transaction {
@@ -104,18 +110,21 @@ class MusicSourceManager(
                 "SELECT id FROM music_sources WHERE profile_id = ? AND adapter = ? AND base_url = ? AND username = ?",
                 profileId, adapterId, baseUrl, draft.username.trim(),
             ) { it.getLong(1) }
-            if (duplicate != null) throw SourceException("This profile is already connected to that server with that user.")
+            if (duplicate != null) {
+                throw SourceException(if (adapter.needsCredentials) "This profile is already connected to that server with that user." else "${adapter.displayName} is already set up for this profile.")
+            }
             val priority = (queryOne("SELECT COALESCE(MAX(priority), 0) FROM music_sources WHERE profile_id = ?", profileId) { it.getInt(1) } ?: 0) + 1
             insert(
                 """
-                INSERT INTO music_sources (profile_id, adapter, name, base_url, username, config, enabled, priority, created_at, updated_at, last_test_at, last_test_ok)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 1)
+                INSERT INTO music_sources (profile_id, adapter, name, base_url, username, config, enabled, priority, created_at, updated_at, last_test_at, last_test_ok, plugin_id)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 1, ?)
                 """.trimIndent(),
-                profileId, adapterId, name, baseUrl, draft.username.trim(), toJson(session.config), priority, now, now, now,
+                profileId, adapterId, name, baseUrl, draft.username.trim(), toJson(session.config), priority, now, now, now, pluginId,
             )
         }
         try {
-            profileSecrets(profileId).put(secretName(id), session.secret)
+            // A source that needs no sign-in leaves nothing in the Keychain.
+            if (session.secret.isNotEmpty()) profileSecrets(profileId).put(secretName(id), session.secret)
         } catch (t: Throwable) {
             database.execute("DELETE FROM music_sources WHERE id = ?", id)
             throw SourceException("The password could not be saved securely: ${t.message}", t)
@@ -186,6 +195,8 @@ class MusicSourceManager(
         if (existing.adapter == STREAM_ADAPTER) return SyncSummary(existing.trackCount, 0, 0, 0)
         if (!existing.enabled) throw SourceException("This source is turned off.")
         val adapter = adapter(existing.adapter) ?: throw SourceException("This kind of source is not supported.")
+        // A catalogue is searched, not copied: there is nothing to synchronise.
+        if (!adapter.syncsLibrary) return SyncSummary(existing.trackCount, 0, 0, 0)
         setSyncing(sourceId, "Reading the library…")
         try {
             val secret = requireSecret(profileId, existing)
@@ -257,6 +268,210 @@ class MusicSourceManager(
         artworkId = artworkId,
     )
 
+
+    // ---------------------------------------------------------------- catalogues: search and discovery
+
+    /** The profile's enabled sources that can be searched, in the user's order. */
+    fun catalogs(profileId: Long): List<SourceConnection> =
+        connections(profileId).filter { it.enabled && adapter(it.adapter) is MusicCatalogAdapter }
+
+    fun capabilities(connection: SourceConnection): CatalogCapabilities =
+        (adapter(connection.adapter) as? MusicCatalogAdapter)?.capabilities ?: CatalogCapabilities()
+
+    fun search(profileId: Long, sourceId: Long, query: String, limit: Int = 24): CatalogResults =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.search(connection, secret, query.trim(), limit) }
+
+    /** Songs the source puts forward (trending on Audius, random on a personal server). */
+    fun featured(profileId: Long, sourceId: Long, genre: String? = null, limit: Int = 30): List<RemoteTrack> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.featured(connection, secret, genre, limit) }
+
+    fun genres(profileId: Long, sourceId: Long): List<String> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.genres(connection, secret) }
+
+    fun artistTracks(profileId: Long, sourceId: Long, artistId: String, limit: Int = 60): List<RemoteTrack> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.artistTracks(connection, secret, artistId, limit) }
+
+    fun albumTracks(profileId: Long, sourceId: Long, albumId: String): List<RemoteTrack> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.albumTracks(connection, secret, albumId) }
+
+    fun playlistTracks(profileId: Long, sourceId: Long, playlistId: String): List<RemoteTrack> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.playlistTracks(connection, secret, playlistId) }
+
+    /** The playlists the signed-in user keeps on a personal server. */
+    fun ownPlaylists(profileId: Long, sourceId: Long): List<RemotePlaylist> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.ownPlaylists(connection, secret) }
+
+    private fun <T> onCatalog(profileId: Long, sourceId: Long, block: (MusicCatalogAdapter, SourceConnection, String) -> T): T {
+        val connection = connection(profileId, sourceId) ?: throw SourceException("That source no longer exists.")
+        if (!connection.enabled) throw SourceException("${connection.name} is turned off.")
+        val adapter = adapter(connection.adapter) as? MusicCatalogAdapter ?: throw SourceException("${connection.name} cannot be searched.")
+        return try {
+            block(adapter, connection, requireSecret(profileId, connection)).also {
+                if (connection.lastError != null) recordTest(sourceId, null)
+            }
+        } catch (e: SourceException) {
+            recordTest(sourceId, e)
+            throw e
+        } catch (e: IOException) {
+            val wrapped = SourceException("${connection.name} could not be reached: ${e.message ?: e::class.simpleName}", e)
+            recordTest(sourceId, wrapped)
+            throw wrapped
+        }
+    }
+
+    /**
+     * Makes catalogue results playable: each becomes a song of the profile that plays from the
+     * source. With [keep] the songs join the library; without it they stay out of every list
+     * except the listening history until the user adds them. Songs the source will not play are
+     * left out. The result keeps the order of [tracks].
+     */
+    fun materialize(profileId: Long, sourceId: Long, tracks: List<RemoteTrack>, keep: Boolean): List<Track> {
+        val connection = connection(profileId, sourceId) ?: throw SourceException("That source no longer exists.")
+        val playable = tracks.filter { it.playable }.distinctBy { it.remoteId }
+        if (playable.isEmpty()) return emptyList()
+        val cached = cachedArtworkIds(profileId, connection.id)
+        val ids = library.batch {
+            with(library) {
+                playable.map { remote ->
+                    val artworkId = (remote.artworkKey ?: remote.artworkUrl)?.let { cached[it] }
+                    upsertInTransaction(profileId, remote.toInput(connection.id, artworkId).copy(hidden = !keep), existingId = null)
+                }
+            }
+        }
+        library.notifyChanged()
+        val byId = library.tracksByIds(profileId, ids).associateBy { it.id }
+        return ids.mapNotNull { byId[it] }
+    }
+
+    /**
+     * Fetches the covers of songs that came from a catalogue and have none yet. Slow (one request a
+     * cover), so it is run after playback has started. Returns how many covers were stored.
+     */
+    fun fetchArtwork(profileId: Long, sourceId: Long, tracks: List<RemoteTrack>): Int {
+        val connection = connection(profileId, sourceId) ?: return 0
+        val adapter = adapter(connection.adapter) ?: return 0
+        val secret = runCatching { requireSecret(profileId, connection) }.getOrNull() ?: return 0
+        val cached = cachedArtworkIds(profileId, sourceId).toMutableMap()
+        var stored = 0
+        for (remote in tracks.distinctBy { it.remoteId }) {
+            val key = remote.artworkKey ?: remote.artworkUrl ?: continue
+            val trackId = database.queryOne(
+                "SELECT id FROM music_tracks WHERE profile_id = ? AND source_id = ? AND remote_id = ? AND artwork_id IS NULL AND custom_artwork = 0",
+                profileId, sourceId, remote.remoteId,
+            ) { it.getLong(1) } ?: continue
+            val artworkId = cached[key] ?: run {
+                val bytes = downloadArtwork(adapter, connection, secret, remote.artworkKey, remote.artworkUrl, remote.artworkAlternates) ?: return@run null
+                library.artwork.store(profileId, bytes, ArtworkStore.ORIGIN_SOURCE)?.also {
+                    rememberArtwork(sourceId, key, it)
+                    cached[key] = it
+                }
+            } ?: continue
+            library.setTrackArtwork(profileId, trackId, artworkId, custom = false)
+            stored++
+        }
+        if (stored > 0) library.notifyChanged()
+        return stored
+    }
+
+    /**
+     * The cover of something shown while browsing a catalogue, as a local file. Null when the
+     * source has none or it cannot be fetched; that is ordinary and shows as a placeholder.
+     */
+    fun artworkFile(profileId: Long, sourceId: Long, artworkKey: String?, artworkUrl: String?, alternates: List<String> = emptyList()): Path? {
+        val key = artworkKey ?: artworkUrl ?: return null
+        val directory = artworkCacheDirectory ?: return null
+        val name = java.security.MessageDigest.getInstance("SHA-1").digest("$sourceId|$key".toByteArray()).joinToString("") { "%02x".format(it) }
+        val file = directory.resolve("$name.img")
+        if (Files.isRegularFile(file) && Files.size(file) > 0) return file
+        val connection = connection(profileId, sourceId) ?: return null
+        val adapter = adapter(connection.adapter) ?: return null
+        val secret = runCatching { requireSecret(profileId, connection) }.getOrNull() ?: return null
+        val bytes = downloadArtwork(adapter, connection, secret, artworkKey, artworkUrl, alternates) ?: return null
+        return runCatching {
+            Files.createDirectories(directory)
+            val temporary = Files.createTempFile(directory, name, ".part")
+            Files.write(temporary, bytes)
+            Files.move(temporary, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            file
+        }.getOrNull()
+    }
+
+    private fun downloadArtwork(
+        adapter: MusicSourceAdapter,
+        connection: SourceConnection,
+        secret: String,
+        artworkKey: String?,
+        artworkUrl: String?,
+        alternates: List<String>,
+    ): ByteArray? {
+        val addresses = buildList {
+            artworkKey?.let { add(adapter.artworkUrl(connection, secret, it)) }
+            artworkUrl?.let(::add)
+            addAll(alternates)
+        }.filter { it.startsWith("https://", true) || it.startsWith("http://", true) }.distinct()
+        for (address in addresses.take(6)) {
+            val image = runCatching { MusicHttp.get(address, maxBytes = 12 * 1024 * 1024) }.getOrNull() ?: continue
+            if (image.body.isNotEmpty() && image.contentType.orEmpty().lowercase().let { it.startsWith("image/") || it.isEmpty() || it.startsWith("application/octet-stream") }) {
+                return image.body
+            }
+        }
+        return null
+    }
+
+    // ---------------------------------------------------------------- plugins installed from a manifest
+
+    /** The manifests installed in this copy of DebridOne. Each profile connects to them separately. */
+    fun manifests(): List<MusicPluginManifest> = database.query("SELECT manifest FROM music_plugin_manifests ORDER BY installed_at") { it.getString(1) }
+        .mapNotNull { MusicPluginManifest.parse(it).getOrNull() }
+
+    fun manifest(pluginId: String): MusicPluginManifest? =
+        database.queryOne("SELECT manifest FROM music_plugin_manifests WHERE plugin_id = ?", pluginId) { it.getString(1) }
+            ?.let { MusicPluginManifest.parse(it).getOrNull() }
+
+    fun saveManifest(manifest: MusicPluginManifest, origin: String?) {
+        database.execute(
+            "INSERT INTO music_plugin_manifests (plugin_id, manifest, origin, installed_at) VALUES (?, ?, ?, ?) " +
+                "ON CONFLICT(plugin_id) DO UPDATE SET manifest = excluded.manifest, origin = excluded.origin",
+            manifest.id, manifest.toJson(), origin, clock(),
+        )
+    }
+
+    /** Whether [profileId] has set this plugin up. */
+    fun pluginConnection(profileId: Long, pluginId: String): SourceConnection? = connections(profileId).firstOrNull { it.pluginId == pluginId }
+
+    /**
+     * Sets a plugin up for one profile. Stream lists are added as they are (each address is opened
+     * first; the ones that do not answer with audio are reported, not added). Everything else is a
+     * connection through the plugin's adapter, signed in with [draft].
+     */
+    fun connectPlugin(profileId: Long, manifest: MusicPluginManifest, draft: SourceDraft = SourceDraft("", "", "", "")): PluginSetup {
+        pluginConnection(profileId, manifest.id)?.let { return PluginSetup(it, emptyList()) }
+        if (manifest.adapter == MusicPluginManifest.ADAPTER_STREAMS) {
+            val failures = ArrayList<String>()
+            manifest.streams.forEach { stream ->
+                runCatching { addStream(profileId, stream.name, stream.url, stream.genre, pluginId = manifest.id, listName = manifest.name) }
+                    .onFailure { failures += "${stream.name}: ${it.message ?: it::class.simpleName}" }
+            }
+            val connection = pluginConnection(profileId, manifest.id)
+                ?: throw SourceException("None of the ${manifest.streams.size} streams of ${manifest.name} answered with audio. ${failures.firstOrNull().orEmpty()}")
+            return PluginSetup(connection, failures)
+        }
+        val connection = add(
+            profileId, manifest.adapter,
+            draft.copy(name = draft.name.ifBlank { manifest.name }, baseUrl = manifest.baseUrl ?: draft.baseUrl),
+            pluginId = manifest.id,
+        )
+        return PluginSetup(connection, emptyList())
+    }
+
+    /** Removes a plugin for every profile: its connections, their songs, covers, copies and stored sign-ins. */
+    fun removePlugin(pluginId: String) {
+        val owners = database.query("SELECT profile_id, id FROM music_sources WHERE plugin_id = ?", pluginId) { it.getLong(1) to it.getLong(2) }
+        owners.forEach { (profileId, sourceId) -> remove(profileId, sourceId) }
+        database.execute("DELETE FROM music_plugin_manifests WHERE plugin_id = ?", pluginId)
+        library.notifyChanged()
+    }
+
     // ---------------------------------------------------------------- playback and offline copies
 
     /**
@@ -270,7 +485,8 @@ class MusicSourceManager(
         val remoteId = track.remoteId ?: return null
         if (source.adapter == STREAM_ADAPTER) return remoteId
         val adapter = adapter(source.adapter) ?: return null
-        val secret = runCatching { profileSecrets(profileId).get(secretName(source.id)) }.getOrNull() ?: return null
+        val secret = runCatching { profileSecrets(profileId).get(secretName(source.id)) }.getOrNull()
+            ?: if (adapter.needsCredentials) return null else ""
         return adapter.streamUrl(source, secret, remoteId)
     }
 
@@ -286,6 +502,7 @@ class MusicSourceManager(
                     val source = connection(profileId, track.sourceId)?.takeIf { it.enabled && it.adapter != STREAM_ADAPTER }
                         ?: throw SourceException("Live streams cannot be downloaded.")
                     val adapter = adapter(source.adapter) ?: throw SourceException("This kind of source is not supported.")
+                    if (!adapter.allowsDownload) throw SourceException("${adapter.displayName} offers streaming only.")
                     val secret = requireSecret(profileId, source)
                     val target = offlineFolder(profileId, source.id).resolve("${track.id}.${adapter.fileExtension(track.format)}")
                     MusicHttp.download(adapter.streamUrl(source, secret, track.remoteId.orEmpty()), target)
@@ -317,7 +534,7 @@ class MusicSourceManager(
      * Adds an internet radio station or other direct audio stream. The address is opened first and
      * is accepted only if it really answers with audio (or with a playlist that points at audio).
      */
-    fun addStream(profileId: Long, name: String, address: String): Track {
+    fun addStream(profileId: Long, name: String, address: String, genre: String? = null, pluginId: String? = null, listName: String? = null): Track {
         val url = validateStreamAddress(address)
         val probed = try {
             MusicHttp.probe(url, mapOf("Icy-MetaData" to "0"))
@@ -334,11 +551,11 @@ class MusicSourceManager(
             type.startsWith("audio/") || type == "application/ogg" -> url
             else -> throw SourceException("That address does not serve audio (it answered with “${type.ifEmpty { "an unknown type" }}”).")
         }
-        val sourceId = streamSourceId(profileId)
+        val sourceId = if (pluginId == null) streamSourceId(profileId) else streamSourceId(profileId, pluginId, listName ?: "Streams")
         val title = name.trim().ifEmpty { URI(streamUrl).host ?: "Stream" }.take(120)
         val id = library.upsert(
             profileId,
-            TrackInput(sourceId = sourceId, remoteId = streamUrl, title = title, genre = "Radio", format = formatOfContentType(type)),
+            TrackInput(sourceId = sourceId, remoteId = streamUrl, title = title, genre = genre?.trim()?.ifEmpty { null } ?: "Radio", format = formatOfContentType(type)),
         )
         library.editTrack(profileId, id, mapOf("title" to title))
         return checkNotNull(library.track(profileId, id))
@@ -368,16 +585,24 @@ class MusicSourceManager(
     }
 
     /** The one "streams" pseudo-connection of a profile, created the first time a stream is added. */
-    private fun streamSourceId(profileId: Long): Long = database.transaction {
-        queryOne("SELECT id FROM music_sources WHERE profile_id = ? AND adapter = ?", profileId, STREAM_ADAPTER) { it.getLong(1) }
-            ?: run {
-                val now = clock()
-                val priority = (queryOne("SELECT COALESCE(MAX(priority), 0) FROM music_sources WHERE profile_id = ?", profileId) { it.getInt(1) } ?: 0) + 1
-                insert(
-                    "INSERT INTO music_sources (profile_id, adapter, name, config, enabled, priority, created_at, updated_at) VALUES (?, ?, ?, '{}', 1, ?, ?, ?)",
-                    profileId, STREAM_ADAPTER, "Radio and streams", priority, now, now,
-                )
-            }
+    /**
+     * The connection that holds a profile's stream addresses: the user's own ([pluginId] null), or
+     * the list a "streams" plugin brought, which is removed with that plugin.
+     */
+    private fun streamSourceId(profileId: Long, pluginId: String? = null, name: String = "Radio and streams"): Long = database.transaction {
+        val existing = if (pluginId == null) {
+            queryOne("SELECT id FROM music_sources WHERE profile_id = ? AND adapter = ? AND plugin_id IS NULL", profileId, STREAM_ADAPTER) { it.getLong(1) }
+        } else {
+            queryOne("SELECT id FROM music_sources WHERE profile_id = ? AND adapter = ? AND plugin_id = ?", profileId, STREAM_ADAPTER, pluginId) { it.getLong(1) }
+        }
+        existing ?: run {
+            val now = clock()
+            val priority = (queryOne("SELECT COALESCE(MAX(priority), 0) FROM music_sources WHERE profile_id = ?", profileId) { it.getInt(1) } ?: 0) + 1
+            insert(
+                "INSERT INTO music_sources (profile_id, adapter, name, config, enabled, priority, created_at, updated_at, plugin_id) VALUES (?, ?, ?, '{}', 1, ?, ?, ?, ?)",
+                profileId, STREAM_ADAPTER, name.take(80), priority, now, now, pluginId,
+            )
+        }
     }
 
     // ---------------------------------------------------------------- profiles
@@ -398,7 +623,8 @@ class MusicSourceManager(
 
     private fun requireSecret(profileId: Long, connection: SourceConnection): String =
         runCatching { profileSecrets(profileId).get(secretName(connection.id)) }.getOrNull()
-            ?: throw SourceException("The saved sign-in for ${connection.name} is missing. Remove the connection and add it again.")
+            ?: if (adapter(connection.adapter)?.needsCredentials == false) "" else
+                throw SourceException("The saved sign-in for ${connection.name} is missing. Remove the connection and add it again.")
 
     private fun offlineFolder(profileId: Long, sourceId: Long): Path = offlineDirectory.resolve(profileId.toString()).resolve(sourceId.toString())
 
@@ -457,6 +683,7 @@ class MusicSourceManager(
         lastTestOk = rs.getNullableLong("last_test_ok")?.let { it != 0L },
         lastError = rs.getString("last_error"),
         trackCount = rs.getInt("track_count"),
+        pluginId = rs.getString("plugin_id"),
     )
 
     companion object {

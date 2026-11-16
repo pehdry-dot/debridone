@@ -310,17 +310,19 @@ class MusicSourcesTest {
     }
 
     @Test
-    fun pastingAnAddressIntoThePluginRegistryCreatesNothing() {
+    fun anAddressThatIsNotAManifestCreatesNothing() {
         val music = env.open()
         val registry = env.currentModule.plugins
-        awaitTrue(describe = { "built-in sources to be registered: ${registry.installed.value.map { it.id }}" }) { registry.installed.value.size == 4 }
-        assertEquals(setOf("local-files", "subsonic", "jellyfin", "stream-url"), registry.installed.value.map { it.id }.toSet())
+        awaitTrue(describe = { "built-in sources to be registered: ${registry.installed.value.map { it.id }}" }) { registry.installed.value.size == 5 }
+        assertEquals(setOf("local-files", "audius", "subsonic", "jellyfin", "stream-url"), registry.installed.value.map { it.id }.toSet())
         assertTrue(registry.installed.value.all { it.builtIn })
-        assertFalse(registry.importAvailable)
+        assertTrue(registry.importAvailable)
 
-        val result = runBlocking { registry.importFromLocation("https://example.invalid/some-music-plugin.json") }
-        assertTrue(result is PluginActionResult.NotAvailableYet, "got $result")
-        assertEquals(4, registry.installed.value.size)
+        val unreachable = runBlocking { registry.importFromLocation("https://example.invalid/some-music-plugin.json") }
+        assertTrue(unreachable is PluginActionResult.Failure, "got $unreachable")
+        val webPage = runBlocking { registry.importFromLocation("${servers.baseUrl}/radio/page.html") }
+        assertTrue(webPage is PluginActionResult.Failure && webPage.message.contains("web page"), "got $webPage")
+        assertEquals(5, registry.installed.value.size)
         assertTrue(music.sources.connections(PROFILE_A).isEmpty())
         assertTrue(runBlocking { registry.remove("subsonic") } is PluginActionResult.Failure, "built-in sources cannot be removed")
     }

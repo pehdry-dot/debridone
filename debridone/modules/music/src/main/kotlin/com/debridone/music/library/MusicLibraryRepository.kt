@@ -49,6 +49,8 @@ data class TrackInput(
     val artworkId: Long? = null,
     val musicBrainzRecordingId: String? = null,
     val musicBrainzReleaseId: String? = null,
+    /** A song from an online catalogue that the user has not added to the library. */
+    val hidden: Boolean = false,
 )
 
 data class HistoryEntry(val track: Track, val playedAt: Long, val listenedMs: Long, val completed: Boolean)
@@ -276,7 +278,7 @@ class MusicLibraryRepository(
     fun genres(profileId: Long): List<Genre> = database.query(
         """
         SELECT MIN(genre) AS name, COUNT(*) AS track_count, COUNT(DISTINCT album_id) AS album_count
-        FROM music_tracks WHERE profile_id = ? AND genre IS NOT NULL AND genre <> ''
+        FROM music_tracks WHERE profile_id = ? AND hidden = 0 AND genre IS NOT NULL AND genre <> ''
         GROUP BY genre COLLATE NOCASE ORDER BY genre COLLATE NOCASE
         """.trimIndent(),
         profileId,
@@ -297,7 +299,7 @@ class MusicLibraryRepository(
                COALESCE(SUM(CASE WHEN favorite_at IS NOT NULL THEN 1 ELSE 0 END), 0),
                (SELECT COUNT(*) FROM music_albums WHERE profile_id = ?1),
                (SELECT COUNT(*) FROM music_artists WHERE profile_id = ?1)
-        FROM music_tracks WHERE profile_id = ?1
+        FROM music_tracks WHERE profile_id = ?1 AND hidden = 0
         """.trimIndent(),
         profileId,
     ) { rs -> LibraryStats(rs.getInt(1), rs.getInt(5), rs.getInt(6), rs.getLong(2), rs.getInt(3), rs.getInt(4)) }
@@ -324,7 +326,84 @@ class MusicLibraryRepository(
             "UPDATE music_tracks SET favorite_at = ? WHERE profile_id = ? AND id = ?",
             if (favorite) clock() else null, profileId, trackId,
         )
+        // Marking a catalogue song as a favourite is a way of keeping it.
+        if (favorite) keepTracks(profileId, listOf(trackId), notify = false)
         changed()
+    }
+
+    /**
+     * Adds songs that were only played from an online catalogue to the library proper: they get
+     * their album and artist and show up in every list from now on.
+     */
+    fun keepTracks(profileId: Long, trackIds: Collection<Long>, notify: Boolean = true): Int {
+        if (trackIds.isEmpty()) return 0
+        var kept = 0
+        database.transaction {
+            trackIds.distinct().forEach { id ->
+                val hidden = queryOne("SELECT hidden FROM music_tracks WHERE profile_id = ? AND id = ?", profileId, id) { it.getInt(1) == 1 }
+                if (hidden == true) {
+                    execute("UPDATE music_tracks SET hidden = 0, added_at = ?, updated_at = ? WHERE id = ?", clock(), clock(), id)
+                    link(profileId, id)
+                    kept += 1
+                }
+            }
+        }
+        if (kept > 0 && notify) changed()
+        return kept
+    }
+
+    /**
+     * Forgets catalogue songs that were never added to the library, are in no playlist, and were
+     * last played (or first seen) before [before]. Returns how many were removed.
+     */
+    fun purgeHidden(profileId: Long, before: Long): Int {
+        val ids = database.query(
+            """
+            SELECT id FROM music_tracks t WHERE t.profile_id = ? AND t.hidden = 1 AND COALESCE(t.last_played_at, t.added_at) < ?
+              AND NOT EXISTS (SELECT 1 FROM music_playlist_items i WHERE i.track_id = t.id)
+            """.trimIndent(),
+            profileId, before,
+        ) { it.getLong(1) }
+        if (ids.isNotEmpty()) removeTracks(profileId, ids)
+        return ids.size
+    }
+
+    // ------------------------------------------------------------------ MusicBrainz identifiers
+
+    data class TrackIdentifiers(val recordingId: String?, val releaseId: String?)
+
+    data class AlbumIdentifiers(val releaseId: String?, val releaseGroupId: String?)
+
+    fun trackIdentifiers(profileId: Long, trackId: Long): TrackIdentifiers? = database.queryOne(
+        "SELECT musicbrainz_recording_id, musicbrainz_release_id FROM music_tracks WHERE profile_id = ? AND id = ?", profileId, trackId,
+    ) { rs -> TrackIdentifiers(rs.getString(1), rs.getString(2)) }
+
+    fun setTrackIdentifiers(profileId: Long, trackId: Long, recordingId: String?, releaseId: String?) {
+        database.execute(
+            "UPDATE music_tracks SET musicbrainz_recording_id = COALESCE(?, musicbrainz_recording_id), " +
+                "musicbrainz_release_id = COALESCE(?, musicbrainz_release_id) WHERE profile_id = ? AND id = ?",
+            recordingId, releaseId, profileId, trackId,
+        )
+    }
+
+    fun albumIdentifiers(profileId: Long, albumId: Long): AlbumIdentifiers? = database.queryOne(
+        "SELECT musicbrainz_release_id, musicbrainz_release_group_id FROM music_albums WHERE profile_id = ? AND id = ?", profileId, albumId,
+    ) { rs -> AlbumIdentifiers(rs.getString(1), rs.getString(2)) }
+
+    fun setAlbumIdentifiers(profileId: Long, albumId: Long, releaseId: String?, releaseGroupId: String?) {
+        database.execute(
+            "UPDATE music_albums SET musicbrainz_release_id = COALESCE(?, musicbrainz_release_id), " +
+                "musicbrainz_release_group_id = COALESCE(?, musicbrainz_release_group_id) WHERE profile_id = ? AND id = ?",
+            releaseId, releaseGroupId, profileId, albumId,
+        )
+    }
+
+    fun artistIdentifier(profileId: Long, artistId: Long): String? = database.queryOne(
+        "SELECT musicbrainz_id FROM music_artists WHERE profile_id = ? AND id = ?", profileId, artistId,
+    ) { rs -> rs.getString(1) }
+
+    fun setArtistIdentifier(profileId: Long, artistId: Long, musicBrainzId: String?) {
+        database.execute("UPDATE music_artists SET musicbrainz_id = ? WHERE profile_id = ? AND id = ?", musicBrainzId, profileId, artistId)
     }
 
     fun setAlbumFavorite(profileId: Long, albumId: Long, favorite: Boolean) {
@@ -413,13 +492,13 @@ class MusicLibraryRepository(
                 """
                 INSERT INTO music_tracks (profile_id, source_id, remote_id, folder_id, path, file_size, file_mtime, fingerprint,
                     format, codec, bitrate_kbps, sample_rate, channels, bit_depth, duration_ms,
-                    title, title_key, artwork_id, original_tags, musicbrainz_recording_id, musicbrainz_release_id, added_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    title, title_key, artwork_id, original_tags, musicbrainz_recording_id, musicbrainz_release_id, added_at, updated_at, hidden)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """.trimIndent(),
                 profileId, input.sourceId, input.remoteId, input.folderId, input.path, input.fileSize, input.fileMtime, input.fingerprint,
                 input.format, input.codec, input.bitrateKbps, input.sampleRate, input.channels, input.bitDepth, input.durationMs,
                 fresh.title, MusicText.sortKey(fresh.title), input.artworkId, fresh.toJson(input.artworkId),
-                input.musicBrainzRecordingId, input.musicBrainzReleaseId, now, now,
+                input.musicBrainzRecordingId, input.musicBrainzReleaseId, now, now, if (input.hidden) 1 else 0,
             )
             writeFields(id, fresh)
         } else {
@@ -438,13 +517,14 @@ class MusicLibraryRepository(
                     duration_ms = CASE WHEN ? > 0 THEN ? ELSE duration_ms END,
                     artwork_id = ?, original_tags = ?,
                     musicbrainz_recording_id = COALESCE(?, musicbrainz_recording_id),
-                    musicbrainz_release_id = COALESCE(?, musicbrainz_release_id), updated_at = ?
+                    musicbrainz_release_id = COALESCE(?, musicbrainz_release_id), updated_at = ?,
+                    hidden = CASE WHEN ? = 1 THEN hidden ELSE 0 END
                 WHERE id = ?
                 """.trimIndent(),
                 input.folderId, input.path, input.fileSize, input.fileMtime, input.fingerprint,
                 input.format, input.codec, input.bitrateKbps, input.sampleRate, input.channels, input.bitDepth,
                 input.durationMs, input.durationMs, artworkId, fresh.toJson(input.artworkId),
-                input.musicBrainzRecordingId, input.musicBrainzReleaseId, now, id,
+                input.musicBrainzRecordingId, input.musicBrainzReleaseId, now, if (input.hidden) 1 else 0, id,
             )
             writeFields(id, merged)
         }
@@ -675,6 +755,9 @@ class MusicLibraryRepository(
 
     internal fun notifyChanged() = changed()
 
+    /** Tells every screen that shows the library to read it again. */
+    fun notifyLibraryChanged() = changed()
+
     // ------------------------------------------------------------------ internals
 
     private fun SqliteDatabase.deleteTrackRows(profileId: Long, trackIds: Collection<Long>) {
@@ -709,6 +792,12 @@ class MusicLibraryRepository(
         val row = queryOne("SELECT artist, album, album_artist, year, artwork_id FROM music_tracks WHERE id = ?", trackId) { rs ->
             LinkRow(rs.getString(1), rs.getString(2), rs.getString(3), rs.getNullableLong("year")?.toInt(), rs.getNullableLong("artwork_id"))
         } ?: return
+        // A song that is not in the library yet creates no album or artist there.
+        val hidden = queryOne("SELECT hidden FROM music_tracks WHERE id = ?", trackId) { it.getInt(1) == 1 } == true
+        if (hidden) {
+            execute("UPDATE music_tracks SET artist_id = NULL, album_id = NULL WHERE id = ?", trackId)
+            return
+        }
         val artistId = row.artist?.let { artistId(profileId, it) }
         val albumId = row.album?.let { title ->
             val albumArtist = row.albumArtist ?: row.artist
@@ -763,6 +852,7 @@ class MusicLibraryRepository(
     private fun trackWhere(profileId: Long, filter: TrackFilter): Pair<String, List<Any?>> {
         val where = StringBuilder("t.profile_id = ?")
         val args = mutableListOf<Any?>(profileId)
+        if (!filter.includeHidden) where.append(" AND t.hidden = 0")
         tokens(filter.text).forEach { token ->
             where.append(" AND t.search_text LIKE ? ESCAPE '\\'")
             args += like(token)
@@ -852,6 +942,7 @@ class MusicLibraryRepository(
         addedAt = rs.getLong("added_at"),
         lockedFields = lockedSet(rs.getString("locked_fields")),
         offlinePath = rs.getString("offline_path"),
+        hidden = rs.getBooleanInt("hidden"),
     )
 
     private fun mapAlbum(rs: ResultSet): Album = Album(

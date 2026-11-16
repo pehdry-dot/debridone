@@ -12,10 +12,11 @@ import kotlinx.serialization.json.put
  * A Jellyfin server. Signing in exchanges the password for an access token; only the token is
  * kept (in the secret store), the password is not stored anywhere.
  */
-class JellyfinAdapter : MusicSourceAdapter {
+class JellyfinAdapter : MusicCatalogAdapter {
     override val id = ID
     override val displayName = "Jellyfin"
     override val description = "The music libraries of your own Jellyfin server."
+    override val kind = IntegrationKind.PERSONAL_SERVER
     override val fields = listOf(
         SourceField("baseUrl", "Server address", placeholder = "https://jellyfin.example.com"),
         SourceField("username", "User name"),
@@ -102,6 +103,86 @@ class JellyfinAdapter : MusicSourceAdapter {
             },
         )
     }
+
+    // ---------------------------------------------------------------- searching and browsing
+
+    override val capabilities = CatalogCapabilities(
+        searchTracks = true, searchArtists = true, searchAlbums = true, searchPlaylists = true, featured = true, genres = true, ownPlaylists = true,
+    )
+
+    private fun userId(connection: SourceConnection): String =
+        connection.config[CONFIG_USER_ID] ?: throw SourceException("This connection is incomplete; remove it and add it again.")
+
+    /** Items of the user's library matching [parameters]. */
+    private fun items(connection: SourceConnection, secret: String, parameters: List<Pair<String, String>>, path: String? = null): List<JsonObject> {
+        val address = path ?: "/Users/${userId(connection)}/Items"
+        val response = guarded { MusicHttp.get("${connection.baseUrl}$address?" + MusicHttp.query(parameters), headers(connection, secret), maxBytes = 32 * 1024 * 1024) }
+        val root = runCatching { Json.parseToJsonElement(response.text()).obj() }.getOrNull() ?: throw SourceException("The server sent an unreadable answer.")
+        return root["Items"].array().mapNotNull { it.obj() }
+    }
+
+    private fun audio(extra: List<Pair<String, String>>, limit: Int): List<Pair<String, String>> =
+        listOf("IncludeItemTypes" to "Audio", "Recursive" to "true", "Fields" to "Genres,MediaSources", "Limit" to limit.coerceIn(1, 500).toString()) + extra
+
+    override fun search(connection: SourceConnection, secret: String, query: String, limit: Int): CatalogResults {
+        if (query.isBlank()) return CatalogResults()
+        val size = limit.coerceIn(1, 100)
+        fun find(type: String) = listOf("searchTerm" to query, "IncludeItemTypes" to type, "Recursive" to "true", "Limit" to size.toString())
+        return CatalogResults(
+            tracks = items(connection, secret, audio(listOf("searchTerm" to query), size)).mapNotNull(::toTrack),
+            artists = runCatching {
+                items(connection, secret, listOf("searchTerm" to query, "Limit" to size.toString(), "userId" to userId(connection)), path = "/Artists")
+            }.getOrDefault(emptyList()).mapNotNull { node ->
+                val id = node.string("Id") ?: return@mapNotNull null
+                RemoteArtist(remoteId = id, name = node.string("Name") ?: return@mapNotNull null, artworkKey = id.takeIf { node["ImageTags"].obj()?.string("Primary") != null })
+            },
+            albums = items(connection, secret, find("MusicAlbum")).mapNotNull { node ->
+                val id = node.string("Id") ?: return@mapNotNull null
+                RemoteAlbum(
+                    remoteId = id,
+                    title = node.string("Name") ?: return@mapNotNull null,
+                    artist = node.string("AlbumArtist"),
+                    year = node.int("ProductionYear"),
+                    trackCount = node.int("ChildCount"),
+                    durationMs = node.long("RunTimeTicks")?.div(10_000),
+                    artworkKey = id.takeIf { node["ImageTags"].obj()?.string("Primary") != null },
+                )
+            },
+            playlists = items(connection, secret, find("Playlist")).mapNotNull(::toPlaylist),
+        )
+    }
+
+    private fun toPlaylist(node: JsonObject): RemotePlaylist? {
+        val id = node.string("Id") ?: return null
+        return RemotePlaylist(
+            remoteId = id,
+            name = node.string("Name") ?: return null,
+            trackCount = node.int("ChildCount"),
+            description = node.string("Overview"),
+            artworkKey = id.takeIf { node["ImageTags"].obj()?.string("Primary") != null },
+        )
+    }
+
+    override fun featured(connection: SourceConnection, secret: String, genre: String?, limit: Int): List<RemoteTrack> =
+        items(connection, secret, audio(listOfNotNull("SortBy" to "Random", genre?.takeIf { it.isNotBlank() }?.let { "Genres" to it }), limit)).mapNotNull(::toTrack)
+
+    override fun genres(connection: SourceConnection, secret: String): List<String> =
+        items(connection, secret, listOf("UserId" to userId(connection), "SortBy" to "SortName"), path = "/MusicGenres").mapNotNull { it.string("Name") }
+
+    override fun artistTracks(connection: SourceConnection, secret: String, artistId: String, limit: Int): List<RemoteTrack> =
+        items(connection, secret, audio(listOf("ArtistIds" to artistId, "SortBy" to "Album,ParentIndexNumber,IndexNumber"), limit)).mapNotNull(::toTrack)
+
+    override fun albumTracks(connection: SourceConnection, secret: String, albumId: String): List<RemoteTrack> =
+        items(connection, secret, audio(listOf("ParentId" to albumId, "SortBy" to "ParentIndexNumber,IndexNumber"), 500)).mapNotNull(::toTrack)
+
+    override fun ownPlaylists(connection: SourceConnection, secret: String): List<RemotePlaylist> =
+        items(connection, secret, listOf("IncludeItemTypes" to "Playlist", "Recursive" to "true", "SortBy" to "SortName")).mapNotNull(::toPlaylist)
+
+    override fun playlistTracks(connection: SourceConnection, secret: String, playlistId: String): List<RemoteTrack> =
+        items(
+            connection, secret, listOf("UserId" to userId(connection), "Fields" to "Genres,MediaSources"),
+            path = "/Playlists/${MusicHttp.encode(playlistId)}/Items",
+        ).filter { it.string("Type") == null || it.string("Type") == "Audio" }.mapNotNull(::toTrack)
 
     override fun streamUrl(connection: SourceConnection, secret: String, remoteId: String): String =
         // static=true serves the original file without transcoding.

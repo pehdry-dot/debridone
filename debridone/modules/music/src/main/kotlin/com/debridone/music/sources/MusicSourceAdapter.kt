@@ -16,6 +16,8 @@ data class SourceConnection(
     val lastTestOk: Boolean?,
     val lastError: String?,
     val trackCount: Int = 0,
+    /** The plugin (manifest) this connection was set up from; null for the built-in integrations. */
+    val pluginId: String? = null,
 )
 
 /** A text box of the "add a source" form. */
@@ -46,6 +48,12 @@ data class RemoteTrack(
     val sizeBytes: Long,
     /** Key the adapter understands for [MusicSourceAdapter.artworkUrl]; equal keys share one cover. */
     val artworkKey: String?,
+    /** A cover address that needs no sign-in (open catalogues). Used when [artworkKey] is null. */
+    val artworkUrl: String? = null,
+    /** Other addresses of the same cover, tried in order when [artworkUrl] does not answer. */
+    val artworkAlternates: List<String> = emptyList(),
+    /** False when the source will not let this song be played (for example it is sold, not streamed). */
+    val playable: Boolean = true,
 )
 
 /**
@@ -60,6 +68,24 @@ interface MusicSourceAdapter {
     val displayName: String
     val description: String
     val fields: List<SourceField>
+
+    /** What this source is, for the catalogue of integrations. */
+    val kind: IntegrationKind get() = IntegrationKind.PERSONAL_SERVER
+
+    /** The address used when the form has none: open catalogues live at one well-known place. */
+    val defaultBaseUrl: String? get() = null
+
+    /** False for sources that need no sign-in; nothing is stored in the Keychain for them. */
+    val needsCredentials: Boolean get() = fields.any { it.secret }
+
+    /**
+     * True when the whole library of the source is copied into the profile's library (a personal
+     * server). False for catalogues too large to copy, which are searched instead.
+     */
+    val syncsLibrary: Boolean get() = true
+
+    /** Whether songs may be saved for offline listening. */
+    val allowsDownload: Boolean get() = syncsLibrary
 
     /**
      * Signs in with what the user typed. Throws [SourceException] with a message for the user when
@@ -89,4 +115,13 @@ interface MusicSourceAdapter {
         "aiff", "aif" -> "aiff"
         else -> "bin"
     }
+}
+
+/** What an integration is, as the catalogue of Music integrations groups them. */
+enum class IntegrationKind(val label: String) {
+    PLAYBACK_SOURCE("Playback source"),
+    PERSONAL_SERVER("Personal music server"),
+    METADATA_PROVIDER("Metadata provider"),
+    LYRICS_PROVIDER("Lyrics provider"),
+    LOCAL_LIBRARY("Local library"),
 }

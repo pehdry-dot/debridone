@@ -22,10 +22,13 @@ internal fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)
  * Navidrome and other servers that speak the Subsonic API (Airsonic, Gonic, Ampache's Subsonic
  * mode...). Uses token authentication: the password itself is never sent, only a salted hash.
  */
-class SubsonicAdapter : MusicSourceAdapter {
+class SubsonicAdapter : MusicCatalogAdapter {
     override val id = ID
-    override val displayName = "Navidrome / Subsonic"
-    override val description = "Your own Navidrome, Airsonic, Gonic or other Subsonic-compatible server."
+    override val displayName = "Navidrome / OpenSubsonic"
+    override val description = "Your own Navidrome, Airsonic, Gonic or other server that speaks the Subsonic or OpenSubsonic API."
+    override val capabilities = CatalogCapabilities(
+        searchTracks = true, searchArtists = true, searchAlbums = true, featured = true, genres = true, ownPlaylists = true,
+    )
     override val fields = listOf(
         SourceField("baseUrl", "Server address", placeholder = "https://music.example.com"),
         SourceField("username", "User name"),
@@ -57,32 +60,113 @@ class SubsonicAdapter : MusicSourceAdapter {
                 val albumId = album.obj()?.string("id") ?: continue
                 val detail = call(baseUrl, user, secret, "getAlbum", listOf("id" to albumId)).get("album").obj() ?: continue
                 val albumArtist = detail.string("artist")
-                val songs = detail["song"].array().mapNotNull { song ->
-                    val node = song.obj() ?: return@mapNotNull null
-                    val remoteId = node.string("id") ?: return@mapNotNull null
-                    RemoteTrack(
-                        remoteId = remoteId,
-                        title = node.string("title") ?: "Untitled",
-                        artist = node.string("artist"),
-                        album = node.string("album") ?: detail.string("name"),
-                        albumArtist = albumArtist,
-                        genre = node.string("genre") ?: detail.string("genre"),
-                        year = node.int("year") ?: detail.int("year"),
-                        trackNo = node.int("track"),
-                        discNo = node.int("discNumber"),
-                        durationMs = (node.long("duration") ?: 0) * 1000,
-                        format = node.string("suffix"),
-                        bitrateKbps = node.int("bitRate"),
-                        sizeBytes = node.long("size") ?: 0,
-                        artworkKey = node.string("coverArt") ?: detail.string("coverArt"),
-                    )
-                }
+                val songs = detail["song"].array().mapNotNull { song -> song.obj()?.let { toTrack(it, detail) } }
                 if (songs.isNotEmpty()) onPage(songs)
             }
             if (albums.size < PAGE) break
             offset += albums.size
         }
     }
+
+    private fun toTrack(node: JsonObject, album: JsonObject? = null): RemoteTrack? {
+        val remoteId = node.string("id") ?: return null
+        return RemoteTrack(
+            remoteId = remoteId,
+            title = node.string("title") ?: "Untitled",
+            artist = node.string("artist"),
+            album = node.string("album") ?: album?.string("name"),
+            albumArtist = album?.string("artist") ?: node.string("displayAlbumArtist"),
+            genre = node.string("genre") ?: album?.string("genre"),
+            year = node.int("year") ?: album?.int("year"),
+            trackNo = node.int("track"),
+            discNo = node.int("discNumber"),
+            durationMs = (node.long("duration") ?: 0) * 1000,
+            format = node.string("suffix"),
+            bitrateKbps = node.int("bitRate"),
+            sizeBytes = node.long("size") ?: 0,
+            artworkKey = node.string("coverArt") ?: album?.string("coverArt"),
+        )
+    }
+
+    // ---------------------------------------------------------------- searching and browsing
+
+    private fun call(connection: SourceConnection, secret: String, method: String, parameters: List<Pair<String, String>> = emptyList()): JsonObject =
+        call(requireNotNull(connection.baseUrl), connection.username.orEmpty(), secret, method, parameters)
+
+    override fun search(connection: SourceConnection, secret: String, query: String, limit: Int): CatalogResults {
+        if (query.isBlank()) return CatalogResults()
+        val size = limit.coerceIn(1, 100).toString()
+        val result = call(connection, secret, "search3", listOf("query" to query, "songCount" to size, "albumCount" to size, "artistCount" to size))["searchResult3"].obj()
+            ?: return CatalogResults()
+        return CatalogResults(
+            tracks = result["song"].array().mapNotNull { it.obj()?.let { node -> toTrack(node) } },
+            artists = result["artist"].array().mapNotNull { it.obj() }.mapNotNull { node ->
+                RemoteArtist(
+                    remoteId = node.string("id") ?: return@mapNotNull null,
+                    name = node.string("name") ?: return@mapNotNull null,
+                    artworkKey = node.string("coverArt"),
+                    albumCount = node.int("albumCount"),
+                )
+            },
+            albums = result["album"].array().mapNotNull { it.obj()?.let(::toAlbum) },
+        )
+    }
+
+    private fun toAlbum(node: JsonObject): RemoteAlbum? = RemoteAlbum(
+        remoteId = node.string("id") ?: return null,
+        title = node.string("name") ?: node.string("title") ?: return null,
+        artist = node.string("artist"),
+        year = node.int("year"),
+        trackCount = node.int("songCount"),
+        durationMs = node.long("duration")?.times(1000),
+        artworkKey = node.string("coverArt"),
+    )
+
+    override fun featured(connection: SourceConnection, secret: String, genre: String?, limit: Int): List<RemoteTrack> {
+        val size = limit.coerceIn(1, 200).toString()
+        return if (genre.isNullOrBlank()) {
+            call(connection, secret, "getRandomSongs", listOf("size" to size))["randomSongs"].obj()?.get("song").array()
+        } else {
+            call(connection, secret, "getSongsByGenre", listOf("genre" to genre, "count" to size))["songsByGenre"].obj()?.get("song").array()
+        }.mapNotNull { it.obj()?.let { node -> toTrack(node) } }
+    }
+
+    override fun genres(connection: SourceConnection, secret: String): List<String> =
+        call(connection, secret, "getGenres")["genres"].obj()?.get("genre").array()
+            .mapNotNull { it.obj() }
+            .sortedByDescending { it.int("songCount") ?: 0 }
+            .mapNotNull { it.string("value") }
+
+    override fun artistTracks(connection: SourceConnection, secret: String, artistId: String, limit: Int): List<RemoteTrack> {
+        val albums = call(connection, secret, "getArtist", listOf("id" to artistId))["artist"].obj()?.get("album").array().mapNotNull { it.obj()?.string("id") }
+        val tracks = ArrayList<RemoteTrack>()
+        for (albumId in albums) {
+            if (tracks.size >= limit) break
+            tracks += albumTracks(connection, secret, albumId)
+        }
+        return tracks.take(limit)
+    }
+
+    override fun albumTracks(connection: SourceConnection, secret: String, albumId: String): List<RemoteTrack> {
+        val album = call(connection, secret, "getAlbum", listOf("id" to albumId))["album"].obj() ?: return emptyList()
+        return album["song"].array().mapNotNull { it.obj()?.let { node -> toTrack(node, album) } }
+    }
+
+    override fun ownPlaylists(connection: SourceConnection, secret: String): List<RemotePlaylist> =
+        call(connection, secret, "getPlaylists")["playlists"].obj()?.get("playlist").array().mapNotNull { it.obj() }.mapNotNull { node ->
+            RemotePlaylist(
+                remoteId = node.string("id") ?: return@mapNotNull null,
+                name = node.string("name") ?: return@mapNotNull null,
+                owner = node.string("owner"),
+                trackCount = node.int("songCount"),
+                description = node.string("comment"),
+                artworkKey = node.string("coverArt"),
+            )
+        }
+
+    override fun playlistTracks(connection: SourceConnection, secret: String, playlistId: String): List<RemoteTrack> =
+        call(connection, secret, "getPlaylist", listOf("id" to playlistId))["playlist"].obj()?.get("entry").array()
+            .mapNotNull { it.obj()?.let { node -> toTrack(node) } }
 
     override fun streamUrl(connection: SourceConnection, secret: String, remoteId: String): String =
         // format=raw asks for the original file rather than a transcode.

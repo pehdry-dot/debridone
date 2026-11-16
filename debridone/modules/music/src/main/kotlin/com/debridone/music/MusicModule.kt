@@ -24,7 +24,11 @@ import com.debridone.music.metadata.MetadataEndpoints
 import com.debridone.music.metadata.MusicMetadataService
 import com.debridone.music.playback.MusicPlaybackEngine
 import com.debridone.music.playlists.PlaylistRepository
+import com.debridone.music.sources.IntegrationKind
+import com.debridone.music.sources.MusicPluginManifest
 import com.debridone.music.sources.MusicSourceManager
+import com.debridone.music.sources.RemotePlaylist
+import com.debridone.music.sources.RemoteTrack
 import com.debridone.music.sources.SyncSummary
 import com.debridone.module.PluginActionResult
 import com.debridone.module.storage.PluginDescriptor
@@ -39,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** Music's working parts, available once the module has opened its storage. */
 class MusicServices internal constructor(
@@ -85,7 +90,10 @@ class MusicModule(
         val database = requireDatabase()
         val artwork = ArtworkStore(database, storage.dataDir.resolve("artwork"), clock)
         val library = MusicLibraryRepository(database, artwork, clock)
-        val sources = MusicSourceManager(database, library, storage.secrets, storage.dataDir.resolve("offline"), clock)
+        val sources = MusicSourceManager(
+            database, library, storage.secrets, storage.dataDir.resolve("offline"), clock,
+            artworkCacheDirectory = storage.cacheDir.resolve("catalogue-art"),
+        )
         val player = MusicPlayer(library, database, engineFactory, moduleScope, sources::resolveUri, clock)
         _services.value = MusicServices(
             library = library,
@@ -98,6 +106,7 @@ class MusicModule(
                 database, library,
                 providerEnabled = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.enabled == true },
                 endpoints = metadataEndpoints, clock = clock,
+                previewDirectory = storage.cacheDir.resolve("cover-previews"),
             ),
         )
         // The kinds of source Music can use, listed in Music's own plugin registry.
@@ -112,6 +121,10 @@ class MusicModule(
         services.player.setAudioDevice(services.preferences[MusicPreferences.AUDIO_DEVICE] ?: "auto")
         services.player.switchProfile(profileId)
         _activeProfile.value = profileId
+        // Catalogue songs that were played once, never added and not heard for a month are forgotten.
+        if (changed && profileId != null) {
+            moduleScope.launch(Dispatchers.IO) { runCatching { services.library.purgeHidden(profileId, clock() - HIDDEN_RETENTION_MS) } }
+        }
         if (changed && profileId != null && services.preferences.boolean(MusicPreferences.RESCAN_ON_START, true)) {
             rescan()
             syncAllSources()
@@ -136,17 +149,126 @@ class MusicModule(
     }
 
     private val builtInSources = listOf(
-        PluginDescriptor("local-files", "Files on this computer", PluginKind.SOURCE, description = "Folders and files you add. Read in place, never copied.", builtIn = true),
-        PluginDescriptor("subsonic", "Navidrome / Subsonic", PluginKind.LIBRARY_INTEGRATION, description = "Your own Subsonic-compatible music server.", builtIn = true),
-        PluginDescriptor("jellyfin", "Jellyfin", PluginKind.LIBRARY_INTEGRATION, description = "The music libraries of your own Jellyfin server.", builtIn = true),
+        PluginDescriptor("local-files", "Local Music", PluginKind.SOURCE, description = "Folders and files you add. Read in place, never copied.", builtIn = true),
+        PluginDescriptor("audius", "Audius", PluginKind.SOURCE, description = "Open music catalogue of independent artists. No account needed.", builtIn = true),
+        PluginDescriptor("subsonic", "Navidrome / OpenSubsonic", PluginKind.LIBRARY_INTEGRATION, description = "Your own Subsonic-compatible music server.", builtIn = true),
+        PluginDescriptor("jellyfin", "Jellyfin Music", PluginKind.LIBRARY_INTEGRATION, description = "The music libraries of your own Jellyfin server.", builtIn = true),
         PluginDescriptor("stream-url", "Radio and stream addresses", PluginKind.SOURCE, description = "Internet radio and other direct audio streams.", builtIn = true),
     )
 
-    override val pluginImportUnavailableReason: String =
-        "Music's sources are built in: add a Navidrome/Subsonic or Jellyfin server, or a stream address, as a connection. " +
-            "Plugin files or addresses from elsewhere are not accepted, because they could not be checked before handling your sign-in."
+    /** Import works: a Music plugin manifest, from an address or a file. */
+    override val pluginImportUnavailableReason: String? = null
 
-    override suspend fun importPlugin(location: String): PluginActionResult = PluginActionResult.NotAvailableYet(pluginImportUnavailableReason)
+    /**
+     * Installs a Music plugin from its manifest: an https address, or a `.json` / `.zip` file on
+     * this computer (the zip must hold a `manifest.json`). The manifest is data only; see
+     * [MusicPluginManifest]. A plugin that needs no sign-in is set up for the active profile at
+     * once; the others wait for the user to connect.
+     */
+    override suspend fun importPlugin(location: String): PluginActionResult = withContext(Dispatchers.IO) {
+        val services = _services.value ?: return@withContext PluginActionResult.Failure("Music is not running.")
+        val text = try {
+            readManifestText(location)
+        } catch (e: Exception) {
+            return@withContext PluginActionResult.Failure(e.message ?: "The manifest could not be read.")
+        }
+        val manifest = MusicPluginManifest.parse(text).getOrElse {
+            return@withContext PluginActionResult.Failure(it.message ?: "That is not a Music plugin manifest.")
+        }
+        if (builtInSources.any { it.id == manifest.id }) {
+            return@withContext PluginActionResult.Failure("\"${manifest.id}\" is the id of a built-in integration; a plugin cannot replace it.")
+        }
+        services.sources.saveManifest(manifest, location)
+        val installed = registerPlugin(
+            PluginDescriptor(
+                id = manifest.id,
+                name = manifest.name,
+                kind = if (manifest.kind == IntegrationKind.PERSONAL_SERVER) PluginKind.LIBRARY_INTEGRATION else PluginKind.SOURCE,
+                version = manifest.version,
+                description = manifest.description,
+                origin = location,
+            ),
+        )
+        val profileId = _activeProfile.value
+        if (profileId != null && manifest.connectsWithoutSignIn) {
+            val setup = runCatching { services.sources.connectPlugin(profileId, manifest) }
+            setup.exceptionOrNull()?.let { reportPluginError(manifest.id, it.message) }
+            setup.getOrNull()?.let { reportPluginError(manifest.id, it.problems.takeIf { p -> p.isNotEmpty() }?.joinToString("; ")?.take(600)) }
+        }
+        PluginActionResult.Success(plugins.installed.value.firstOrNull { it.id == manifest.id } ?: installed)
+    }
+
+    private fun readManifestText(location: String): String {
+        val trimmed = location.trim()
+        if (trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)) {
+            return com.debridone.music.sources.manifestFromAddress(trimmed)
+        }
+        val path = runCatching { java.nio.file.Paths.get(trimmed.removePrefix("file://")) }.getOrNull()
+            ?: throw IllegalArgumentException("Enter the https address of a manifest, or the path of a manifest file.")
+        if (!java.nio.file.Files.isRegularFile(path)) throw IllegalArgumentException("There is no file at $path.")
+        if (java.nio.file.Files.size(path) > 8L * 1024 * 1024) throw IllegalArgumentException("That file is too large to be a plugin package.")
+        if (path.fileName.toString().lowercase().endsWith(".zip")) {
+            java.util.zip.ZipFile(path.toFile()).use { zip ->
+                val entry = zip.getEntry("manifest.json") ?: throw IllegalArgumentException("The package has no manifest.json at its top level.")
+                if (entry.size > MusicPluginManifest.MAX_BYTES) throw IllegalArgumentException("The package's manifest is too large.")
+                return zip.getInputStream(entry).use { String(it.readNBytes(MusicPluginManifest.MAX_BYTES + 1), Charsets.UTF_8) }
+            }
+        }
+        return String(java.nio.file.Files.readAllBytes(path), Charsets.UTF_8)
+    }
+
+    override fun onPluginRemoved(pluginId: String) {
+        val services = _services.value ?: return
+        services.sources.removePlugin(pluginId)
+        services.player.removeDeletedFromQueue()
+    }
+
+    // ---------------------------------------------------------------- online catalogues
+
+    /**
+     * Plays songs found in a source's catalogue. They play from the source and stay out of the
+     * library unless [keep]; their covers are fetched once playback has started.
+     */
+    fun playRemote(sourceId: Long, tracks: List<RemoteTrack>, startIndex: Int = 0, keep: Boolean = false, onDone: (Result<Int>) -> Unit = {}): Job =
+        moduleScope.launch(Dispatchers.IO) {
+            val profileId = _activeProfile.value ?: return@launch
+            val services = _services.value ?: return@launch
+            val result = runCatching {
+                val wanted = tracks.getOrNull(startIndex)
+                val playable = services.sources.materialize(profileId, sourceId, tracks, keep)
+                if (playable.isEmpty()) throw com.debridone.music.sources.SourceException("The source does not allow these songs to be played.")
+                val index = playable.indexOfFirst { it.remoteId == wanted?.remoteId }.coerceAtLeast(0)
+                services.player.play(playable, index)
+                playable.size
+            }
+            onDone(result)
+            if (result.isSuccess) runCatching { services.sources.fetchArtwork(profileId, sourceId, tracks) }
+        }
+
+    /** Adds songs found in a source's catalogue to the active profile's library. */
+    fun keepRemote(sourceId: Long, tracks: List<RemoteTrack>, onDone: (Result<List<Track>>) -> Unit = {}): Job = moduleScope.launch(Dispatchers.IO) {
+        val profileId = _activeProfile.value ?: return@launch
+        val services = _services.value ?: return@launch
+        val result = runCatching { services.sources.materialize(profileId, sourceId, tracks, keep = true) }
+        onDone(result)
+        if (result.isSuccess) runCatching { services.sources.fetchArtwork(profileId, sourceId, tracks) }
+    }
+
+    /** Copies a playlist kept on a source into the active profile's own playlists. */
+    fun importRemotePlaylist(sourceId: Long, playlist: RemotePlaylist, onDone: (Result<Int>) -> Unit = {}): Job = moduleScope.launch(Dispatchers.IO) {
+        val profileId = _activeProfile.value ?: return@launch
+        val services = _services.value ?: return@launch
+        val result = runCatching {
+            val remote = services.sources.playlistTracks(profileId, sourceId, playlist.remoteId)
+            val tracks = services.sources.materialize(profileId, sourceId, remote, keep = true)
+            if (tracks.isEmpty()) throw com.debridone.music.sources.SourceException("\"${playlist.name}\" has no songs that can be played.")
+            val created = services.playlists.create(profileId, playlist.name, playlist.description)
+            services.playlists.add(profileId, created.id, tracks.map { it.id })
+            runCatching { services.sources.fetchArtwork(profileId, sourceId, remote) }
+            tracks.size
+        }
+        onDone(result)
+    }
 
     // ---------------------------------------------------------------- source actions
 
@@ -234,6 +356,7 @@ class MusicModule(
             ProfileSettingsTableStore.createTableSql("music_profile_settings"),
         ),
         MusicSchema.library,
+        MusicSchema.catalogue,
     )
 
     override val supportedPluginKinds = setOf(
@@ -245,7 +368,7 @@ class MusicModule(
     )
 
     override val pluginImportHint =
-        "Music sources, library integrations (Navidrome/Subsonic, Jellyfin), metadata and lyrics providers."
+        "The https address or the file of a DebridOne Music plugin manifest. A manifest names one of Music's adapters and its settings; it carries no code."
 
     override val defaultMetadataProviders = listOf(
         MetadataProvider("embedded-tags", "Embedded tags", "Title, artist, album and artwork stored inside your music files.", enabled = true, priority = 0, implemented = true),
@@ -253,6 +376,10 @@ class MusicModule(
         MetadataProvider("cover-art-archive", "Cover Art Archive", "Album artwork linked to MusicBrainz releases, for songs without a cover.", enabled = true, priority = 20, implemented = true),
         MetadataProvider("lrclib", "LRCLIB", "Community lyrics, including time-synced lyrics. Asked when you open the lyrics of a song that has none.", enabled = true, priority = 30, implemented = true),
     )
+
+    private companion object {
+        const val HIDDEN_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+    }
 
     override val appearanceOptions: List<AppearanceOption> = listOf(
         StandardAppearanceOptions.accent(),

@@ -208,4 +208,36 @@ internal object MusicSchema {
         )
         """,
     )
+
+    /**
+     * Online catalogues, plugin manifests, provider health, MusicBrainz identifiers.
+     *
+     * `hidden` marks a song that was only played from an online catalogue (Audius, a server search)
+     * and that the user has not added to the library: it can be played, appears in the listening
+     * history and nowhere else.
+     */
+    val catalogue = Migration(
+        3, "music catalogue tracks, plugin manifests, provider health, MusicBrainz identifiers",
+        "ALTER TABLE music_tracks ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX music_tracks_hidden ON music_tracks (profile_id, hidden)",
+        "ALTER TABLE music_albums ADD COLUMN musicbrainz_release_group_id TEXT",
+        "ALTER TABLE music_sources ADD COLUMN plugin_id TEXT",
+        """
+        CREATE TABLE music_provider_health (
+            provider TEXT PRIMARY KEY,
+            ok INTEGER NOT NULL,
+            message TEXT,
+            latency_ms INTEGER,
+            checked_at INTEGER NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE music_plugin_manifests (
+            plugin_id TEXT PRIMARY KEY,
+            manifest TEXT NOT NULL,
+            origin TEXT,
+            installed_at INTEGER NOT NULL
+        )
+        """,
+    )
 }
