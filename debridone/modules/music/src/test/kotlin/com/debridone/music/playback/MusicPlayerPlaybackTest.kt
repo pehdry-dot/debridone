@@ -35,7 +35,7 @@ class MusicPlayerPlaybackTest {
 
     @Test
     fun playsAWholeAlbumAcrossFormatsInOrder() {
-        val album = Fixtures.formats.map { (_, file) -> Fixtures.item(file) }
+        val album = Fixtures.albumFiles.map { Fixtures.item(it) }
         val seen = CopyOnWriteArrayList<String>()
         player.playQueue(album)
         player.awaitState(timeoutMs = 30_000, what = "the album to end") { state ->

@@ -26,6 +26,14 @@ object Fixtures {
     val ogg: Path = firstAlbum.resolve("06 Sixth Sense.ogg")
     val opus: Path = firstAlbum.resolve("07 Seventh Heaven.opus")
     val elsewhere: Path = secondAlbum.resolve("01 Elsewhere.mp3")
+    val aiff: Path = root.resolve("Loose Files/Cancao Nona.aiff")
+    val adts: Path = root.resolve("Loose Files/12 - Untagged Tone.aac")
+
+    /** The seven tracks of "First Album", in track order. */
+    val albumFiles: List<Path> = listOf(mp3, flac, aac, alac, wav, ogg, opus)
+
+    /** Every audio file in the fixture tree. */
+    const val TOTAL_TRACKS = 10
 
     /** Label to file for every format the Music module claims to play. */
     val formats: List<Pair<String, Path>> = listOf(
@@ -36,6 +44,8 @@ object Fixtures {
         "WAV" to wav,
         "OGG Vorbis" to ogg,
         "Opus" to opus,
+        "AIFF" to aiff,
+        "AAC (raw ADTS)" to adts,
     )
 
     /** Copies the fixture tree into [target] so a test can move, change or delete files. */
@@ -54,7 +64,7 @@ object Fixtures {
         return target
     }
 
-    fun item(path: Path, id: Long = path.name.take(2).toLong()): QueueItem =
+    fun item(path: Path, id: Long = path.name.take(2).toLongOrNull() ?: path.name.hashCode().toLong()): QueueItem =
         QueueItem(trackId = id, uri = path.toString(), title = path.name.substringBeforeLast('.').drop(3), durationMs = 2_000)
 }
 
@@ -87,3 +97,58 @@ fun MusicPlayerController.awaitState(timeoutMs: Long = 8_000, what: String, pred
 
 fun PlayerState.summary(): String =
     "status=$status track=${current?.title} pos=$positionMs/$durationMs order=$order@$orderPosition error=${lastError?.message}"
+
+/**
+ * A throwaway DebridOne data directory with a copy of the audio fixtures, and a Music module opened
+ * on it. Opening it again simulates restarting the application.
+ */
+class MusicTestEnvironment : AutoCloseable {
+    val root: Path = Files.createTempDirectory("debridone-music-test")
+    val musicFolder: Path = Fixtures.copyTo(root.resolve("My Music"))
+    private val paths = com.debridone.platform.AppPaths(root.resolve("data"), root.resolve("cache"))
+    private val secrets = com.debridone.platform.secrets.FileSecretStore(root.resolve("secrets"))
+    private var module: com.debridone.music.MusicModule? = null
+
+    val firstAlbum: Path get() = musicFolder.resolve("Test Artist/First Album")
+
+    /** Starts (or restarts) the module with [profileId] active and waits for its start-up scan. */
+    fun open(
+        profileId: Long? = PROFILE_A,
+        engineFactory: () -> com.debridone.music.playback.MusicPlaybackEngine = { com.debridone.music.playback.FakePlaybackEngine() },
+    ): MusicServices {
+        module?.close()
+        val storage = com.debridone.module.storage.ModuleStorage(com.debridone.module.ModuleId.MUSIC, paths, secrets)
+        val opened = MusicModule(storage, engineFactory = engineFactory)
+        module = opened
+        kotlinx.coroutines.runBlocking {
+            opened.start()
+            check(opened.status.value == com.debridone.module.ModuleStatus.Running) { "Music did not start: ${opened.status.value}" }
+            opened.onProfileChanged(profileId)
+            opened.rescan().join()
+        }
+        return checkNotNull(opened.services.value)
+    }
+
+    fun switchProfile(profileId: Long?) {
+        val current = checkNotNull(module)
+        kotlinx.coroutines.runBlocking {
+            current.onProfileChanged(profileId)
+            current.rescan().join()
+        }
+    }
+
+    fun deleteProfile(profileId: Long) = kotlinx.coroutines.runBlocking { checkNotNull(module).deleteProfileData(profileId) }
+
+    val currentModule: MusicModule get() = checkNotNull(module)
+
+    override fun close() {
+        module?.close()
+        module = null
+        root.toFile().deleteRecursively()
+    }
+
+    companion object {
+        const val PROFILE_A = 1001L
+        const val PROFILE_B = 1002L
+    }
+}

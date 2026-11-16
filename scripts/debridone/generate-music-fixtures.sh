@@ -9,7 +9,8 @@ out="debridone/modules/music/src/test/resources/audio-fixtures"
 rm -rf "${out}"
 first="${out}/Test Artist/First Album"
 second="${out}/Other Artist/Second Album"
-mkdir -p "${first}" "${second}"
+loose="${out}/Loose Files"
+mkdir -p "${first}" "${second}" "${loose}"
 
 python3 - "${out}" <<'PY'
 import sys
@@ -67,7 +68,14 @@ run $(tone 330 2) -c:a libmp3lame -b:a 64k -id3v2_version 3 "${o1[@]}" "${second
 mv "${out}/cover-second.jpg" "${second}/cover.jpg"
 rm -f "${out}/cover-first.jpg"
 
+# Loose files outside any album folder: an AIFF with accented tags (ID3 chunk) and a raw ADTS AAC
+# stream that carries no tags at all, so the library has to fall back to the file name.
+run -f lavfi -i "sine=frequency=880:sample_rate=22050:duration=2" -c:a pcm_s16be -write_id3v2 1 -metadata title="Canção Nona" -metadata artist="João Só" \
+  -metadata album="Singles" -metadata genre="Fado" -metadata date="2010" "${loose}/Cancao Nona.aiff"
+run $(tone 988 2) -c:a aac -b:a 64k -f adts "${loose}/12 - Untagged Tone.aac"
+
 # Not audio: must be ignored by the scanner.
 printf 'not audio\n' > "${first}/notes.txt"
+# Ogg files get a random stream serial on every run; regenerating them is not a real change.
 find "${out}" -type f | sort
 du -sh "${out}"

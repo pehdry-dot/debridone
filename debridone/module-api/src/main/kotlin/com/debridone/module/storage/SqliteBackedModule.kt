@@ -116,8 +116,21 @@ abstract class SqliteBackedModule(
     final override suspend fun onProfileChanged(profileId: Long?) {
         activeProfileId = profileId
         if (database == null) return
-        guarded { reloadAppearance() }
+        guarded {
+            reloadAppearance()
+            onActiveProfileChanged(profileId)
+        }
     }
+
+    /**
+     * Hook for subclasses; runs on the IO dispatcher once storage is open, every time the active
+     * profile is set (including the first time after start, and null on sign-out). May be called
+     * again with the same profile.
+     */
+    protected open fun onActiveProfileChanged(profileId: Long?) {}
+
+    /** The module's own supervised scope: a failure in it marks only this module as failed. */
+    protected val moduleScope: kotlinx.coroutines.CoroutineScope get() = runtime.scope
 
     /**
      * Removes everything [profileId] owned in this module. Called when a profile is deleted so its
@@ -290,7 +303,11 @@ abstract class SqliteBackedModule(
         withContext(Dispatchers.IO) { block() }
     }
 
+    /** Hook for subclasses to release what they own; runs before the database is closed. */
+    protected open fun onClosing() {}
+
     override fun close() {
+        runCatching { onClosing() }
         runtime.stop()
         database?.let { runCatching { it.close() } }
         database = null
