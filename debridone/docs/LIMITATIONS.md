@@ -6,8 +6,8 @@ Verification status
   Music appearance per profile surviving a full restart, the selected section being restored,
   the four Plugins tabs, and the Cmd/Ctrl+1-4, comma and F shortcuts.
 - **Not verified:** the macOS `.app`/`.dmg`. It has not been built or run. The CI workflow that
-  builds and smoke-tests it has not been run either, because this repository could not be pushed
-  to from the build environment.
+  builds and smoke-tests it (`debridone-macos-dev.yml`) had not produced a run when this was
+  written; see "CI builds" in `BUILD.md` for how to start it.
 - **Not verified:** installing a Streaming addon and playing video in this fork. The build
   environment could not reach addon hosts. Nuvio's own code paths for these are unchanged.
 - **Not verified:** the macOS Keychain store. Its test only runs on macOS.

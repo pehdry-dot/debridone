@@ -54,8 +54,15 @@ xattr -dr com.apple.quarantine /Applications/DebridOne.app
 
 `.github/workflows/debridone-macos-dev.yml` runs the tests, then builds unsigned DMGs on
 `macos-15` (arm64) and `macos-15-intel` (x86_64), smoke-tests the app bundle (it must stay running
-and create its databases) and uploads the DMGs as artifacts. Start it from the Actions tab or by
-pushing to `nuvio-rebuild`.
+and create its databases) and uploads the DMGs as artifacts.
+
+It runs on every push to `nuvio-rebuild` that changes more than documentation. If no run appears
+under the repository's Actions tab, check that Actions is enabled for the repository, then push a
+commit to `nuvio-rebuild` yourself. The "Run workflow" button only appears once the workflow file
+is on the default branch, so it becomes available after `nuvio-rebuild` is made the default branch.
+
+The first run is the first time the macOS bundle is built for DebridOne. Treat a failure there as
+expected work, not as a regression.
 
 ## Signing and notarization
 
