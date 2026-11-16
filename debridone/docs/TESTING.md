@@ -39,7 +39,7 @@ Accounts and profiles
 8. Set a PIN on a profile, quit, reopen: the PIN is required.
 
 Shell
-1. Cmd+1…Cmd+4 switch Streaming, Music, Games, Manga. Cmd+, opens Settings. Cmd+F in Streaming opens Streaming's search.
+1. Cmd+1…Cmd+3 switch Streaming, Music, Manga (there is no Games section). Cmd+, opens Settings. Cmd+F in Streaming opens Streaming's search.
 2. Quit on Music and reopen: the app returns to Music. Window size and position are restored.
 3. No browser window opens at any point.
 
@@ -53,7 +53,7 @@ Music (see `MUSIC.md`; these are the points only a person at the Mac can confirm
 2. Play a song: **you hear it**. Pause, seek, change the volume, skip.
 3. Press the keyboard's play/pause, next and previous keys: Music responds. The song shows in
    Control Centre and the Now Playing widget, with its cover.
-4. Open Streaming, Games or Settings while it plays: the music continues and the mini-player stays.
+4. Open Streaming, Manga or Settings while it plays: the music continues and the mini-player stays.
 5. Start a video in Streaming: the music pauses. The media keys now control the video.
 6. Plug in or switch headphones or speakers while a song plays: the sound follows.
 7. Quit with Cmd+Q and reopen: library, playlists, favourites and the paused queue are back.
@@ -61,11 +61,39 @@ Music (see `MUSIC.md`; these are the points only a person at the Mac can confirm
 9. Plugins › Music: add your Navidrome/Subsonic or Jellyfin server; its songs appear and play.
 
 Plugins isolation
-1. Plugins › Music shows Music's sources; Games and Manga each show their own (empty) list and their own metadata providers.
+1. Plugins has three tabs: Streaming, Music, Manga. Plugins › Music shows Music's integrations; Manga shows its own (empty) list and its own metadata providers.
 2. Disable a Streaming addon: nothing changes in the other three tabs.
 
 Storage
 1. Settings › Storage & backups shows the folders. "Back up accounts now" writes a snapshot.
 
 Not testable yet (their engines are not built): game launching, manga reading, installing
-Games/Manga plugins.
+Manga plugins.
+
+## Play Next (Streaming player)
+
+Automated: `./gradlew :composeApp:desktopTest --tests "com.nuvio.app.features.player.NextEpisode*" --tests "com.nuvio.app.features.streams.StreamSimilarityTest"`.
+These drive the player's own command path (the command the native controls send for the button
+and for the pop-up) with simulated add-on answers.
+
+By hand, with an add-on installed:
+
+1. Play an episode of a series. Press the Next episode button: the next episode starts from the
+   source closest to the one that was playing (same add-on, group, resolution, codec).
+2. Let an episode run to its end: the pop-up shows the next episode's number and title; its
+   button starts it; pressing it while it says "Finding source…" or counts down cancels.
+3. Settings › Playback › Up Next: "Auto-play Next Episode", the countdown, and "Match the current
+   source". With matching off, or when nothing is close enough, the source list opens.
+4. Play the last episode of a season: Next continues with the first of the following season.
+
+## Music integrations
+
+1. Music › Discover with no source: three cards. "Install" on Audius; trending songs appear.
+2. Search for an artist and for a song; open an artist, an album, a playlist; play a song; the
+   mini-player shows it and playback continues in other sections.
+3. Plugins › Music: Test on MusicBrainz, Cover Art Archive and LRCLIB shows "Working" or the error.
+4. Import a plugin from a file; it is listed as set up for this profile; remove it.
+5. An album's menu › "Details and covers online": editions and covers, or a plain "none".
+6. Restart: the sources, plugins, provider switches and their last health are as they were.
+
+Live checks against the real services: `DEBRIDONE_LIVE_TESTS=1 ./gradlew :debridone:modules:music:test --tests "*MusicLiveServicesTest"`.

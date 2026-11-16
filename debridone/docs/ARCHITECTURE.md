@@ -1,13 +1,14 @@
 # DebridOne architecture
 
 DebridOne is a macOS desktop app built on [Nuvio Desktop](https://github.com/NuvioMedia/NuvioDesktop)
-(Kotlin Multiplatform + Compose). It hosts four independent entertainment modules in one window.
+(Kotlin Multiplatform + Compose). It hosts independent entertainment modules in one window: Streaming, Music and Manga.
+Games is dormant: its module stays in the repository, is not linked into the app, and its saved data is left untouched.
 
 | Module | Engine | State in this build |
 |---|---|---|
 | Streaming | Nuvio Desktop itself (`:composeApp`) | Working: Nuvio's features, running on on-device accounts |
 | Music | Original code (`:debridone:modules:music`), audio through libmpv | Working: library, player, playlists, sources, metadata. See [MUSIC.md](MUSIC.md) |
-| Games | Kotlin port of Hydra Launcher functionality (`:debridone:modules:gaming`) | Foundation only |
+| Games | Dormant. `:debridone:modules:gaming` is kept but not part of the application | Not in the app |
 | Manga | Houdoku-style reader with unmodified Tiyo extensions (`:debridone:modules:manga`) | Foundation only |
 
 "Foundation only" means the module has its own database and registries but no engine or content
@@ -35,7 +36,7 @@ logic is untouched. It depends on the `:debridone:*` projects; none of them depe
 
 ## Module isolation
 
-The four modules share the window, the account and low-level utilities. They share nothing else.
+The modules share the window, the account and low-level utilities. They share nothing else.
 
 1. **Code.** A module's Gradle project may depend only on `:debridone:platform` and
    `:debridone:module-api`. It cannot import another module because that module is not on its
@@ -46,7 +47,7 @@ The four modules share the window, the account and low-level utilities. They sha
 3. **Plugins and metadata.** `PluginRegistry` and `MetadataProviderRegistry` are UI contracts. Every
    module has its own implementation over its own tables (`music_plugins`, `hydra_sources`,
    `manga_extensions`). There is no method that lists plugins across modules. The Plugins screen
-   asks each registry separately; its tabs are four screens, not four filters. Streaming's tab
+   asks each registry separately; its tabs are separate screens, not filters. Streaming's tab
    hosts Nuvio's own addon and plugin screens.
 4. **Failure.** Each engine has its own supervised coroutine scope and status. `ModuleHost` starts
    them independently, so a module that fails to open its storage is shown as failed while the

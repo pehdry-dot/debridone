@@ -1,8 +1,12 @@
 # Music
 
-Music is one of DebridOne's four sections. It is original DebridOne code: a library, a player,
+Music is one of DebridOne's sections. It is original DebridOne code: a library, a player,
 playlists, sources and metadata of its own, stored in its own database. Nothing in it is shared
-with Streaming, Games or Manga.
+with Streaming or Manga.
+
+Its screens follow Streaming's layout: one navigation pill at the top (Home, Discover, Search,
+Library, a cogwheel for the settings), large page headings, a prominent search field, filter chips
+and grids of square covers.
 
 Eclipse Music was the feature reference. No Eclipse code, asset or protocol is used; its source
 and add-on format are not published.
@@ -40,22 +44,44 @@ numbers, and the cover. Edits live in DebridOne's library; the audio file is nev
 field you edit is locked: a rescan or an online lookup will not change it. Each field shows what
 the file says, any lock can be opened again, and "Restore original" puts everything back.
 
+**Discover.** Search and browse what your sources offer, without copying it: a large search
+field, a chip per source, genre chips, a grid of what the source puts forward (trending on Audius,
+random on a personal server), and results for songs, artists, albums and playlists. A result plays
+from its source. It joins your library only when you add it, favourite it or put it in a playlist;
+until then it appears in the listening history and nowhere else, and is forgotten after a month
+unheard. A song a source will not stream is listed as unavailable and is not played.
+
 **Sources** (Plugins › Music). Besides files on this computer:
 
-- Navidrome and other Subsonic-compatible servers,
+- Audius, an open catalogue of independent artists (no account),
+- Navidrome and other Subsonic / OpenSubsonic servers,
 - Jellyfin servers,
-- internet radio and other direct stream addresses.
+- internet radio and other direct stream addresses,
+- plugins: a manifest that names one of these adapters, or a server that speaks the Music Catalog
+  protocol. See [MUSIC_PLUGINS.md](MUSIC_PLUGINS.md).
 
-A source is a connection DebridOne signs in to itself. It is saved only if the sign-in works; a
-stream address is added only if it really answers with audio. Songs of a server join the profile's
-library, play from the server, and can be downloaded for offline listening. Passwords and tokens
-are kept in the macOS Keychain, never in the database.
+A source is a connection DebridOne makes itself. It is saved only if the sign-in works; a
+stream address is added only if it really answers with audio. A personal server's library joins
+the profile's library, plays from the server and can be downloaded for offline listening; its
+playlists can be saved as playlists of your own. Catalogues such as Audius are searched, not
+copied, and are streamed only. Passwords and tokens are kept in the macOS Keychain, never in the
+database; a source without a sign-in leaves nothing there.
 
-**Metadata.** Tags and covers embedded in the files, cover images in the album folder, and, when
-you ask for them: MusicBrainz (song details), the Cover Art Archive (a cover for a song that has
-none) and LRCLIB (lyrics). Lyrics embedded in a file are used first; you can also type or paste
-them, including time-stamped LRC lines that follow the music. Each online provider can be switched
-off. MusicBrainz is asked at most once a second and answers are cached.
+**Metadata.** Tags and covers embedded in the files and cover images in the album folder come
+first. On request:
+
+- MusicBrainz: details of a song; artists, albums and their editions with track listings; matching
+  an album to an edition and correcting its songs from it; refreshing from a match made before.
+- Cover Art Archive: every image it holds for an edition (front, back, others), to choose from.
+  Many albums have none; that is shown as such.
+- LRCLIB: lyrics, found automatically or searched by hand. The version closest in length to your
+  file is offered first.
+
+Lyrics embedded in a file are used first; you can also type or paste them, including time-stamped
+LRC lines. Timed lyrics follow the music with the current line emphasised; plain lyrics are shown
+as text and never given time stamps. Each provider can be switched off, shows whether it answered
+the last time it was asked, and has a Test button. MusicBrainz is asked at most once a second and
+answers are cached.
 
 **Per profile.** Library, folders, playlists, favourites, history, edits, sources, sign-ins,
 queue, settings and appearance all belong to one profile. Switching profile stops the music, saves
@@ -73,7 +99,7 @@ rescan and whether to continue playing when DebridOne starts, and the output dev
 | Keys | Action |
 |---|---|
 | Cmd+2 | Open Music |
-| Cmd+F | Search (in Music) |
+| Cmd+F | Search (in Music: the Search page, or Discover's field when Discover is open) |
 | Cmd+P | Play / pause |
 | Cmd+Right, Cmd+Left | Next, previous |
 | Cmd+Up, Cmd+Down | Volume |
@@ -91,8 +117,11 @@ debridone/modules/music            the engine: pure JVM, no UI, no other module
               MusicLibraryRepository          queries, favourites, history, edits and locks
               ArtworkStore                    covers, thumbnails, dominant colour
   playlists/  PlaylistRepository, M3uCodec
-  sources/    MusicSourceAdapter, SubsonicAdapter, JellyfinAdapter, MusicSourceManager
-  metadata/   MusicMetadataService            MusicBrainz, Cover Art Archive, LRCLIB
+  sources/    MusicSourceAdapter, MusicCatalogAdapter     the adapter contracts
+              AudiusAdapter, SubsonicAdapter, JellyfinAdapter, HttpCatalogAdapter
+              MusicPluginManifest                         the plugin format and its checks
+              MusicSourceManager                          connections, search, covers, downloads
+  metadata/   MusicMetadataService            MusicBrainz, Cover Art Archive, LRCLIB, health
   MusicPlayer                                 library tracks in, history and saved sessions out
   MusicModule                                 wiring, profiles, background jobs
 
@@ -139,7 +168,7 @@ sound device.
 
 - Spotify, Apple Music, Tidal, Deezer, YouTube Music and similar services. Their terms and copy
   protection do not allow another player to stream their catalogues.
-- Third-party plugin files, and Eclipse add-ons. Sources are built in.
+- Plugins that carry code, and Eclipse add-ons. A plugin is a manifest for one of Music's adapters.
 - Gapless playback, crossfade and an equaliser. There is a short gap between songs.
 - Writing tags back into audio files.
 - Compilations without an album-artist tag are split into one album per track artist.

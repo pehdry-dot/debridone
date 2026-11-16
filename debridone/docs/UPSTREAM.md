@@ -38,7 +38,20 @@ DebridOne keeps its changes to upstream files small and marked with a `DebridOne
 | `core/build/AppFeaturePolicy.desktop.kt` | Supporter pages, donation prompts and the in-app updater off |
 | `desktopMain/.../Main.kt` | Start-up of DebridOne services, window title and icon, URL scheme mapping; `--music-self-test` handled before anything else starts |
 
-New upstream-side files: `AppShellHost.kt`, `core/auth/LocalAccountBackend.kt`,
+Changes for Play Next, the Streaming navigation and Games removal:
+
+| Upstream file | Change |
+|---|---|
+| `core/network/NetworkStatusRepository.kt` | No account backend configured now counts as online (was "servers unreachable", which every offline check treated as offline) |
+| `features/player/PlayerNextEpisodeAutoPlay.kt`, `PlayerNextEpisodeStreamSelection.kt`, `PlayerScreenRuntimeSourceActions.kt`, `PlayerScreenRuntimeState.kt`, `PlayerScreenRuntimeUi.kt`, `PlayerEngine.kt`, `PlayerStreamsRepository.kt` | One next-episode transition; a press is tried whatever the probe says; similarity selection; reasons for the source list; cancel; test hooks |
+| `features/streams/StreamAutoPlaySelector.kt` | Exposes whether a stream can start by itself |
+| `features/player/PlayerSettingsRepository.kt`, `PlayerSettingsStorage*.kt`, `features/settings/PlaybackUpNextSettings.kt` | Two settings: match the current source, countdown |
+| `desktopMain/resources/player-ui/controls.{html,js,css}`, `desktop/NativePlayerController.kt` | The next-episode card cancels while busy and shows a spinner while searching |
+| `core/ui/FloatingNavigationBar.kt`, `core/ui/jelly/JellyTabs.kt`, `MainTabsDestination.kt` | An item can be icon-only with a tooltip; on desktop, Settings is a cogwheel |
+| `composeResources/values*/strings.xml` | New keys appended (English, pt, pt-BR); no existing string changed |
+
+New upstream-side files: `features/streams/StreamSimilarity.kt`; tests `NextEpisodeRootCauseTest`,
+`NextEpisodeTransitionTest`, `StreamSimilarityTest`. Also: `AppShellHost.kt`, `core/auth/LocalAccountBackend.kt`,
 `features/profiles/LocalAvatarImporter.kt`.
 
 Removed: upstream's GitHub workflows (release, issue triage, store publishing). They depend on

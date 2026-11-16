@@ -4,7 +4,7 @@ Verification status
 - Verified by running the app from source on Linux (virtual display): account sign-up, the
   remembered sign-in after a restart, creating a second profile, a different theme and different
   Music appearance per profile surviving a full restart, the selected section being restored,
-  the four Plugins tabs, and the Cmd/Ctrl+1-4, comma and F shortcuts.
+  the Plugins tabs, and the Cmd/Ctrl+1-3, comma and F shortcuts.
 - Verified on GitHub's macOS runners (Apple Silicon and Intel): the app compiles and packages
   into a `.dmg`, and the packaged app starts, stays running and creates `accounts.db` and the
   three module databases. The macOS Keychain store passes its test there too.
@@ -26,6 +26,32 @@ Verification status
 - Music, **not verified on Apple Silicon**: GitHub cancelled the Apple Silicon jobs of these runs
   for lack of runner capacity ("not acquired by Runner"). The code is the same; an Apple Silicon
   build is produced whenever such a runner is available.
+- Play Next, verified by tests only (615 tests of the player, streams, details and watching
+  packages on Linux): the cause of the failure is reproduced by a test that failed before the fix;
+  the button and the pop-up are driven through the command the native controls send; similarity
+  ranking, the wrong-episode rule, season boundary, missing sources, an add-on that never answers,
+  cancelling, the countdown, saved progress and subtitles are covered with simulated add-on
+  answers. **Not verified on a real stream**: the test environment has no add-ons and no debrid
+  account, so a transition between two real episodes has to be confirmed on your Mac.
+- Streaming's cogwheel and the Games removal, verified by running the app from source on Linux:
+  the navigation shows Home, Search, Library and a cogwheel with a "Settings" tooltip that opens
+  Streaming's settings; the sidebar and the Plugins tabs list Streaming, Music and Manga only.
+- Music integrations, verified by running the app from source on Linux against the real services:
+  installing Audius from Discover, its trending grid with covers, searching, a gated track shown
+  as unavailable, an Audius song playing through the audio engine with its cover in the
+  mini-player, the queue coming back after a restart; Plugins › Music with a plugin imported from
+  a file, "Test" reporting MusicBrainz as working and the Cover Art Archive as not answering (true
+  on that machine); the album dialog reporting that MusicBrainz and the archive have nothing for
+  a made-up album.
+- Music integrations, verified by live tests (`DEBRIDONE_LIVE_TESTS=1`): Audius search, artist
+  search, trending by genre, stream resolution, playback through libmpv and cover download;
+  MusicBrainz artist, album, edition, track-listing and artist-release lookups; LRCLIB search.
+- **Cover Art Archive: not verified end to end.** Every lookup is redirected to archive.org
+  storage hosts whose names change, which the build environment cannot reach. The redirect from
+  the real service was observed; listing, previewing and applying covers are tested against a
+  stand-in that answers in the archive's format.
+- Subsonic servers other than Navidrome, Jellyfin playlists, and the Music Catalog protocol were
+  tested against stand-in servers only (no public server speaks the protocol yet).
 - Music, verified against the real public services (`DEBRIDONE_LIVE_TESTS=1`, run from the build
   environment): the Navidrome project's demo server (a wrong password is refused; sign-in; 501
   songs, 50 albums and 465 covers synchronised; a song downloaded, and played both from the
@@ -47,7 +73,8 @@ Verification status
 - Nothing is signed or notarized.
 
 Modules
-- Games and Manga have storage, registries, metadata settings and appearance only. They cannot
+- Manga has storage, a registry, metadata settings and appearance only (Games is not part of the
+  app for now; its module is dormant and its saved data is left untouched). It cannot
   launch or read anything yet, and their plugin import is disabled.
 - Music is working; what it does not include is listed in `MUSIC.md` and under "Music" below.
 - Streaming is Nuvio Desktop, which upstream labels alpha software.
@@ -66,7 +93,7 @@ Streaming integrations
 - Discord presence, crash reporting and the in-app updater are disabled.
 
 Shell
-- Cmd+F opens search in Streaming and in Music; Games and Manga have no search yet.
+- Cmd+F opens search in Streaming and in Music; Manga has no search yet.
 - The Downloads section shows Streaming downloads; opening one continues in Streaming.
 - macOS menu-bar items for the modules and notifications are not implemented. Media keys and
   Now Playing are implemented for Music (and by Nuvio for video).

@@ -125,9 +125,14 @@ jobs:
             exit 1
           fi
           test -s "${DEBRIDONE_DATA_DIR}/accounts/accounts.db" || { echo "accounts.db was not created." >&2; cat "${RUNNER_TEMP}/debridone.log" >&2; exit 1; }
-          for module in music gaming manga; do
+          for module in music manga; do
             test -s "${DEBRIDONE_DATA_DIR}/modules/${module}/${module}.db" || { echo "${module}.db was not created." >&2; exit 1; }
           done
+          # Games is dormant: the application must not start it or create anything for it.
+          if [ -e "${DEBRIDONE_DATA_DIR}/modules/gaming" ]; then
+            echo "The application created a Games data folder although Games is not part of it." >&2
+            exit 1
+          fi
           kill "${pid}" || true
           echo "Smoke test passed: the app started and created its databases."
 

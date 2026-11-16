@@ -1,7 +1,7 @@
 # DebridOne
 
-A free macOS entertainment app with four independent sections in one window:
-**Streaming**, **Music**, **Games** and **Manga**. Each section has its own plugins, metadata,
+A free macOS entertainment app with independent sections in one window:
+**Streaming**, **Music** and **Manga**. Each section has its own plugins, metadata,
 library, settings and storage. One account holds several profiles.
 
 DebridOne is built on [Nuvio Desktop](https://github.com/NuvioMedia/NuvioDesktop) and is free
@@ -14,12 +14,12 @@ This is the foundation milestone.
 | Section | State |
 |---|---|
 | Streaming | Working. It is Nuvio Desktop, running on DebridOne's on-device accounts. |
-| Music | Working: local library, player, playlists, Navidrome/Subsonic and Jellyfin servers, radio streams, metadata and lyrics. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md). |
-| Games | In development: same foundation; no library or launcher yet. |
+| Music | Working: local library, player, playlists, Discover with Audius and your Navidrome/OpenSubsonic or Jellyfin server, radio streams, importable plugins, MusicBrainz, Cover Art Archive and LRCLIB. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md) and [MUSIC_PLUGINS.md](debridone/docs/MUSIC_PLUGINS.md). |
+| Games | Not part of the app for now. Its module is kept dormant in the repository; saved data is left untouched. |
 | Manga | In development: same foundation; no reader or extension host yet. |
 
 Also in place: on-device accounts with multiple profiles that survive restarts, crash-safe storage
-with automatic backups and recovery, a four-tab Plugins screen with isolated registries, per-section
+with automatic backups and recovery, a Plugins screen with one tab per section with isolated registries, per-section
 appearance settings, and keyboard shortcuts.
 
 The macOS app bundle has not been built or tested yet; so far the app has been run from source on
