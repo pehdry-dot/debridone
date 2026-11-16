@@ -93,6 +93,57 @@ class SourceBoundaryTest {
         assertTrue(banned.isEmpty(), "The Books/Ebooks module was removed from the project and must not return: $banned")
     }
 
+    /**
+     * macOS file systems ignore letter case. Gradle's type-safe project accessors generate one Java
+     * file per project, named after the root project's name and after each project path, so two
+     * names that differ only by case become one file on a Mac and the build fails there (and only
+     * there). This reproduces Gradle's naming so the mistake is caught on any system.
+     */
+    @Test
+    fun gradleProjectAccessorNamesAreUniqueIgnoringCase() {
+        val settings = File(root, "settings.gradle.kts").readText()
+        val rootName = Regex("""rootProject\.name\s*=\s*"([^"]+)"""").find(settings)?.groupValues?.get(1)
+            ?: fail("rootProject.name not found in settings.gradle.kts")
+        val included = Regex("""include\(\s*"(:[^"]+)"\s*\)""").findAll(settings).map { it.groupValues[1] }.toList()
+        assertTrue(included.any { it.startsWith(":debridone:") }, "expected :debridone projects in settings.gradle.kts")
+
+        // Every included project and each of its parent projects gets an accessor class.
+        val paths = included.flatMap { path ->
+            val segments = path.removePrefix(":").split(':')
+            segments.indices.map { end -> segments.subList(0, end + 1) }
+        }.distinct()
+
+        fun camel(value: String): String = value.split('-', '_', '.', ' ')
+            .filter { it.isNotEmpty() }
+            .joinToString("") { part -> part.replaceFirstChar(Char::uppercaseChar) }
+
+        val accessorNames = listOf(camel(rootName)) + paths.map { segments -> segments.joinToString("_", transform = ::camel) }
+        val clashes = accessorNames.groupBy { it.lowercase() }.filterValues { it.distinct().size > 1 }.values
+        assertTrue(
+            clashes.isEmpty(),
+            "Gradle project accessor names that differ only by case break the build on macOS: $clashes. " +
+                "Rename the root project or the clashing project.",
+        )
+    }
+
+    /** Two paths that differ only by letter case cannot both exist in a checkout on macOS. */
+    @Test
+    fun noTrackedPathsDifferOnlyByCase() {
+        val listing = runCatching {
+            val process = ProcessBuilder("git", "ls-files").directory(root).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            if (process.waitFor() == 0) output.lines().filter { it.isNotBlank() } else null
+        }.getOrNull()
+        // Not a git checkout (e.g. a source archive): scan DebridOne's own trees instead.
+        val paths = listing ?: listOf("debridone", "composeApp/src/debridoneMain", "scripts/debridone").flatMap { dir ->
+            File(root, dir).walkTopDown().filter { it.isFile && "/build/" !in it.invariantSeparatorsPath }
+                .map { it.relativeTo(root).invariantSeparatorsPath }.toList()
+        }
+        assertTrue(paths.isNotEmpty(), "no files found to check")
+        val clashes = paths.groupBy { it.lowercase() }.filterValues { it.size > 1 }.values
+        assertTrue(clashes.isEmpty(), "Paths that differ only by case cannot coexist on macOS: $clashes")
+    }
+
     private fun kotlinFiles(dir: File): List<File> =
         if (dir.isDirectory) dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() else emptyList()
 

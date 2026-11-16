@@ -47,6 +47,7 @@ Run the tests:
 
 ## Documentation
 
+- [Installing on a Mac](debridone/docs/INSTALL.md)
 - [Building](debridone/docs/BUILD.md)
 - [Testing](debridone/docs/TESTING.md)
 - [Architecture](debridone/docs/ARCHITECTURE.md)

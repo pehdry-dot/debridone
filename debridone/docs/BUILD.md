@@ -21,8 +21,9 @@ git clone --branch nuvio-rebuild https://github.com/pehdry-dot/debridone.git
 cd debridone
 ```
 
-The macOS libmpv runtime is stored with Git LFS. The build scripts fetch it for you and fall back
-to upstream Nuvio Desktop's LFS storage if this repository does not hold the objects.
+The macOS libmpv runtime is stored with Git LFS. `scripts/debridone/fetch-macos-runtime.sh` fetches
+it for you: from this repository or upstream Nuvio Desktop with Git LFS, or over HTTPS when Git LFS
+is not installed. Each file is checked against the SHA-256 recorded in the repository.
 
 ## Run from source
 
@@ -61,8 +62,9 @@ under the repository's Actions tab, check that Actions is enabled for the reposi
 commit to `nuvio-rebuild` yourself. The "Run workflow" button only appears once the workflow file
 is on the default branch, so it becomes available after `nuvio-rebuild` is made the default branch.
 
-The first run is the first time the macOS bundle is built for DebridOne. Treat a failure there as
-expected work, not as a regression.
+The Keychain test runs in its own job, so a failure there is visible but does not hold back the
+DMG. No Mac build has passed yet; see `LIMITATIONS.md`. Installing a build is described in
+`INSTALL.md`.
 
 ## Signing and notarization
 

@@ -34,6 +34,8 @@ tasks.withType<Test>().configureEach {
             exclude("**/build/**")
         },
     ).withPropertyName("debridoneSources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(rootProject.file("settings.gradle.kts")).withPropertyName("gradleSettings")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(
         rootProject.fileTree("composeApp/src/debridoneMain") { include("**/*.kt") },
     ).withPropertyName("debridoneUiSources").withPathSensitivity(PathSensitivity.RELATIVE)
