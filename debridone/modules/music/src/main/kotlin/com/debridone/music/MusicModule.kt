@@ -21,6 +21,7 @@ import com.debridone.music.library.ScanResult
 import com.debridone.music.library.Track
 import com.debridone.music.playback.MpvAudioEngine
 import com.debridone.music.playback.MusicPlaybackEngine
+import com.debridone.music.playlists.PlaylistRepository
 import com.debridone.platform.db.Migration
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,8 @@ class MusicServices internal constructor(
     val library: MusicLibraryRepository,
     val scanner: MusicScanner,
     val player: MusicPlayer,
+    val playlists: PlaylistRepository,
+    val preferences: MusicPreferences,
 )
 
 /**
@@ -69,7 +72,13 @@ class MusicModule(
         val artwork = ArtworkStore(database, storage.dataDir.resolve("artwork"), clock)
         val library = MusicLibraryRepository(database, artwork, clock)
         val player = MusicPlayer(library, database, engineFactory, moduleScope, ::resolveUri, clock)
-        _services.value = MusicServices(library, MusicScanner(library, clock), player)
+        _services.value = MusicServices(
+            library = library,
+            scanner = MusicScanner(library, clock),
+            player = player,
+            playlists = PlaylistRepository(database, library, clock),
+            preferences = MusicPreferences(::settingsStore),
+        )
     }
 
     override fun onActiveProfileChanged(profileId: Long?) {
@@ -77,8 +86,9 @@ class MusicModule(
         val changed = _activeProfile.value != profileId
         // Music never carries over: the old profile's session is saved and stopped first.
         services.player.switchProfile(profileId)
+        services.preferences.load(profileId)
         _activeProfile.value = profileId
-        if (changed && profileId != null) rescan()
+        if (changed && profileId != null && services.preferences.boolean(MusicPreferences.RESCAN_ON_START, true)) rescan()
     }
 
     override fun onProfileDeleted(profileId: Long) {
