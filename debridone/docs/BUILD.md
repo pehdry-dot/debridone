@@ -54,8 +54,11 @@ xattr -dr com.apple.quarantine /Applications/DebridOne.app
 ## CI builds
 
 `.github/workflows/debridone-macos-dev.yml` runs the tests, then builds unsigned DMGs on
-`macos-15` (arm64) and `macos-15-intel` (x86_64), smoke-tests the app bundle (it must stay running
-and create its databases) and uploads the DMGs as artifacts.
+`macos-15` and `macos-26` (both arm64) and `macos-15-intel` (x86_64), smoke-tests the app bundle
+(it must stay running and create its databases) and uploads the DMGs as artifacts. Apple Silicon is
+built on two images because GitHub's Apple Silicon runners are short on capacity at times and
+cancel a job that gets no machine. Started by hand (Actions › Run workflow), the workflow can
+build one architecture only.
 
 It runs on every push to `nuvio-rebuild` that changes more than documentation. If no run appears
 under the repository's Actions tab, check that Actions is enabled for the repository, then push a

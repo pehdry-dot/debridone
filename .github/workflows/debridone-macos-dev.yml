@@ -6,6 +6,15 @@ name: DebridOne macOS dev build
 
 on:
   workflow_dispatch:
+    inputs:
+      arch:
+        description: "Which Mac to build for"
+        type: choice
+        default: all
+        options:
+          - all
+          - arm64
+          - x86_64
   push:
     branches:
       - nuvio-rebuild
@@ -50,6 +59,8 @@ jobs:
   macos-platform-tests:
     name: macOS platform tests (Keychain)
     needs: tests
+    # Not repeated when only one architecture was asked for by hand.
+    if: github.event_name != 'workflow_dispatch' || inputs.arch == 'all'
     # The Keychain is the same on both architectures; the Intel runners are the ones with capacity.
     runs-on: macos-15-intel
     steps:
@@ -69,19 +80,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-            artifact: DebridOne-macOS-arm64-dev
-          # GitHub's Apple Silicon runners are sometimes short on capacity and a queued job is then
-          # cancelled by GitHub ("not acquired by Runner"). A second image doubles the chance of
-          # getting an Apple Silicon build out of a run; both produce the same app.
-          - runner: macos-14
-            arch: arm64
-            artifact: DebridOne-macOS-arm64-dev-built-on-macos-14
-          - runner: macos-15-intel
-            arch: x86_64
-            artifact: DebridOne-macOS-x86_64-dev
+        # Apple Silicon is built on two images. GitHub's Apple Silicon runners are short on capacity
+        # at times and a job that waits about 15 minutes without a machine is cancelled by GitHub
+        # ("not acquired by Runner"); a second image doubles the chance of getting a build out of a
+        # run. Both produce the same app. (macos-14 was retired by GitHub on 2 November 2026.)
+        #
+        # A manual run can ask for one architecture; a push builds all of them.
+        include: ${{ fromJSON((inputs.arch == 'arm64' && '[{"runner":"macos-15","arch":"arm64","artifact":"DebridOne-macOS-arm64-dev"},{"runner":"macos-26","arch":"arm64","artifact":"DebridOne-macOS-arm64-dev-built-on-macos-26"}]') || (inputs.arch == 'x86_64' && '[{"runner":"macos-15-intel","arch":"x86_64","artifact":"DebridOne-macOS-x86_64-dev"}]') || '[{"runner":"macos-15","arch":"arm64","artifact":"DebridOne-macOS-arm64-dev"},{"runner":"macos-26","arch":"arm64","artifact":"DebridOne-macOS-arm64-dev-built-on-macos-26"},{"runner":"macos-15-intel","arch":"x86_64","artifact":"DebridOne-macOS-x86_64-dev"}]') }}
     env:
       MACOS_ARCH: ${{ matrix.arch }}
       # Explicitly empty: this workflow must never sign or notarize.
