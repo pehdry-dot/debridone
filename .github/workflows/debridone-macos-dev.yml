@@ -50,7 +50,8 @@ jobs:
   macos-platform-tests:
     name: macOS platform tests (Keychain)
     needs: tests
-    runs-on: macos-15
+    # The Keychain is the same on both architectures; the Intel runners are the ones with capacity.
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -62,7 +63,7 @@ jobs:
         run: ./gradlew :debridone:platform:test --no-configuration-cache
 
   macos:
-    name: macOS ${{ matrix.arch }}
+    name: macOS ${{ matrix.arch }} (${{ matrix.runner }})
     needs: tests
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -71,8 +72,16 @@ jobs:
         include:
           - runner: macos-15
             arch: arm64
+            artifact: DebridOne-macOS-arm64-dev
+          # GitHub's Apple Silicon runners are sometimes short on capacity and a queued job is then
+          # cancelled by GitHub ("not acquired by Runner"). A second image doubles the chance of
+          # getting an Apple Silicon build out of a run; both produce the same app.
+          - runner: macos-14
+            arch: arm64
+            artifact: DebridOne-macOS-arm64-dev-built-on-macos-14
           - runner: macos-15-intel
             arch: x86_64
+            artifact: DebridOne-macOS-x86_64-dev
     env:
       MACOS_ARCH: ${{ matrix.arch }}
       # Explicitly empty: this workflow must never sign or notarize.
@@ -169,7 +178,7 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@v7
         with:
-          name: DebridOne-macOS-${{ matrix.arch }}-dev
+          name: ${{ matrix.artifact }}
           # The build writes the same DMG twice; upload only the final, architecture-named copy.
           path: composeApp/build/compose/release-dmgs/*.dmg
           if-no-files-found: error

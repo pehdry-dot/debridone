@@ -70,3 +70,22 @@ assets or protocol implementation is included.
 |---|---|---|
 | SQLite JDBC (`org.xerial:sqlite-jdbc`) | Apache-2.0 | Accounts and module databases |
 | Bouncy Castle (`org.bouncycastle:bcprov-jdk18on`) | MIT-style (Bouncy Castle Licence) | Argon2id password hashing |
+| jaudiotagger (`net.jthink:jaudiotagger`) | LGPL-2.1-or-later | Music: reading tags and embedded covers. Used as an unmodified library. |
+| Java Native Access (`net.java.dev.jna:jna`) | Apache-2.0 or LGPL-2.1-or-later | Music: calling libmpv and DebridOne's macOS music bridge. Already part of Nuvio Desktop. |
+
+Music plays audio through the libmpv and FFmpeg libraries that Nuvio Desktop already bundles for
+video (their licences are among Nuvio's attributions, see "Nuvio Desktop" above); DebridOne adds no
+other decoder.
+
+## Online services used by Music
+
+Only when asked, and each can be switched off in Plugins › Music:
+
+| Service | Used for | Data |
+|---|---|---|
+| MusicBrainz (musicbrainz.org) | Song details when you look a song up | CC0 / CC BY-NC-SA for some derived data; see musicbrainz.org/doc/About/Data_License |
+| Cover Art Archive (coverartarchive.org) | A cover for a song that has none | Images belong to their rights holders |
+| LRCLIB (lrclib.net) | Lyrics for a song that has none | Community-contributed |
+
+Navidrome, other Subsonic-compatible servers and Jellyfin are reached through their public APIs;
+no code from those projects is included.

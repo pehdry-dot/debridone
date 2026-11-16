@@ -55,8 +55,34 @@ class ModuleIsolationTest {
     private fun storage(id: ModuleId) = ModuleStorage(id, paths, secrets)
 
     private fun music() = MusicModule(storage(ModuleId.MUSIC)).also { opened += it }
+
+    /** Music lists its built-in source kinds in its registry; these tests are about what is added on top. */
+    private fun MusicModule.added() = plugins.installed.value.filterNot { it.builtIn }
     private fun gaming() = GamingModule(storage(ModuleId.GAMING)).also { opened += it }
     private fun manga() = MangaModule(storage(ModuleId.MANGA)).also { opened += it }
+
+    @Test
+    fun musicSourcesExistOnlyInMusic() = runBlocking {
+        val music = music().apply { start() }
+        val gaming = gaming().apply { start() }
+        val manga = manga().apply { start() }
+        assertEquals(
+            setOf("local-files", "subsonic", "jellyfin", "stream-url"),
+            music.plugins.installed.value.map { it.id }.toSet(),
+            "Music lists its own source kinds",
+        )
+        assertEquals(emptyList(), gaming.plugins.installed.value, "Music's sources must not show up in Games")
+        assertEquals(emptyList(), manga.plugins.installed.value, "Music's sources must not show up in Manga")
+        // A Music source id cannot be switched or removed through another module's registry.
+        assertIs<PluginActionResult.Failure>(gaming.plugins.setEnabled("subsonic", false))
+        assertIs<PluginActionResult.Failure>(manga.plugins.remove("jellyfin"))
+        assertTrue(music.plugins.installed.value.all { it.enabled })
+        // And Music's metadata providers are not offered by the others.
+        val musicProviders = music.metadataProviders.providers.value.map { it.id }.toSet()
+        assertTrue(musicProviders.containsAll(setOf("musicbrainz", "cover-art-archive", "lrclib")))
+        assertTrue(gaming.metadataProviders.providers.value.none { it.id in musicProviders })
+        assertTrue(manga.metadataProviders.providers.value.none { it.id in musicProviders })
+    }
 
     @Test
     fun everyModuleOpensItsOwnDatabaseFile() = runBlocking {
@@ -77,13 +103,13 @@ class ModuleIsolationTest {
         val manga = manga().apply { start() }
 
         music.registerPlugin(PluginDescriptor("navidrome-home", "Home Navidrome", PluginKind.LIBRARY_INTEGRATION, origin = "https://music.example/manifest.json"))
-        assertEquals(listOf("navidrome-home"), music.plugins.installed.value.map { it.id })
+        assertEquals(listOf("navidrome-home"), music.added().map { it.id })
         assertEquals(emptyList(), gaming.plugins.installed.value)
         assertEquals(emptyList(), manga.plugins.installed.value)
 
         manga.registerPlugin(PluginDescriptor("tiyo", "Tiyo", PluginKind.SOURCE, version = "1.0.3", origin = "npm:@tiyo/core"))
         assertEquals(listOf("tiyo"), manga.plugins.installed.value.map { it.id })
-        assertEquals(listOf("navidrome-home"), music.plugins.installed.value.map { it.id })
+        assertEquals(listOf("navidrome-home"), music.added().map { it.id })
         assertEquals(emptyList(), gaming.plugins.installed.value)
     }
 
@@ -95,12 +121,12 @@ class ModuleIsolationTest {
         gaming.registerPlugin(PluginDescriptor("shared-id", "Games thing", PluginKind.SOURCE))
 
         assertIs<PluginActionResult.Success>(music.plugins.setEnabled("shared-id", false))
-        assertFalse(music.plugins.installed.value.single().enabled)
+        assertFalse(music.added().single().enabled)
         assertTrue(gaming.plugins.installed.value.single().enabled, "disabling in Music must not touch Games")
 
         assertIs<PluginActionResult.Success>(gaming.plugins.remove("shared-id"))
         assertEquals(emptyList(), gaming.plugins.installed.value)
-        assertEquals("Music thing", music.plugins.installed.value.single().name, "removing from Games must not touch Music")
+        assertEquals("Music thing", music.added().single().name, "removing from Games must not touch Music")
     }
 
     @Test
@@ -128,7 +154,7 @@ class ModuleIsolationTest {
 
         val reopened = music().apply { start() }
         assertEquals(OpenOutcome.OPENED, reopened.lastOpenOutcome)
-        val plugin = reopened.plugins.installed.value.single()
+        val plugin = reopened.added().single()
         assertEquals("lrclib-extra", plugin.id)
         assertEquals("2.1", plugin.version)
         assertFalse(plugin.enabled, "the disabled state must persist")
@@ -208,7 +234,7 @@ class ModuleIsolationTest {
         assertEquals(ModuleStatus.Running, music.status.value)
         assertEquals(ModuleStatus.Running, manga.status.value)
         music.registerPlugin(PluginDescriptor("still-works", "Still works", PluginKind.SOURCE))
-        assertEquals(1, music.plugins.installed.value.size)
+        assertEquals(1, music.added().size)
     }
 
     @Test
@@ -233,7 +259,7 @@ class ModuleIsolationTest {
         assertEquals(OpenOutcome.RECREATED_AFTER_CORRUPTION, gaming.lastOpenOutcome)
         assertEquals(emptyList(), gaming.plugins.installed.value)
         assertEquals(OpenOutcome.OPENED, music.lastOpenOutcome)
-        assertEquals(listOf("keep-me"), music.plugins.installed.value.map { it.id })
+        assertEquals(listOf("keep-me"), music.added().map { it.id })
         assertTrue(paths.backupDirFor("gaming").resolve("corrupt").exists(), "the damaged file is kept for inspection")
     }
 

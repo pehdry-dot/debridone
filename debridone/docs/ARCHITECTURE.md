@@ -6,7 +6,7 @@ DebridOne is a macOS desktop app built on [Nuvio Desktop](https://github.com/Nuv
 | Module | Engine | State in this build |
 |---|---|---|
 | Streaming | Nuvio Desktop itself (`:composeApp`) | Working: Nuvio's features, running on on-device accounts |
-| Music | Original code (`:debridone:modules:music`) | Foundation only: storage, plugin registry, metadata settings, appearance |
+| Music | Original code (`:debridone:modules:music`), audio through libmpv | Working: library, player, playlists, sources, metadata. See [MUSIC.md](MUSIC.md) |
 | Games | Kotlin port of Hydra Launcher functionality (`:debridone:modules:gaming`) | Foundation only |
 | Manga | Houdoku-style reader with unmodified Tiyo extensions (`:debridone:modules:manga`) | Foundation only |
 

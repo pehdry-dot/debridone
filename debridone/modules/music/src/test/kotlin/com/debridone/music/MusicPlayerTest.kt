@@ -223,6 +223,27 @@ class MusicPlayerTest {
     }
 
     @Test
+    fun aPlaylistCanBePlayedShuffled() {
+        val music = openWithFake()
+        music.scan()
+        val playlist = music.playlists.create(PROFILE_A, "Mixed bag")
+        music.playlists.add(PROFILE_A, playlist.id, music.library.tracks(PROFILE_A, sort = TrackSort.TITLE).map { it.id })
+        val inOrder = music.playlists.tracks(PROFILE_A, playlist.id)
+        assertEquals(Fixtures.TOTAL_TRACKS, inOrder.size)
+
+        music.player.play(inOrder, startIndex = 0, shuffle = true)
+        val state = music.await("the shuffled playlist to load") { it.queue.size == inOrder.size && it.shuffle }
+        assertEquals(inOrder.first().title, state.current?.title, "the song you clicked plays first")
+        assertEquals(inOrder.indices.toSet(), state.order.toSet(), "every song of the playlist is played exactly once")
+        assertTrue(state.order != inOrder.indices.toList(), "the order is shuffled: ${state.order}")
+
+        // The same playlist unshuffled plays in its own order.
+        music.player.play(inOrder, shuffle = false)
+        val plain = music.await("the playlist in order") { !it.shuffle && it.order == inOrder.indices.toList() }
+        assertEquals(inOrder.map { it.id }, plain.queue.map { it.trackId })
+    }
+
+    @Test
     fun anEngineThatCannotStartIsReportedNotThrown() {
         val music = env.open { throw IllegalStateException("libmpv is not here") }
         music.scan()

@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -100,9 +101,7 @@ class MusicModule(
             ),
         )
         // The kinds of source Music can use, listed in Music's own plugin registry.
-        moduleScope.launch {
-            builtInSources.forEach { runCatching { registerPlugin(it) } }
-        }
+        runBlocking { builtInSources.forEach { runCatching { registerPlugin(it) } } }
     }
 
     override fun onActiveProfileChanged(profileId: Long?) {
@@ -175,7 +174,7 @@ class MusicModule(
     fun download(trackIds: List<Long>, onDone: (Int) -> Unit = {}): Job = moduleScope.launch(Dispatchers.IO) {
         val profileId = _activeProfile.value ?: return@launch
         val services = _services.value ?: return@launch
-        onDone(services.sources.download(profileId, trackIds))
+        onDone(runCatching { services.sources.download(profileId, trackIds) }.getOrDefault(0))
     }
 
     private val sourceMutex = Mutex()
@@ -198,8 +197,10 @@ class MusicModule(
         val profileId = _activeProfile.value ?: return@launch
         val services = _services.value ?: return@launch
         scanMutex.withLock {
-            services.library.removeFolder(profileId, folderId)
-            services.player.removeDeletedFromQueue()
+            runCatching {
+                services.library.removeFolder(profileId, folderId)
+                services.player.removeDeletedFromQueue()
+            }
         }
     }
 
@@ -212,8 +213,9 @@ class MusicModule(
                 block(profileId, services)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                // Already recorded in scanner.progress.
+            } catch (_: Throwable) {
+                // Already recorded in scanner.progress. A scan that fails must not take the whole
+                // Music section down with it: the library that is already there stays usable.
             }
         }
     }

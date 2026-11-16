@@ -314,7 +314,7 @@ fun MusicScreen() {
 
     (status as? ModuleStatus.Failed)?.let { failed ->
         Box(Modifier.fillMaxSize().padding(40.dp), contentAlignment = Alignment.Center) {
-            Notice("Music could not open its storage: ${failed.message}\nThe other sections are not affected.", PillTone.DANGER)
+            Notice("Music ran into a problem and stopped: ${failed.message}\nThe other sections are not affected. Restart DebridOne to try again.", PillTone.DANGER)
         }
         return
     }

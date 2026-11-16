@@ -14,7 +14,7 @@ This is the foundation milestone.
 | Section | State |
 |---|---|
 | Streaming | Working. It is Nuvio Desktop, running on DebridOne's on-device accounts. |
-| Music | In development: storage, plugin registry, metadata settings and appearance exist; no player yet. |
+| Music | Working: local library, player, playlists, Navidrome/Subsonic and Jellyfin servers, radio streams, metadata and lyrics. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md). |
 | Games | In development: same foundation; no library or launcher yet. |
 | Manga | In development: same foundation; no reader or extension host yet. |
 
