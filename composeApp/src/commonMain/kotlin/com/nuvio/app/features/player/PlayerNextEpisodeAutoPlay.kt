@@ -12,10 +12,13 @@ import com.nuvio.app.features.downloads.DownloadItem
 import com.nuvio.app.features.downloads.DownloadsRepository
 import com.nuvio.app.features.player.skip.NextEpisodeInfo
 import com.nuvio.app.features.player.skip.PlayerNextEpisodeRules
+import com.nuvio.app.features.streams.EpisodeTarget
 import com.nuvio.app.features.streams.StreamAutoPlayMode
 import com.nuvio.app.features.streams.StreamAutoPlaySelector
 import com.nuvio.app.features.streams.StreamAutoPlaySource
 import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamSimilarityConfig
+import com.nuvio.app.features.streams.StreamSimilarityReference
 import com.nuvio.app.features.watching.domain.isShortPlaceholderDuration
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -67,6 +70,33 @@ internal fun PlayerScreenRuntime.cancelNextEpisodeAutoPlay() {
     nextEpisodeAutoPlayCountdown = null
 }
 
+/** Why the next episode could not be started for the user and the source list is shown instead. */
+internal enum class NextEpisodeManualReason {
+    /** Automatic source selection is switched off and nothing resembled the current source. */
+    NoAutomaticChoice,
+
+    /** No add-on returned a stream for the next episode. */
+    NoSources,
+
+    /** Add-ons did not answer in time and nothing usable had arrived. */
+    TimedOut,
+
+    /** The chosen stream could not be turned into a playable address. */
+    ResolveFailed,
+}
+
+/**
+ * The one transition to the next episode. The "Next episode" button, the pop-up near the end of an
+ * episode, the keyboard shortcut and automatic playback all end up here.
+ *
+ * It asks the enabled add-ons for the next episode's streams (never reusing the current address),
+ * waits for them, chooses the stream closest to the one playing ([similarityReference]), and hands
+ * it to [onEpisodeStreamSelected]. When nothing can be chosen reliably the user is asked.
+ *
+ * @param userInitiated the user pressed something. The request is then made even when the
+ * connectivity probe reports offline (the probe can be wrong, and the user will see the outcome),
+ * and playback starts without a countdown.
+ */
 internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     previousJob: Job?,
     nextEpisodeInfo: NextEpisodeInfo?,
@@ -78,11 +108,15 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     currentStreamBingeGroup: String?,
     onDownloadedEpisodeSelected: (DownloadItem, MetaVideo) -> Unit,
     onEpisodeStreamSelected: (StreamItem, MetaVideo) -> Unit,
-    onManualSelectionRequired: (MetaVideo) -> Unit,
+    onManualSelectionRequired: (MetaVideo, NextEpisodeManualReason) -> Unit,
     onSearchingChanged: (Boolean) -> Unit,
     onSourceNameChanged: (String?) -> Unit,
     onCountdownChanged: (Int?) -> Unit,
     onNextEpisodeCardVisibleChanged: (Boolean) -> Unit,
+    userInitiated: Boolean = true,
+    similarityReference: StreamSimilarityReference? = null,
+    similarityConfig: StreamSimilarityConfig = StreamSimilarityConfig(),
+    hardTimeoutMs: Long = NEXT_EPISODE_HARD_TIMEOUT_MS,
 ): Job? {
     val nextVideoId = nextEpisodeInfo?.videoId ?: return null
     val nextVideo = allEpisodes.firstOrNull { video -> video.id == nextVideoId } ?: return null
@@ -99,8 +133,9 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         return null
     }
 
-    // Offline: the auto-play fan-out is a network search, so skip it entirely.
-    if (isNetworkOffline()) return null
+    // Offline: automatic playback is a network search, so skip it. A press by the user is tried
+    // regardless; if the network really is down the source list says so.
+    if (!userInitiated && isNetworkOffline()) return null
 
     previousJob?.cancel()
     onSearchingChanged(true)
@@ -151,14 +186,17 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
     } else {
         null
     }
+    val matchCurrentSource = settings.nextEpisodeMatchCurrentSource && similarityReference != null
 
     return launch {
         // Connectivity may have dropped between the request and the actual search.
-        if (isNetworkOffline()) {
+        if (!userInitiated && isNetworkOffline()) {
             onSearchingChanged(false)
             return@launch
         }
 
+        // A fresh request for the next episode. The repository ignores it only when the very same
+        // request is already running or answered (the preload), so add-ons are not asked twice.
         PlayerStreamsRepository.loadEpisodeStreams(
             type = type,
             videoId = nextVideo.id,
@@ -166,10 +204,10 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             episode = nextVideo.episode,
         )
 
-        if (effectiveMode == StreamAutoPlayMode.MANUAL) {
+        if (effectiveMode == StreamAutoPlayMode.MANUAL && !matchCurrentSource) {
             onSearchingChanged(false)
             onNextEpisodeCardVisibleChanged(false)
-            onManualSelectionRequired(nextVideo)
+            onManualSelectionRequired(nextVideo, NextEpisodeManualReason.NoAutomaticChoice)
             return@launch
         }
 
@@ -235,9 +273,27 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             )
         }
 
+        val episodeTarget = EpisodeTarget(nextVideo.season, nextVideo.episode)
         val selectionCoordinator = NextEpisodeStreamSelectionCoordinator(
             selectAfterDelay = ::trySelectStream,
             selectPreferred = ::tryBingeGroupOnly,
+            similarity = similarityReference?.takeIf { matchCurrentSource }?.let { reference ->
+                NextEpisodeSimilaritySelector(
+                    reference = reference,
+                    target = episodeTarget,
+                    nextEpisodeTitle = nextVideo.title,
+                    config = similarityConfig,
+                    playability = { stream ->
+                        StreamAutoPlaySelector.playability(
+                            stream = stream,
+                            debridEnabled = debridSettings.canResolvePlayableLinks,
+                            activeResolverProviderId = debridSettings.activeResolverProviderId,
+                        )
+                    },
+                )
+            },
+            episodeTarget = episodeTarget,
+            currentEpisode = similarityReference?.let { EpisodeTarget(it.season, it.episode) },
         )
 
         fun applySelectionDecision(decision: NextEpisodeStreamSelectionDecision) {
@@ -264,17 +320,22 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         applySelectionDecision(
             selectionCoordinator.onSelectionDelayElapsed(PlayerStreamsRepository.episodeStreamsState.value),
         )
-        val completed = withTimeoutOrNull(NEXT_EPISODE_HARD_TIMEOUT_MS) { autoSelectSettled.await() }
+        val completed = withTimeoutOrNull(hardTimeoutMs) { autoSelectSettled.await() }
         innerJob.cancel()
-        if (completed == null && !autoSelectTriggered) {
-            val allStreams = PlayerStreamsRepository.episodeStreamsState.value.groups.flatMap { it.streams }
-            trySelectStream(allStreams)?.let(::selectStream) ?: finishWithoutSelection()
+        val timedOut = completed == null && !autoSelectTriggered
+        if (timedOut) {
+            when (val decision = selectionCoordinator.onSearchTimedOut(PlayerStreamsRepository.episodeStreamsState.value)) {
+                is NextEpisodeStreamSelectionDecision.Selected -> selectStream(decision.stream)
+                else -> finishWithoutSelection()
+            }
         }
 
+        var resolveFailed = false
         val selected = selectedStream?.let { stream ->
             when (val result = DirectDebridPlaybackResolver.resolveToPlayableStream(stream, nextVideo.season, nextVideo.episode)) {
                 is DirectDebridPlayableResult.Success -> result.stream
                 else -> {
+                    resolveFailed = true
                     result.toastMessage()?.let { NuvioToastController.show(it) }
                     PlayerStreamsRepository.loadEpisodeStreams(
                         type = type,
@@ -290,7 +351,8 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
         onSearchingChanged(false)
         if (selected != null) {
             onSourceNameChanged((selected.name?.takeIf { it.isNotBlank() } ?: selected.addonName).trim())
-            for (i in 3 downTo 1) {
+            val countdownSeconds = if (userInitiated) 0 else settings.nextEpisodeCountdownSeconds.coerceIn(0, 30)
+            for (i in countdownSeconds downTo 1) {
                 onCountdownChanged(i)
                 delay(1000)
             }
@@ -299,7 +361,14 @@ internal fun CoroutineScope.launchPlayerNextEpisodeAutoPlay(
             onCountdownChanged(null)
             onSourceNameChanged(null)
         } else {
-            onManualSelectionRequired(nextVideo)
+            val hasAnyStream = PlayerStreamsRepository.episodeStreamsState.value.groups.any { it.streams.isNotEmpty() }
+            val reason = when {
+                resolveFailed -> NextEpisodeManualReason.ResolveFailed
+                !hasAnyStream && timedOut -> NextEpisodeManualReason.TimedOut
+                !hasAnyStream -> NextEpisodeManualReason.NoSources
+                else -> NextEpisodeManualReason.NoAutomaticChoice
+            }
+            onManualSelectionRequired(nextVideo, reason)
             onNextEpisodeCardVisibleChanged(false)
         }
     }

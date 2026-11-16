@@ -57,6 +57,38 @@ object PlayerStreamsRepository {
     private var episodeStreamsJob: Job? = null
     private var episodeStreamsRequestKey: String? = null
 
+    /** How many requests for an episode's streams were actually sent on (not answered from the running one). */
+    internal var episodeStreamsRequestsStarted: Int = 0
+        private set
+
+    /** Identifies the last episode whose streams were requested: "type::videoId::season::episode::...". */
+    internal var lastEpisodeStreamsRequest: String? = null
+        private set
+
+    private fun streamRequestKey(type: String, videoId: String, season: Int?, episode: Int?, pluginsGrouped: Boolean): String =
+        "$type::$videoId::$season::$episode::pluginsGrouped=$pluginsGrouped"
+
+    /**
+     * Test hook: makes [state] the answer in progress for this episode's streams, as if add-ons
+     * were being asked. Calling it again with a new state is an add-on answering.
+     */
+    internal fun setEpisodeStreamsForTest(
+        type: String,
+        videoId: String,
+        season: Int?,
+        episode: Int?,
+        state: StreamsUiState,
+    ) {
+        val pluginsGrouped = if (AppFeaturePolicy.pluginsEnabled) {
+            PluginRepository.uiState.value.groupStreamsByRepository
+        } else {
+            PluginsUiState(pluginsEnabled = false).groupStreamsByRepository
+        }
+        episodeStreamsJob?.cancel()
+        episodeStreamsRequestKey = streamRequestKey(type, videoId, season, episode, pluginsGrouped)
+        _episodeStreamsState.value = state
+    }
+
     fun loadSources(
         type: String,
         videoId: String,
@@ -190,7 +222,7 @@ object PlayerStreamsRepository {
         } else {
             PluginsUiState(pluginsEnabled = false)
         }
-        val requestKey = "$type::$videoId::$season::$episode::pluginsGrouped=${pluginUiState.groupStreamsByRepository}"
+        val requestKey = streamRequestKey(type, videoId, season, episode, pluginUiState.groupStreamsByRepository)
         PluginRepository.setLocalPluginSearchPaused(false)
         val current = stateFlow.value
         val cachedKey = requestKeyHolder()
@@ -204,6 +236,10 @@ object PlayerStreamsRepository {
         }
 
         log.d { "start $panelName request=$requestKey force=$forceRefresh previous=${current.streamDiagnostics()}" }
+        if (panelName == "episodeStreams") {
+            episodeStreamsRequestsStarted += 1
+            lastEpisodeStreamsRequest = requestKey
+        }
         setRequestKey(requestKey)
         jobHolder()?.cancel()
         stateFlow.value = StreamsUiState()

@@ -105,6 +105,8 @@ actual object PlayerSettingsStorage {
     private const val nextEpisodeThresholdPercentKey = "next_episode_threshold_percent_v2"
     private const val nextEpisodeThresholdMinutesBeforeEndKey = "next_episode_threshold_minutes_before_end_v2"
     private const val preloadNextEpisodeSourcesKey = "preload_next_episode_sources"
+    private const val nextEpisodeMatchCurrentSourceKey = "next_episode_match_current_source"
+    private const val nextEpisodeCountdownSecondsKey = "next_episode_countdown_seconds"
     private const val useLibassKey = "use_libass"
     private const val libassRenderTypeKey = "libass_render_type"
     private const val libassRenderScaleKey = "libass_render_scale"
@@ -1430,6 +1432,36 @@ actual object PlayerSettingsStorage {
         preferences
             ?.edit()
             ?.putBoolean(ProfileScopedKey.of(preloadNextEpisodeSourcesKey), enabled)
+            ?.apply()
+    }
+
+    actual fun loadNextEpisodeMatchCurrentSource(): Boolean? =
+        preferences?.let { sharedPreferences ->
+            val key = ProfileScopedKey.of(nextEpisodeMatchCurrentSourceKey)
+            if (sharedPreferences.contains(key)) {
+                sharedPreferences.getBoolean(key, true)
+            } else null
+        }
+
+    actual fun saveNextEpisodeMatchCurrentSource(enabled: Boolean) {
+        preferences
+            ?.edit()
+            ?.putBoolean(ProfileScopedKey.of(nextEpisodeMatchCurrentSourceKey), enabled)
+            ?.apply()
+    }
+
+    actual fun loadNextEpisodeCountdownSeconds(): Int? =
+        preferences?.let { sharedPreferences ->
+            val key = ProfileScopedKey.of(nextEpisodeCountdownSecondsKey)
+            if (sharedPreferences.contains(key)) {
+                sharedPreferences.getInt(key, 5)
+            } else null
+        }
+
+    actual fun saveNextEpisodeCountdownSeconds(seconds: Int) {
+        preferences
+            ?.edit()
+            ?.putInt(ProfileScopedKey.of(nextEpisodeCountdownSecondsKey), seconds)
             ?.apply()
     }
 

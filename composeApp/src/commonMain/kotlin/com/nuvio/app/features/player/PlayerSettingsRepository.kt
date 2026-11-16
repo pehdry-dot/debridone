@@ -105,6 +105,10 @@ data class PlayerSettingsUiState(
     val nextEpisodeThresholdPercent: Float = 99f,
     val nextEpisodeThresholdMinutesBeforeEnd: Float = 2f,
     val preloadNextEpisodeSources: Boolean = false,
+    /** DebridOne: choose the next episode's source by its likeness to the one playing. */
+    val nextEpisodeMatchCurrentSource: Boolean = true,
+    /** DebridOne: seconds shown before automatic playback of the next episode starts. */
+    val nextEpisodeCountdownSeconds: Int = 5,
     val useLibass: Boolean = true,
     val libassRenderType: String = "CUES",
     val libassRenderScale: String = "FULL",
@@ -221,6 +225,8 @@ object PlayerSettingsRepository {
     private var nextEpisodeThresholdPercent = 99f
     private var nextEpisodeThresholdMinutesBeforeEnd = 2f
     private var preloadNextEpisodeSources = false
+    private var nextEpisodeMatchCurrentSource = true
+    private var nextEpisodeCountdownSeconds = 5
     private var useLibass = true
     private var libassRenderType = "OVERLAY_OPEN_GL"
     private var libassRenderScale = "FULL"
@@ -325,6 +331,8 @@ object PlayerSettingsRepository {
         nextEpisodeThresholdPercent = 99f
         nextEpisodeThresholdMinutesBeforeEnd = 2f
         preloadNextEpisodeSources = false
+        nextEpisodeMatchCurrentSource = true
+        nextEpisodeCountdownSeconds = 5
         useLibass = true
         libassRenderType = "OVERLAY_OPEN_GL"
         libassRenderScale = "FULL"
@@ -510,6 +518,8 @@ object PlayerSettingsRepository {
         nextEpisodeThresholdPercent = PlayerSettingsStorage.loadNextEpisodeThresholdPercent() ?: 99f
         nextEpisodeThresholdMinutesBeforeEnd = PlayerSettingsStorage.loadNextEpisodeThresholdMinutesBeforeEnd() ?: 2f
         preloadNextEpisodeSources = PlayerSettingsStorage.loadPreloadNextEpisodeSources() ?: false
+        nextEpisodeMatchCurrentSource = PlayerSettingsStorage.loadNextEpisodeMatchCurrentSource() ?: true
+        nextEpisodeCountdownSeconds = (PlayerSettingsStorage.loadNextEpisodeCountdownSeconds() ?: 5).coerceIn(0, 30)
         useLibass = PlayerSettingsStorage.loadUseLibass() ?: true
         libassRenderType = PlayerSettingsStorage.loadLibassRenderType() ?: "CUES"
         libassRenderScale = PlayerSettingsStorage.loadLibassRenderScale() ?: "FULL"
@@ -1189,6 +1199,23 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.savePreloadNextEpisodeSources(enabled)
     }
 
+    fun setNextEpisodeMatchCurrentSource(enabled: Boolean) {
+        ensureLoaded()
+        if (nextEpisodeMatchCurrentSource == enabled) return
+        nextEpisodeMatchCurrentSource = enabled
+        publish()
+        PlayerSettingsStorage.saveNextEpisodeMatchCurrentSource(enabled)
+    }
+
+    fun setNextEpisodeCountdownSeconds(seconds: Int) {
+        ensureLoaded()
+        val value = seconds.coerceIn(0, 30)
+        if (nextEpisodeCountdownSeconds == value) return
+        nextEpisodeCountdownSeconds = value
+        publish()
+        PlayerSettingsStorage.saveNextEpisodeCountdownSeconds(value)
+    }
+
     fun setUseLibass(enabled: Boolean) {
         ensureLoaded()
         if (useLibass == enabled) return
@@ -1467,6 +1494,8 @@ object PlayerSettingsRepository {
             nextEpisodeThresholdPercent = nextEpisodeThresholdPercent,
             nextEpisodeThresholdMinutesBeforeEnd = nextEpisodeThresholdMinutesBeforeEnd,
             preloadNextEpisodeSources = preloadNextEpisodeSources,
+            nextEpisodeMatchCurrentSource = nextEpisodeMatchCurrentSource,
+            nextEpisodeCountdownSeconds = nextEpisodeCountdownSeconds,
             useLibass = useLibass,
             libassRenderType = libassRenderType,
             libassRenderScale = libassRenderScale,

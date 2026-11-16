@@ -203,6 +203,22 @@ object StreamAutoPlaySelector {
         )
     }
 
+    /**
+     * DebridOne: whether [stream] can be started without the user choosing it, by the same rules
+     * automatic playback already applies.
+     */
+    fun playability(
+        stream: StreamItem,
+        debridEnabled: Boolean,
+        activeResolverProviderId: String?,
+    ): StreamPlayability = when {
+        stream.playableDirectUrl != null || stream.serverTarget != null -> StreamPlayability.READY
+        debridEnabled && stream.isAddonDebridCandidate && stream.isReadyDebridAutoPlay(activeResolverProviderId) ->
+            StreamPlayability.READY
+        stream.isAutoPlayable(debridEnabled, activeResolverProviderId) -> StreamPlayability.RESOLVABLE
+        else -> StreamPlayability.NOT_PLAYABLE
+    }
+
     private fun StreamItem.isAutoPlayable(
         debridEnabled: Boolean,
         activeResolverProviderId: String?,

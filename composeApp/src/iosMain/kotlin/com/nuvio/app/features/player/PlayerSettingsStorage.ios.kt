@@ -103,6 +103,8 @@ actual object PlayerSettingsStorage {
     private const val nextEpisodeThresholdPercentKey = "next_episode_threshold_percent_v2"
     private const val nextEpisodeThresholdMinutesBeforeEndKey = "next_episode_threshold_minutes_before_end_v2"
     private const val preloadNextEpisodeSourcesKey = "preload_next_episode_sources"
+    private const val nextEpisodeMatchCurrentSourceKey = "next_episode_match_current_source"
+    private const val nextEpisodeCountdownSecondsKey = "next_episode_countdown_seconds"
     private const val useLibassKey = "use_libass"
     private const val libassRenderTypeKey = "libass_render_type"
     private const val iosVideoOutputPresetKey = "ios_video_output_preset"
@@ -1164,6 +1166,18 @@ actual object PlayerSettingsStorage {
     }
 
     actual fun loadPreloadNextEpisodeSources(): Boolean? = loadBoolean(preloadNextEpisodeSourcesKey)
+
+    actual fun loadNextEpisodeMatchCurrentSource(): Boolean? = loadBoolean(nextEpisodeMatchCurrentSourceKey)
+
+    actual fun saveNextEpisodeMatchCurrentSource(enabled: Boolean) {
+        saveBoolean(nextEpisodeMatchCurrentSourceKey, enabled)
+    }
+
+    actual fun loadNextEpisodeCountdownSeconds(): Int? = loadInt(nextEpisodeCountdownSecondsKey)
+
+    actual fun saveNextEpisodeCountdownSeconds(seconds: Int) {
+        saveInt(nextEpisodeCountdownSecondsKey, seconds)
+    }
 
     actual fun savePreloadNextEpisodeSources(enabled: Boolean) {
         saveBoolean(preloadNextEpisodeSourcesKey, enabled)

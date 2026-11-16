@@ -1910,4 +1910,15 @@
     <string name="settings_mdblist_library_lists_description">Escolhe que listas do MDBList aparecem na Biblioteca e em Gerir Listas. A Watchlist aparece sempre.</string>
     <string name="settings_mdblist_library_lists_summary">%1$d de %2$d visíveis</string>
     <string name="settings_mdblist_library_lists_empty">Ainda não foram encontradas listas na tua conta MDBList. Sincroniza para as carregar.</string>
+    <string name="settings_playback_next_episode_countdown">Contagem antes do próximo episódio</string>
+    <string name="settings_playback_next_episode_countdown_value">%1$d s</string>
+    <string name="settings_playback_next_episode_countdown_none">Nenhuma</string>
+    <string name="settings_playback_match_current_source">Manter a fonte atual</string>
+    <string name="settings_playback_match_current_source_description">No próximo episódio, escolhe a fonte mais parecida com a que está a ser reproduzida: mesmo addon, grupo de lançamento, resolução, codec e idioma. Se nenhuma for suficientemente parecida, aplicam-se as outras opções desta página, ou escolhe o utilizador.</string>
+    <string name="player_next_episode_cancel">Cancelar</string>
+    <string name="player_next_episode_no_sources">Não foram encontradas fontes para o próximo episódio.</string>
+    <string name="player_next_episode_timed_out">Os addons não responderam a tempo. Escolha uma fonte ou tente novamente.</string>
+    <string name="player_next_episode_choose_source">Nenhuma fonte parecida com a atual. Escolha uma para o próximo episódio.</string>
+    <string name="player_next_episode_resolve_failed">Não foi possível abrir essa fonte. Escolha outra.</string>
+    <string name="compose_nav_settings_tooltip">Definições</string>
 </resources>

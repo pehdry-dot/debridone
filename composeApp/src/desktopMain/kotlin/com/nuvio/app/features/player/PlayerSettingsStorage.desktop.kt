@@ -22,6 +22,8 @@ internal actual object PlayerSettingsStorage {
     private const val useLegacyPlayerLayoutKey = "use_legacy_player_layout"
     private const val autoSkipMovieCreditsKey = "auto_skip_movie_credits"
     private const val preloadNextEpisodeSourcesKey = "preload_next_episode_sources"
+    private const val nextEpisodeMatchCurrentSourceKey = "next_episode_match_current_source"
+    private const val nextEpisodeCountdownSecondsKey = "next_episode_countdown_seconds"
     private const val exoNativeMemoryEnabledKey = "exo_native_memory_enabled"
     private const val vodCacheEnabledKey = "vod_cache_enabled"
     private const val vodCacheSizeModeKey = "vod_cache_size_mode"
@@ -238,6 +240,10 @@ internal actual object PlayerSettingsStorage {
     actual fun saveUseLegacyPlayerLayout(enabled: Boolean) = saveBoolean(useLegacyPlayerLayoutKey, enabled)
     actual fun loadPreloadNextEpisodeSources(): Boolean? = loadBoolean(preloadNextEpisodeSourcesKey)
     actual fun savePreloadNextEpisodeSources(enabled: Boolean) = saveBoolean(preloadNextEpisodeSourcesKey, enabled)
+    actual fun loadNextEpisodeMatchCurrentSource(): Boolean? = loadBoolean(nextEpisodeMatchCurrentSourceKey)
+    actual fun saveNextEpisodeMatchCurrentSource(enabled: Boolean) = saveBoolean(nextEpisodeMatchCurrentSourceKey, enabled)
+    actual fun loadNextEpisodeCountdownSeconds(): Int? = loadInt(nextEpisodeCountdownSecondsKey)
+    actual fun saveNextEpisodeCountdownSeconds(seconds: Int) = saveInt(nextEpisodeCountdownSecondsKey, seconds)
     actual fun loadExoNativeMemoryEnabled(): Boolean? = loadBoolean(exoNativeMemoryEnabledKey)
     actual fun saveExoNativeMemoryEnabled(enabled: Boolean) = saveBoolean(exoNativeMemoryEnabledKey, enabled)
     actual fun loadVodCacheEnabled(): Boolean? = loadBoolean(vodCacheEnabledKey)

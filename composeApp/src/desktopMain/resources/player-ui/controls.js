@@ -72,6 +72,7 @@ const nextEpisodeHeader = document.getElementById("nextEpisodeHeader");
 const nextEpisodeTitle = document.getElementById("nextEpisodeTitle");
 const nextEpisodeStatus = document.getElementById("nextEpisodeStatus");
 const nextEpisodeAction = document.getElementById("nextEpisodeAction");
+const nextEpisodeActionIcon = document.getElementById("nextEpisodeActionIcon");
 const sourcesButton = document.getElementById("sourcesButton");
 const episodesButton = document.getElementById("episodesButton");
 const chaptersButton = document.getElementById("chaptersButton");
@@ -338,6 +339,8 @@ let state = {
   nextEpisodeStatus: "",
   nextEpisodeActionLabel: "Play",
   nextEpisodePlayable: false,
+  nextEpisodeBusy: false,
+  nextEpisodeSearching: false,
   showSubmitIntro: false,
   showVideoSettings: false,
   showSources: false,
@@ -2620,6 +2623,12 @@ const renderNativePlaybackPrompts = () => {
   nextEpisodeCard.setAttribute("aria-hidden", showNextEpisode ? "false" : "true");
   nextEpisodeCard.classList.toggle("visible", showNextEpisode);
   nextEpisodeCard.classList.toggle("playable", Boolean(state.nextEpisodePlayable));
+  // DebridOne: while sources are being found or the countdown runs, the action cancels.
+  nextEpisodeCard.classList.toggle("busy", Boolean(state.nextEpisodeBusy));
+  nextEpisodeCard.classList.toggle("searching", Boolean(state.nextEpisodeSearching));
+  if (nextEpisodeActionIcon) {
+    setAttr(nextEpisodeActionIcon, "href", state.nextEpisodeBusy ? "#icon-close" : "#icon-play");
+  }
   nextEpisodeCard.classList.toggle("has-thumb", Boolean(nextThumbUrl));
   nextEpisodeCard.classList.toggle("blur-thumb", blurNextThumb);
 };
@@ -3528,7 +3537,9 @@ skipPrompt.addEventListener("click", event => {
 
 nextEpisodeCard.addEventListener("click", event => {
   event.stopPropagation();
-  if (state.nextEpisodePlayable) {
+  if (state.nextEpisodeBusy) {
+    send("cancelNextEpisode", 0);
+  } else if (state.nextEpisodePlayable) {
     send("playNextEpisode", 0);
   }
 });

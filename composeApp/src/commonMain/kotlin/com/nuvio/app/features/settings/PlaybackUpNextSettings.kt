@@ -62,6 +62,32 @@ internal fun PlaybackUpNextSettings(
                         onCheckedChange = PlayerSettingsRepository::setStreamAutoPlayNextEpisodeFallbackEnabled,
                     )
                 }
+                if (settings.streamAutoPlayNextEpisodeEnabled) {
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSliderRow(
+                        title = stringResource(Res.string.settings_playback_next_episode_countdown),
+                        value = settings.nextEpisodeCountdownSeconds,
+                        valueText = { seconds ->
+                            if (seconds == 0) {
+                                stringResource(Res.string.settings_playback_next_episode_countdown_none)
+                            } else {
+                                stringResource(Res.string.settings_playback_next_episode_countdown_value, seconds)
+                            }
+                        },
+                        valueRange = 0..15,
+                        step = 1,
+                        isTablet = isTablet,
+                        onValueChange = PlayerSettingsRepository::setNextEpisodeCountdownSeconds,
+                    )
+                }
+                SettingsGroupDivider(isTablet = isTablet)
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_playback_match_current_source),
+                    description = stringResource(Res.string.settings_playback_match_current_source_description),
+                    checked = settings.nextEpisodeMatchCurrentSource,
+                    isTablet = isTablet,
+                    onCheckedChange = PlayerSettingsRepository::setNextEpisodeMatchCurrentSource,
+                )
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
                     title = stringResource(Res.string.settings_playback_prefer_binge_group),

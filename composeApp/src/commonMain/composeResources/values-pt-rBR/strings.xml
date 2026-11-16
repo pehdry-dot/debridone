@@ -2559,4 +2559,15 @@
     <string name="settings_playback_page_up_next">A seguir</string>
     <string name="compose_settings_page_layout">Layout</string>
     <string name="settings_group_you">Você</string>
+    <string name="settings_playback_next_episode_countdown">Contagem antes do próximo episódio</string>
+    <string name="settings_playback_next_episode_countdown_value">%1$d s</string>
+    <string name="settings_playback_next_episode_countdown_none">Nenhuma</string>
+    <string name="settings_playback_match_current_source">Manter a fonte atual</string>
+    <string name="settings_playback_match_current_source_description">No próximo episódio, escolhe a fonte mais parecida com a que está tocando: mesmo addon, grupo de lançamento, resolução, codec e idioma. Se nenhuma for parecida o bastante, valem as outras opções desta página, ou você escolhe.</string>
+    <string name="player_next_episode_cancel">Cancelar</string>
+    <string name="player_next_episode_no_sources">Nenhuma fonte encontrada para o próximo episódio.</string>
+    <string name="player_next_episode_timed_out">Os addons não responderam a tempo. Escolha uma fonte ou tente de novo.</string>
+    <string name="player_next_episode_choose_source">Nenhuma fonte parecida com a atual. Escolha uma para o próximo episódio.</string>
+    <string name="player_next_episode_resolve_failed">Não foi possível abrir essa fonte. Escolha outra.</string>
+    <string name="compose_nav_settings_tooltip">Configurações</string>
 </resources>

@@ -16,12 +16,18 @@ import com.nuvio.app.features.servers.serverPlaybackMessage
 import com.nuvio.app.features.streams.StreamBehaviorHints
 import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.streams.StreamLinkCacheRepository
+import com.nuvio.app.features.streams.StreamSimilarityReference
 import com.nuvio.app.features.streams.YouTubeStreamResolver
 import com.nuvio.app.features.watchprogress.WatchProgressEntry
 import com.nuvio.app.features.watchprogress.WatchProgressRepository
 import com.nuvio.app.features.watchprogress.buildPlaybackVideoId
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import com.nuvio.app.isDesktop
+import nuvio.composeapp.generated.resources.player_next_episode_choose_source
+import nuvio.composeapp.generated.resources.player_next_episode_no_sources
+import nuvio.composeapp.generated.resources.player_next_episode_resolve_failed
+import nuvio.composeapp.generated.resources.player_next_episode_timed_out
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.youtube_resolution_failed
 import org.jetbrains.compose.resources.getString
@@ -474,6 +480,11 @@ internal fun PlayerScreenRuntime.switchToDownloadedEpisode(downloadItem: Downloa
     controlsVisible = true
 }
 
+/**
+ * Starts the transition to the next episode. Every control that can ask for it calls this: the
+ * "Next episode" button, the pop-up near the end of an episode, the keyboard shortcut, a watch
+ * party, and automatic playback ([automatic] = true).
+ */
 internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
     if (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) return
     nextEpisodePreloadTriggered = false
@@ -497,13 +508,15 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
         contentType = contentType,
         settings = playerSettingsUiState,
         currentStreamBingeGroup = currentStreamBingeGroup,
+        userInitiated = !automatic,
+        similarityReference = currentSourceSimilarityReference(),
         onDownloadedEpisodeSelected = { item, episode ->
             if (isCurrentRequest()) switchToDownloadedEpisode(item, episode)
         },
         onEpisodeStreamSelected = { stream, episode ->
             if (isCurrentRequest()) switchToEpisodeStream(stream, episode)
         },
-        onManualSelectionRequired = { nextVideo ->
+        onManualSelectionRequired = { nextVideo, reason ->
             if (isCurrentRequest()) {
                 nextEpisodeCardDismissed = true
                 episodeStreamsPanelState = EpisodeStreamsPanelState(
@@ -511,6 +524,8 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
                     selectedEpisode = nextVideo,
                 )
                 showEpisodesPanel = true
+                nextEpisodeManualReason = reason
+                announceNextEpisodeManualReason(reason)
             }
         },
         onSearchingChanged = {
@@ -528,6 +543,64 @@ internal fun PlayerScreenRuntime.playNextEpisode(automatic: Boolean = false) {
     )?.let { job ->
         nextEpisodeAutoPlayJob = job
     }
+}
+
+/** Tells the user why the source list opened instead of the next episode. */
+internal fun PlayerScreenRuntime.announceNextEpisodeManualReason(reason: NextEpisodeManualReason) {
+    val message = when (reason) {
+        NextEpisodeManualReason.NoSources -> Res.string.player_next_episode_no_sources
+        NextEpisodeManualReason.TimedOut -> Res.string.player_next_episode_timed_out
+        NextEpisodeManualReason.ResolveFailed -> Res.string.player_next_episode_resolve_failed
+        NextEpisodeManualReason.NoAutomaticChoice ->
+            if (playerSettingsUiState.nextEpisodeMatchCurrentSource) Res.string.player_next_episode_choose_source else return
+    }
+    scope.launch {
+        val text = runCatching { getString(message) }.getOrNull() ?: return@launch
+        if (isDesktop) {
+            playerNotificationMessage = text
+            playerNotificationToken += 1L
+        } else {
+            NuvioToastController.show(text)
+        }
+    }
+}
+
+/** The user cancelled the search or the countdown for the next episode. The episode keeps playing. */
+internal fun PlayerScreenRuntime.cancelNextEpisodeByUser() {
+    cancelNextEpisodeAutoPlay()
+    nextEpisodeCardDismissed = true
+    showNextEpisodeCard = false
+}
+
+/**
+ * What is known about the source playing now, for choosing a matching source for the next
+ * episode. Null for a downloaded file or when nothing identifies the source.
+ */
+internal fun PlayerScreenRuntime.currentSourceSimilarityReference(): StreamSimilarityReference? {
+    val stream = activeStream
+    val filename = currentStreamFilename?.takeIf { it.isNotBlank() }
+        ?: stream?.behaviorHints?.filename?.takeIf { it.isNotBlank() }
+        ?: activeSourceFilename?.takeIf { it.isNotBlank() }
+        ?: activeTorrentFilename?.takeIf { it.isNotBlank() }
+    val texts = listOfNotNull(
+        stream?.title,
+        stream?.description,
+        stream?.name,
+        activeStreamSubtitle,
+        activeStreamTitle,
+    ).filter { it.isNotBlank() }.distinct()
+    val addonId = activeProviderAddonId?.takeIf { it.isNotBlank() } ?: stream?.addonId
+    if (addonId == null && filename == null && currentStreamBingeGroup.isNullOrBlank() && texts.isEmpty()) return null
+    return StreamSimilarityReference(
+        addonId = addonId,
+        addonName = activeProviderName.takeIf { it.isNotBlank() } ?: stream?.addonName,
+        bingeGroup = currentStreamBingeGroup,
+        filename = filename,
+        texts = texts,
+        season = activeSeasonNumber,
+        episode = activeEpisodeNumber,
+        episodeTitle = activeEpisodeTitle,
+    )
 }
 
 internal fun PlayerScreenRuntime.openSourcesPanel() {

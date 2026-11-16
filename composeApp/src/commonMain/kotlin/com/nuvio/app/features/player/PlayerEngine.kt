@@ -267,6 +267,9 @@ data class PlayerControlsState(
     val nextEpisodeStatus: String = "",
     val nextEpisodeActionLabel: String = "Play",
     val nextEpisodePlayable: Boolean = false,
+    /** DebridOne: sources are being found or the countdown runs; the card's action cancels. */
+    val nextEpisodeBusy: Boolean = false,
+    val nextEpisodeSearching: Boolean = false,
     val showSubmitIntro: Boolean = false,
     val showVideoSettings: Boolean = false,
     val showSources: Boolean = false,

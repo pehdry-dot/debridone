@@ -253,6 +253,8 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
     val nextEpisodeForControls = nextEpisodeInfo.takeIf { 
         isSeries && (showNextEpisodeCard || nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null) 
     }
+    val nextEpisodeBusyForControls = nextEpisodeForControls != null &&
+        (nextEpisodeAutoPlaySearching || nextEpisodeAutoPlayCountdown != null)
     val nextEpisodeStatus = when {
         nextEpisodeForControls == null -> ""
         !nextEpisodeForControls.hasAired && !nextEpisodeForControls.unairedMessage.isNullOrBlank() ->
@@ -535,12 +537,14 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi(
         nextEpisodeThumbnail = nextEpisodeForControls?.thumbnail.orEmpty(),
         nextEpisodeThumbnailBlurred = metaScreenSettingsUiState.blurUnwatchedEpisodes && nextEpisodeInfo?.isWatched == false,
         nextEpisodeStatus = nextEpisodeStatus,
-        nextEpisodeActionLabel = if (nextEpisodeForControls?.hasAired == true) {
-            stringResource(Res.string.detail_btn_play)
-        } else {
-            stringResource(Res.string.player_next_episode_unaired)
+        nextEpisodeActionLabel = when {
+            nextEpisodeBusyForControls -> stringResource(Res.string.player_next_episode_cancel)
+            nextEpisodeForControls?.hasAired == true -> stringResource(Res.string.detail_btn_play)
+            else -> stringResource(Res.string.player_next_episode_unaired)
         },
         nextEpisodePlayable = nextEpisodeInfo?.hasAired == true,
+        nextEpisodeBusy = nextEpisodeBusyForControls,
+        nextEpisodeSearching = nextEpisodeForControls != null && nextEpisodeAutoPlaySearching,
     )
     val gestureCallbacks = rememberSurfaceGestureCallbacks()
     val fold = LocalFold.current?.takeIf { !isInPip }
@@ -1144,6 +1148,7 @@ internal fun PlayerScreenRuntime.handlePlayerControlsEvent(type: String, value: 
                 if (!partyBlocksControl()) playNextEpisode()
             }
         }
+        "cancelNextEpisode" -> cancelNextEpisodeByUser()
         "enableP2pForPlayerControls" -> enableP2pForPlayerControls()
         "cancelP2pForPlayerControls" -> {
             playerControlsPendingP2pSwitch = null
@@ -1918,11 +1923,7 @@ private fun BoxScope.RenderPlaybackOverlays(
             onPlayNextEpisode = {
                 if (!partyBlocksControl()) playNextEpisode()
             },
-            onDismissNextEpisode = {
-                cancelNextEpisodeAutoPlay()
-                nextEpisodeCardDismissed = true
-                showNextEpisodeCard = false
-            },
+            onDismissNextEpisode = { cancelNextEpisodeByUser() },
             errorMessage = errorMessage,
             onDismissError = { requestBack() },
         )

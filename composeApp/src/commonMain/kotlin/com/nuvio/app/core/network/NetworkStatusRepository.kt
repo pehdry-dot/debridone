@@ -136,17 +136,24 @@ object NetworkStatusRepository {
             return NetworkCondition.NoInternet
         }
 
-        val supabaseReachable = SupabaseEndpointConfig.restEndpointUrls().any { url ->
+        val backendEndpoints = SupabaseEndpointConfig.restEndpointUrls()
+        val backendReachable = backendEndpoints.any { url ->
             probeReachable(
                 url = url,
                 headers = mapOf("apikey" to ServerConfigurationRepository.active.value.publishableKey),
             )
         }
-        if (!supabaseReachable) {
-            return NetworkCondition.ServersUnreachable
-        }
+        return classifyNetworkCondition(
+            internetReachable = true,
+            backendEndpointCount = backendEndpoints.size,
+            backendReachable = backendReachable,
+        )
+    }
 
-        return NetworkCondition.Online
+    /** Test hook: replaces the probed condition. */
+    internal fun setConditionForTest(condition: NetworkCondition) {
+        started = true
+        _uiState.value = NetworkStatusUiState(condition = condition)
     }
 
     private suspend fun probePublicInternet(): Boolean =
@@ -172,4 +179,21 @@ object NetworkStatusRepository {
 
     private fun NetworkCondition.isOfflineLike(): Boolean =
         this == NetworkCondition.NoInternet || this == NetworkCondition.ServersUnreachable
+}
+
+/**
+ * DebridOne: an installation with no account backend configured (accounts are local) has no
+ * servers that could be unreachable. It used to be reported as [NetworkCondition.ServersUnreachable]
+ * whenever the internet worked, which every "are we offline?" check then read as offline: the
+ * player skipped requesting streams for the next episode, add-on subtitles and skip markers.
+ */
+internal fun classifyNetworkCondition(
+    internetReachable: Boolean,
+    backendEndpointCount: Int,
+    backendReachable: Boolean,
+): NetworkCondition = when {
+    !internetReachable -> NetworkCondition.NoInternet
+    backendEndpointCount == 0 -> NetworkCondition.Online
+    !backendReachable -> NetworkCondition.ServersUnreachable
+    else -> NetworkCondition.Online
 }

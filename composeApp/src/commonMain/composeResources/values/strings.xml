@@ -2656,4 +2656,15 @@
     <string name="window_menu_window">Window</string>
     <string name="window_menu_close">Close Window</string>
     <string name="window_menu_minimize">Minimize</string>
+    <string name="settings_playback_next_episode_countdown">Countdown before the next episode</string>
+    <string name="settings_playback_next_episode_countdown_value">%1$d s</string>
+    <string name="settings_playback_next_episode_countdown_none">None</string>
+    <string name="settings_playback_match_current_source">Match the current source</string>
+    <string name="settings_playback_match_current_source_description">For the next episode, choose the source closest to the one playing: same add-on, release group, resolution, codec and language. When nothing is close enough, your other choices on this page apply, or you are asked.</string>
+    <string name="player_next_episode_cancel">Cancel</string>
+    <string name="player_next_episode_no_sources">No sources were found for the next episode.</string>
+    <string name="player_next_episode_timed_out">The add-ons did not answer in time. Choose a source or try again.</string>
+    <string name="player_next_episode_choose_source">No source close to the current one. Choose one for the next episode.</string>
+    <string name="player_next_episode_resolve_failed">That source could not be opened. Choose another one.</string>
+    <string name="compose_nav_settings_tooltip">Settings</string>
 </resources>

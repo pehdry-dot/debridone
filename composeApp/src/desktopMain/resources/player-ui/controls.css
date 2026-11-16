@@ -795,6 +795,20 @@ button:disabled {
   color: inherit;
 }
 
+/* DebridOne: a spinner next to "Finding source…" while add-ons are being asked. */
+.next-episode-card.searching .next-episode-status::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border: 1.5px solid rgba(255, 255, 255, .28);
+  border-top-color: var(--theme-control-foreground);
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: spin .8s linear infinite;
+}
+
 @media (min-width: 768px) {
   .next-episode-card {
     width: min(clamp(380px, 30vw, 460px), calc(100vw - (var(--hp) * 2)));

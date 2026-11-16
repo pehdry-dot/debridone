@@ -271,6 +271,8 @@ internal class PlayerScreenRuntime(
     var nextEpisodeAutoPlayCountdown by mutableStateOf<Int?>(null)
     var nextEpisodeAutoPlayJob by mutableStateOf<Job?>(null)
     var nextEpisodeAutoPlayAutomatic by mutableStateOf(false)
+    /** DebridOne: why the last next-episode request ended in the source list, until it is shown. */
+    var nextEpisodeManualReason by mutableStateOf<NextEpisodeManualReason?>(null)
     var nextEpisodePreloadJob by mutableStateOf<Job?>(null)
     var nextEpisodePreloadTriggered by mutableStateOf(false)
     var pendingP2pSwitch by mutableStateOf<PendingPlayerP2pSwitch?>(null)
