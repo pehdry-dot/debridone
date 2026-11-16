@@ -60,6 +60,8 @@ class MpvAudioEngine(
             optionalOption("gapless-audio", "weak")
             optionalOption("audio-client-name", "DebridOne")
             optionalOption("volume-max", "100")
+            // Without any sound device, keep time moving silently instead of failing every track.
+            optionalOption("audio-fallback-to-null", "yes")
             if (audioOutput != null) option("ao", audioOutput)
 
             requireOk(api.mpv_initialize(handle), "initialise the audio engine")

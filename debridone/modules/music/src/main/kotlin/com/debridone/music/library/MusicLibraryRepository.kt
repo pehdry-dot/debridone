@@ -566,6 +566,21 @@ class MusicLibraryRepository(
         changed()
     }
 
+    /** Drops a chosen album cover and goes back to the one the album's files carry. */
+    fun resetAlbumArtwork(profileId: Long, albumId: Long) {
+        database.execute(
+            """
+            UPDATE music_albums SET custom_artwork = 0, artwork_id =
+                (SELECT t.artwork_id FROM music_tracks t WHERE t.album_id = ?1 AND t.artwork_id IS NOT NULL
+                 ORDER BY COALESCE(t.disc_no, 1), COALESCE(t.track_no, 9999) LIMIT 1)
+            WHERE profile_id = ?2 AND id = ?1
+            """.trimIndent(),
+            albumId, profileId,
+        )
+        artwork.deleteUnreferenced(profileId)
+        changed()
+    }
+
     fun setArtistArtwork(profileId: Long, artistId: Long, artworkId: Long?) {
         database.execute("UPDATE music_artists SET artwork_id = ? WHERE profile_id = ? AND id = ?", artworkId, profileId, artistId)
         changed()

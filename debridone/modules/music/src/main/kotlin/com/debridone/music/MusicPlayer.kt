@@ -156,9 +156,14 @@ class MusicPlayer internal constructor(
 
     fun audioDevices(): List<AudioDevice> = engine?.audioDevices().orEmpty()
 
+    /** Selects the output device (`auto` follows the system). Remembered for when the engine starts. */
     fun setAudioDevice(id: String) {
-        engine?.setAudioDevice(id)
+        audioDevice = id.ifBlank { "auto" }
+        runCatching { engine?.setAudioDevice(audioDevice) }
     }
+
+    @Volatile
+    private var audioDevice: String = "auto"
 
     @Volatile
     private var engine: MusicPlaybackEngine? = null
@@ -243,6 +248,7 @@ class MusicPlayer internal constructor(
             _engineError.value = null
             _engineDescription.value = created.description
             engine = created
+            if (audioDevice != "auto") runCatching { created.setAudioDevice(audioDevice) }
             val player = MusicPlayerController(created, observer = observer)
             controller = player
             mirrorJob = scope.launch { player.state.collect { _state.value = it } }

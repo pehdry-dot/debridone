@@ -85,8 +85,9 @@ class MusicModule(
         val services = _services.value ?: return
         val changed = _activeProfile.value != profileId
         // Music never carries over: the old profile's session is saved and stopped first.
-        services.player.switchProfile(profileId)
         services.preferences.load(profileId)
+        services.player.setAudioDevice(services.preferences[MusicPreferences.AUDIO_DEVICE] ?: "auto")
+        services.player.switchProfile(profileId)
         _activeProfile.value = profileId
         if (changed && profileId != null && services.preferences.boolean(MusicPreferences.RESCAN_ON_START, true)) rescan()
     }
@@ -142,18 +143,7 @@ class MusicModule(
         }
     }
 
-    override val readiness: ModuleReadiness = ModuleReadiness.FoundationOnly(
-        summary = "Music storage, plugin registry, metadata settings and appearance are in place. " +
-            "The player and library are not built yet.",
-        upcoming = listOf(
-            "Local folder import with embedded tag reading",
-            "Playback with queue, shuffle, repeat, gapless and media keys",
-            "Playlists, favourites, history and lyrics",
-            "Navidrome/Subsonic and Jellyfin libraries",
-            "MusicBrainz and Cover Art Archive metadata",
-            "Music plugins installed by manifest URL",
-        ),
-    )
+    override val readiness: ModuleReadiness = ModuleReadiness.Ready
 
     override val pluginTable = "music_plugins"
     override val metadataTable = "music_metadata_providers"

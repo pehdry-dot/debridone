@@ -30,6 +30,13 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.rememberLifecycleOwner
 import com.debridone.app.DebridOneRuntime
+import com.debridone.app.music.MusicFullPlayer
+import com.debridone.app.music.MusicMiniPlayer
+import com.debridone.app.music.MusicMiniPlayerHeight
+import com.debridone.app.music.MusicProvider
+import com.debridone.app.music.MusicScreen
+import com.debridone.app.music.pauseMusicForVideo
+import com.debridone.app.music.rememberMusicHasQueue
 import com.debridone.module.ModuleId
 import com.nuvio.app.AppShellHost
 import com.nuvio.app.core.ui.LocalScreenActive
@@ -79,26 +86,36 @@ fun DebridOneShell(
         else -> ShellSidebarCollapsedWidth
     }
 
+    // Music keeps playing in every section; its mini-player sits under the content. A video in
+    // Streaming takes the whole window and pauses the music.
+    val miniPlayerVisible = rememberMusicHasQueue() && sidebarVisible
+    LaunchedEffect(immersive) {
+        if (immersive) pauseMusicForVideo()
+    }
+
     // Streaming stays alive once opened so its navigation and playback state survive visits to
     // other sections, but it is paused and receives no input while it is not the active section.
     var streamingOpened by remember { mutableStateOf(false) }
     if (section == ShellSection.STREAMING) streamingOpened = true
 
     Box(modifier = Modifier.fillMaxSize().background(tokens.colors.background)) {
-        Box(modifier = Modifier.fillMaxSize().padding(start = contentInset)) {
+        Box(modifier = Modifier.fillMaxSize().padding(start = contentInset, bottom = if (miniPlayerVisible) MusicMiniPlayerHeight else 0.dp)) {
             if (streamingOpened) {
                 KeepAlivePane(active = section == ShellSection.STREAMING, content = streaming)
             }
             when (section) {
                 ShellSection.STREAMING -> Unit
                 ShellSection.HOME -> HomeDashboard()
-                ShellSection.MUSIC -> ModuleScreen(ModuleId.MUSIC)
+                ShellSection.MUSIC -> MusicScreen()
                 ShellSection.GAMES -> ModuleScreen(ModuleId.GAMING)
                 ShellSection.MANGA -> ModuleScreen(ModuleId.MANGA)
                 ShellSection.PLUGINS -> PluginsScreen()
                 ShellSection.DOWNLOADS -> DownloadsScreen()
                 ShellSection.SETTINGS -> ShellSettingsScreen(onSwitchProfile = onSwitchProfile)
             }
+        }
+        if (miniPlayerVisible) {
+            MusicProvider { MusicMiniPlayer(Modifier.align(Alignment.BottomStart).padding(start = contentInset)) }
         }
         if (sidebarVisible) {
             ShellSidebar(
@@ -111,6 +128,8 @@ fun DebridOneShell(
                 modifier = Modifier.align(Alignment.CenterStart),
             )
         }
+        // The full-screen player covers the sidebar too.
+        MusicProvider { MusicFullPlayer() }
     }
 }
 

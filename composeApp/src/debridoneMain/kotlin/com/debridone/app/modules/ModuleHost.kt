@@ -1,5 +1,6 @@
 package com.debridone.app.modules
 
+import com.debridone.app.music.MusicAudio
 import com.debridone.gaming.GamingModule
 import com.debridone.manga.MangaModule
 import com.debridone.module.EntertainmentModule
@@ -23,7 +24,7 @@ import kotlinx.coroutines.launch
  * module that fails to start is reported as failed while the others keep working.
  */
 class ModuleHost(paths: AppPaths, secrets: SecretStore) {
-    val music: MusicModule = MusicModule(ModuleStorage(ModuleId.MUSIC, paths, secrets))
+    val music: MusicModule = MusicModule(ModuleStorage(ModuleId.MUSIC, paths, secrets), engineFactory = MusicAudio::createEngine)
     val gaming: GamingModule = GamingModule(ModuleStorage(ModuleId.GAMING, paths, secrets))
     val manga: MangaModule = MangaModule(ModuleStorage(ModuleId.MANGA, paths, secrets))
 
