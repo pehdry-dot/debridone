@@ -557,7 +557,10 @@ fun runtimeConfigBoolean(key: String, default: Boolean): Boolean =
 
 val generateRuntimeConfigs = tasks.register<GenerateRuntimeConfigsTask>("generateRuntimeConfigs") {
     outputDir.set(generatedRuntimeConfigDir)
-    localPropertiesFile.set(rootProject.layout.projectDirectory.file("local.properties"))
+    // DebridOne: local.properties is optional so a fresh clone builds without any setup.
+    rootProject.layout.projectDirectory.file("local.properties")
+        .takeIf { it.asFile.exists() }
+        ?.let(localPropertiesFile::set)
     appVersionName.set(releaseAppVersionName)
     appVersionCode.set(releaseAppVersionCode)
     desktopAppVersionName.set(desktopReleaseVersionName)
@@ -1266,6 +1269,12 @@ tasks.matching {
     it.name == "desktopProcessResources" || it.name == "processDesktopMainResources"
 }.configureEach {
     dependsOn(":desktopSentry:generateSentryDebugMetaPropertiesjava")
+}
+
+// DebridOne: the root project was renamed, which would change the generated resources package.
+// Pin upstream's package so Nuvio sources (and future upstream merges) compile unchanged.
+compose.resources {
+    packageOfResClass = "nuvio.composeapp.generated.resources"
 }
 
 compose.desktop {

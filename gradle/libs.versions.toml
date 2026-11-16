@@ -39,6 +39,9 @@ desugarJdkLibs = "2.1.5"
 sentry = "8.47.0"
 sentryDesktop = "8.52.0"
 sentryGradle = "6.18.0"
+# DebridOne
+sqliteJdbc = "3.54.1.0"
+bouncycastle = "1.87"
 
 [libraries]
 androidx-benchmark-macro-junit4 = { module = "androidx.benchmark:benchmark-macro-junit4", version.ref = "androidx-benchmark" }
@@ -107,6 +110,10 @@ reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "reo
 desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 sentry-android = { module = "io.sentry:sentry-android", version.ref = "sentry" }
 sentry-jvm = { module = "io.sentry:sentry", version.ref = "sentryDesktop" }
+# DebridOne
+sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
+bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 
 [plugins]
 androidTest = { id = "com.android.test", version.ref = "agp" }
@@ -117,6 +124,7 @@ androidKotlinMultiplatformLibrary = { id = "com.android.kotlin.multiplatform.lib
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinxSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 sentry-android-gradle = { id = "io.sentry.android.gradle", version.ref = "sentryGradle" }
 sentry-jvm-gradle = { id = "io.sentry.jvm.gradle", version.ref = "sentryGradle" }
