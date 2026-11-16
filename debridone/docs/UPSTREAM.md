@@ -25,7 +25,7 @@ DebridOne keeps its changes to upstream files small and marked with a `DebridOne
 | Upstream file | Change |
 |---|---|
 | `settings.gradle.kts`, `build.gradle.kts`, `gradle/libs.versions.toml` | Project name, `:debridone:*` projects, library versions |
-| `composeApp/build.gradle.kts` | Package name, bundle id `com.debridone.desktop`, `debridone://` scheme, icons, `java.sql` runtime module, DebridOne source directories, branded resources task, optional `local.properties`, Discord/supporter defaults blanked |
+| `composeApp/build.gradle.kts` | Package name, bundle id `com.debridone.desktop`, `debridone://` scheme, icons, `java.sql` runtime module, DebridOne source directories, branded resources task, optional `local.properties`, Discord/supporter defaults blanked; `buildMacosMusicBridge` task and its output added to the packaged native libraries |
 | `core/storage/DesktopStorage.kt` | Storage under the Streaming module directory; atomic writes; per-profile key removal |
 | `core/auth/AuthRepository.kt` | On-device account backend for sign-up, sign-in, guest, sign-out |
 | `features/profiles/ProfileRepository.kt`, `ProfileModels.kt`, `ProfileEditScreen.kt`, `AvatarRepository.kt`, `ProfileStorage.desktop.kt` | On-device profiles, PINs, imported pictures |
@@ -36,7 +36,7 @@ DebridOne keeps its changes to upstream files small and marked with a `DebridOne
 | `features/settings/AppIconPlatform.desktop.kt` | Upstream's app-icon switcher off (it installs Nuvio-branded icons) |
 | Tests: `LibraryRepositoryTest`, `ThemeAccessTest`, `DesktopStorageTest` | Expectations updated for the rebranded string, the unlocked themes and the `.bak` file kept by atomic writes |
 | `core/build/AppFeaturePolicy.desktop.kt` | Supporter pages, donation prompts and the in-app updater off |
-| `desktopMain/.../Main.kt` | Start-up of DebridOne services, window title and icon, URL scheme mapping |
+| `desktopMain/.../Main.kt` | Start-up of DebridOne services, window title and icon, URL scheme mapping; `--music-self-test` handled before anything else starts |
 
 New upstream-side files: `AppShellHost.kt`, `core/auth/LocalAccountBackend.kt`,
 `features/profiles/LocalAvatarImporter.kt`.
