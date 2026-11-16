@@ -114,11 +114,12 @@ class MusicTestEnvironment : AutoCloseable {
     /** Starts (or restarts) the module with [profileId] active and waits for its start-up scan. */
     fun open(
         profileId: Long? = PROFILE_A,
+        metadataEndpoints: com.debridone.music.metadata.MetadataEndpoints = com.debridone.music.metadata.MetadataEndpoints(),
         engineFactory: () -> com.debridone.music.playback.MusicPlaybackEngine = { com.debridone.music.playback.FakePlaybackEngine() },
     ): MusicServices {
         module?.close()
         val storage = com.debridone.module.storage.ModuleStorage(com.debridone.module.ModuleId.MUSIC, paths, secrets)
-        val opened = MusicModule(storage, engineFactory = engineFactory)
+        val opened = MusicModule(storage, engineFactory = engineFactory, metadataEndpoints = metadataEndpoints)
         module = opened
         kotlinx.coroutines.runBlocking {
             opened.start()
@@ -140,6 +141,21 @@ class MusicTestEnvironment : AutoCloseable {
     fun deleteProfile(profileId: Long) = kotlinx.coroutines.runBlocking { checkNotNull(module).deleteProfileData(profileId) }
 
     val currentModule: MusicModule get() = checkNotNull(module)
+
+    /** Reads a secret Music stored for [profileId], straight from the secret store. */
+    fun storedSecret(profileId: Long, name: String): String? =
+        com.debridone.platform.secrets.ScopedSecretStore(secrets, "module.music.profile.$profileId").get(name)
+
+    /** Every byte Music wrote under its data folder, to prove a password is not among them. */
+    fun dataFolderContains(text: String): Boolean {
+        val needle = text.toByteArray()
+        return Files.walk(root.resolve("data")).use { files ->
+            files.filter { Files.isRegularFile(it) }.anyMatch { file ->
+                val bytes = Files.readAllBytes(file)
+                (0..bytes.size - needle.size).any { start -> needle.indices.all { bytes[start + it] == needle[it] } }
+            }
+        }
+    }
 
     override fun close() {
         module?.close()

@@ -554,6 +554,13 @@ class MusicLibraryRepository(
                 "UPDATE music_tracks SET artwork_id = ?, custom_artwork = ?, locked_fields = ?, updated_at = ? WHERE id = ?",
                 artworkId, custom, next.sorted().joinToString(","), clock(), trackId,
             )
+            if (artworkId != null && !custom) {
+                // A cover that arrived after the album was created also becomes the album's cover.
+                execute(
+                    "UPDATE music_albums SET artwork_id = ? WHERE id = (SELECT album_id FROM music_tracks WHERE id = ?) AND artwork_id IS NULL AND custom_artwork = 0",
+                    artworkId, trackId,
+                )
+            }
         }
         changed()
     }

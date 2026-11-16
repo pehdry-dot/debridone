@@ -94,7 +94,14 @@ internal data class MusicStyle(
     val rowHeight: Dp = 58.dp,
     val dynamicColours: Boolean = true,
     val playlistGrid: Boolean = true,
-    val largeArtwork: Boolean = true,
+    /** Side of the artwork on album, artist and playlist pages. */
+    val heroArtwork: Dp = 220.dp,
+    /** Largest side of the artwork in the full-screen player. */
+    val playerArtwork: Dp = 520.dp,
+    /** The full-screen player shows the queue or lyrics beside the artwork. */
+    val playerSidePanel: Boolean = true,
+    /** `gradient`, `blur` or `plain`. */
+    val playerBackground: String = "gradient",
     val reduceMotion: Boolean = false,
 )
 
@@ -484,7 +491,7 @@ internal fun TrackRow(
                 }
             }
             Text(
-                if (track.missing) "File not found" else track.displayArtist,
+                if (track.missing) (if (track.isLocal) "File not found" else "Source unavailable") else track.displayArtist,
                 style = small(), color = if (track.missing) tokens.colors.warning else tokens.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }

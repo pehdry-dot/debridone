@@ -48,6 +48,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -74,6 +76,7 @@ internal enum class LibraryTab(val key: String, val label: String) {
     GENRES("genres", "Genres"),
     PLAYLISTS("playlists", "Playlists"),
     FAVOURITES("favourites", "Favourites"),
+    OFFLINE("offline", "Available offline"),
     ;
 
     companion object {
@@ -109,6 +112,12 @@ internal object MusicNav {
     val current: MusicRoute get() = stack.last()
     var searchText by mutableStateOf("")
     var playerExpanded by mutableStateOf(false)
+
+    /** Whether the full-screen player shows lyrics instead of the queue. */
+    var lyricsVisible by mutableStateOf(false)
+
+    /** In the compact player layout: whether the queue/lyrics panel was asked for. */
+    var sidePanelRequested by mutableStateOf(false)
     var dialog by mutableStateOf<MusicDialog?>(null)
 
     /** A short confirmation or error shown at the bottom of the section. */
@@ -211,6 +220,16 @@ internal class MusicActions(private val services: MusicServices, private val pro
         MusicNav.message = "${plural(trackIds.size, "song")} removed from the library"
     }
 
+    fun download(tracks: List<Track>) {
+        MusicNav.message = if (tracks.size == 1) "Downloading ${tracks[0].title}…" else "Downloading ${tracks.size} songs…"
+        com.debridone.app.DebridOneRuntime.modules.music.download(tracks.map { it.id }) { saved ->
+            val error = services.sources.activity.value.lastDownloadError
+            MusicNav.message = if (saved == tracks.size) "${plural(saved, "song")} saved for offline listening" else "Saved $saved of ${tracks.size}. ${error.orEmpty()}"
+        }
+    }
+
+    fun removeDownload(track: Track) = io { services.sources.removeDownload(profileId, track.id) }
+
     /** Opens the folder that holds [track] in the system file manager. */
     fun revealInFileManager(track: Track) = io {
         val path = track.path ?: return@io
@@ -257,14 +276,32 @@ fun MusicProvider(content: @Composable () -> Unit) {
         },
         dynamicColours = appearance.values["dynamic_album_colours"]?.toBooleanStrictOrNull() ?: true,
         playlistGrid = appearance.values["playlist_presentation"] != "list",
-        largeArtwork = appearance.values["artwork_size"] != "small",
+        heroArtwork = when (appearance.values["artwork_size"]) {
+            "small" -> 150.dp
+            "medium" -> 186.dp
+            else -> 220.dp
+        },
+        playerArtwork = when (appearance.values["artwork_size"]) {
+            "small" -> 300.dp
+            "medium" -> 410.dp
+            else -> 520.dp
+        },
+        playerSidePanel = appearance.values["player_layout"] != "compact",
+        playerBackground = appearance.values["player_background"] ?: "gradient",
         reduceMotion = reduceMotion,
     )
+    val textScale = when (appearance.values["text_size"]) {
+        "small" -> 0.9f
+        "large" -> 1.15f
+        else -> 1f
+    }
+    val baseDensity = LocalDensity.current
+    val density = remember(baseDensity, textScale) { Density(baseDensity.density, baseDensity.fontScale * textScale) }
     val scope = rememberCoroutineScope()
     val actions = remember(ready, profile) { MusicActions(ready, profile, scope) }
     val context = remember(ready, profile, style) { MusicContext(ready, profile, style) }
     MusicNav.onProfile(profile)
-    CompositionLocalProvider(LocalMusic provides context, LocalMusicActions provides actions, content = content)
+    CompositionLocalProvider(LocalMusic provides context, LocalMusicActions provides actions, LocalDensity provides density, content = content)
 }
 
 /** The Music section. */

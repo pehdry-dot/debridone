@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.DebridOneRuntime
+import com.debridone.app.music.MusicSourcesTab
 import com.debridone.app.streaming.StreamingPluginsTab
 import com.debridone.module.AvailablePlugin
 import com.debridone.module.EntertainmentModule
@@ -63,6 +64,8 @@ internal fun PluginsScreen() {
             when (tab) {
                 // Streaming's plugins are Nuvio's own addons and plugins, managed by Nuvio's screens.
                 ModuleId.STREAMING -> StreamingPluginsTab()
+                // Music manages its sources as connections, with its own screen and its own storage.
+                ModuleId.MUSIC -> MusicSourcesTab()
                 else -> {
                     val module = DebridOneRuntime.modules.module(tab)
                     if (module != null) ModulePluginsTab(module)

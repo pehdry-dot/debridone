@@ -254,6 +254,11 @@ internal fun MusicSettings() {
         item("playback") {
             SettingsCard("Playback", null) {
                 OutputDeviceRow()
+                ToggleRow(
+                    "Continue playing when DebridOne starts",
+                    "Otherwise your last queue is restored paused, at the position you left it.",
+                    preferences[MusicPreferences.RESUME_ON_START] == "true",
+                ) { music.services.preferences.set(MusicPreferences.RESUME_ON_START, if (it) "true" else null) }
                 engineError?.let { Text("The audio engine could not be started: $it", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger) }
                 Text(
                     "Engine: " + (engine ?: "starts when you first play something"),
@@ -302,7 +307,7 @@ internal fun MusicSettings() {
 }
 
 @Composable
-private fun SettingsCard(title: String, caption: String?, content: @Composable ColumnScope.() -> Unit) {
+internal fun SettingsCard(title: String, caption: String?, content: @Composable ColumnScope.() -> Unit) {
     val tokens = MaterialTheme.nuvio
     Column(
         modifier = Modifier

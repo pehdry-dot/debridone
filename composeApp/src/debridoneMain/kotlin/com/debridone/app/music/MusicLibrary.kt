@@ -95,6 +95,11 @@ internal fun MusicLibrary(tab: LibraryTab) {
             tab == LibraryTab.GENRES -> GenresTab()
             tab == LibraryTab.PLAYLISTS -> PlaylistsTab()
             tab == LibraryTab.FAVOURITES -> FavouritesTab()
+            tab == LibraryTab.OFFLINE -> SongsTab(
+                TrackFilter(offlineOnly = true),
+                emptyTitle = "Nothing is available offline",
+                emptyMessage = "Songs on this computer and songs you downloaded from a server appear here.",
+            )
         }
     }
 }

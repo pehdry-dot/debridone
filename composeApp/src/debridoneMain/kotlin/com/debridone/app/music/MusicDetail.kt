@@ -86,7 +86,7 @@ private fun DetailHero(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(26.dp),
     ) {
-        artwork(Modifier.size(if (music.style.largeArtwork) 220.dp else 150.dp))
+        artwork(Modifier.size(music.style.heroArtwork))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(kind.uppercase(), style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
             Text(title, style = MaterialTheme.typography.displayLarge, color = tokens.colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)

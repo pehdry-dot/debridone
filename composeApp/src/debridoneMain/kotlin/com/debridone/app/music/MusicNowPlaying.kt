@@ -57,6 +57,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -298,15 +299,27 @@ fun MusicFullPlayer() {
     if (current == null) return
 
     val tint = track?.artwork?.dominantColor?.takeIf { music.style.dynamicColours }?.let { Color(it) } ?: music.style.accent
+    val sidePanel = music.style.playerSidePanel || MusicNav.sidePanelRequested
     Box(
         modifier = Modifier
             .zIndex(1000f)
             .fillMaxSize()
             .background(tokens.colors.background)
-            .background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.55f), tint.copy(alpha = 0.12f), tokens.colors.background)))
+            .then(
+                if (music.style.playerBackground == "gradient") {
+                    Modifier.background(Brush.verticalGradient(listOf(tint.copy(alpha = 0.55f), tint.copy(alpha = 0.12f), tokens.colors.background)))
+                } else {
+                    Modifier
+                },
+            )
             // Swallow clicks so nothing underneath reacts.
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
     ) {
+        if (music.style.playerBackground == "blur" && track?.artwork != null) {
+            // The cover itself, out of focus and darkened, behind everything.
+            ArtworkImage(track?.artwork, Modifier.fillMaxSize().blur(70.dp), full = true, shape = RoundedCornerShape(0.dp))
+            Box(Modifier.fillMaxSize().background(tokens.colors.background.copy(alpha = 0.62f)))
+        }
         Row(Modifier.fillMaxSize().padding(start = 40.dp, end = 28.dp, top = topInset + 20.dp, bottom = 28.dp), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
             // Left: artwork and controls.
             Column(Modifier.weight(1.25f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -315,11 +328,18 @@ fun MusicFullPlayer() {
                     Spacer(Modifier.weight(1f))
                     Text("NOW PLAYING", style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
                     Spacer(Modifier.weight(1f))
-                    Spacer(Modifier.width(40.dp))
+                    if (music.style.playerSidePanel) {
+                        Spacer(Modifier.width(40.dp))
+                    } else {
+                        MusicIconButton(
+                            Icons.AutoMirrored.Rounded.QueueMusic, if (MusicNav.sidePanelRequested) "Hide the queue and lyrics" else "Show the queue and lyrics",
+                            { MusicNav.sidePanelRequested = !MusicNav.sidePanelRequested }, size = 40.dp,
+                            tint = if (MusicNav.sidePanelRequested) music.style.accent else tokens.colors.textPrimary, background = tokens.colors.surface.copy(alpha = 0.6f),
+                        )
+                    }
                 }
                 BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
-                    val limit = if (music.style.largeArtwork) 520.dp else 320.dp
-                    val side = minOf(maxWidth, maxHeight, limit)
+                    val side = minOf(maxWidth, maxHeight, music.style.playerArtwork)
                     ArtworkImage(track?.artwork, Modifier.size(side), full = true, shape = RoundedCornerShape(20.dp))
                 }
                 Row(Modifier.fillMaxWidth().widthIn(max = 640.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -367,8 +387,24 @@ fun MusicFullPlayer() {
                     Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { VolumeControl(state, sliderWidth = 110.dp) }
                 }
             }
-            // Right: the queue.
-            QueuePanel(state, Modifier.weight(0.75f).widthIn(max = 460.dp).fillMaxHeight())
+            // Right: the queue, or the lyrics.
+            if (sidePanel) Column(
+                modifier = Modifier
+                    .weight(0.75f).widthIn(max = 460.dp).fillMaxHeight()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(tokens.colors.surface.copy(alpha = 0.72f))
+                    .border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(20.dp)),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MusicChip("Queue", !MusicNav.lyricsVisible) { MusicNav.lyricsVisible = false }
+                    MusicChip("Lyrics", MusicNav.lyricsVisible) { MusicNav.lyricsVisible = true }
+                }
+                if (MusicNav.lyricsVisible) {
+                    LyricsPanel(track, state.positionMs, player::seekTo, Modifier.fillMaxSize())
+                } else {
+                    QueuePanel(state, Modifier.fillMaxSize())
+                }
+            }
         }
     }
 }
@@ -384,18 +420,12 @@ private fun QueuePanel(state: PlayerState, modifier: Modifier = Modifier) {
     }
     val listState = rememberLazyListState()
     LaunchedEffect(state.orderPosition) {
-        if (state.orderPosition >= 0) runCatching { listState.animateScrollToItem((state.orderPosition - 1).coerceAtLeast(0)) }
+        val target = (state.orderPosition - 1).coerceAtLeast(0)
+        if (state.orderPosition >= 0) runCatching { if (music.style.reduceMotion) listState.scrollToItem(target) else listState.animateScrollToItem(target) }
     }
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(tokens.colors.surface.copy(alpha = 0.72f))
-            .border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(20.dp))
-            .padding(top = 16.dp, bottom = 8.dp),
-    ) {
+    Column(modifier.padding(top = 10.dp, bottom = 8.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Queue", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
                 Text(
                     details(plural(state.queue.size, "song"), formatLongDuration(state.queue.sumOf { it.durationMs }), "shuffled".takeIf { state.shuffle }),
                     style = small(), color = tokens.colors.textMuted,

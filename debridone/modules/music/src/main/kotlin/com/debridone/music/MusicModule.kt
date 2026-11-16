@@ -20,8 +20,14 @@ import com.debridone.music.library.MusicSchema
 import com.debridone.music.library.ScanResult
 import com.debridone.music.library.Track
 import com.debridone.music.playback.MpvAudioEngine
+import com.debridone.music.metadata.MetadataEndpoints
+import com.debridone.music.metadata.MusicMetadataService
 import com.debridone.music.playback.MusicPlaybackEngine
 import com.debridone.music.playlists.PlaylistRepository
+import com.debridone.music.sources.MusicSourceManager
+import com.debridone.music.sources.SyncSummary
+import com.debridone.module.PluginActionResult
+import com.debridone.module.storage.PluginDescriptor
 import com.debridone.platform.db.Migration
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +46,8 @@ class MusicServices internal constructor(
     val player: MusicPlayer,
     val playlists: PlaylistRepository,
     val preferences: MusicPreferences,
+    val sources: MusicSourceManager,
+    val metadata: MusicMetadataService,
 )
 
 /**
@@ -53,6 +61,8 @@ class MusicModule(
     clock: () -> Long = System::currentTimeMillis,
     /** Creates the audio engine on first use. The host passes the bundled libmpv on macOS. */
     private val engineFactory: () -> MusicPlaybackEngine = { MpvAudioEngine() },
+    /** Where the online metadata providers are reached; tests use a local stand-in. */
+    private val metadataEndpoints: MetadataEndpoints = MetadataEndpoints(),
 ) : SqliteBackedModule(ModuleId.MUSIC, storage, clock) {
 
     private val _services = MutableStateFlow<MusicServices?>(null)
@@ -67,18 +77,32 @@ class MusicModule(
 
     private val scanMutex = Mutex()
 
+    @Volatile
+    private var activatedOnce = false
+
     override fun onStarted() {
         val database = requireDatabase()
         val artwork = ArtworkStore(database, storage.dataDir.resolve("artwork"), clock)
         val library = MusicLibraryRepository(database, artwork, clock)
-        val player = MusicPlayer(library, database, engineFactory, moduleScope, ::resolveUri, clock)
+        val sources = MusicSourceManager(database, library, storage.secrets, storage.dataDir.resolve("offline"), clock)
+        val player = MusicPlayer(library, database, engineFactory, moduleScope, sources::resolveUri, clock)
         _services.value = MusicServices(
             library = library,
             scanner = MusicScanner(library, clock),
             player = player,
             playlists = PlaylistRepository(database, library, clock),
             preferences = MusicPreferences(::settingsStore),
+            sources = sources,
+            metadata = MusicMetadataService(
+                database, library,
+                providerEnabled = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.enabled == true },
+                endpoints = metadataEndpoints, clock = clock,
+            ),
         )
+        // The kinds of source Music can use, listed in Music's own plugin registry.
+        moduleScope.launch {
+            builtInSources.forEach { runCatching { registerPlugin(it) } }
+        }
     }
 
     override fun onActiveProfileChanged(profileId: Long?) {
@@ -89,12 +113,22 @@ class MusicModule(
         services.player.setAudioDevice(services.preferences[MusicPreferences.AUDIO_DEVICE] ?: "auto")
         services.player.switchProfile(profileId)
         _activeProfile.value = profileId
-        if (changed && profileId != null && services.preferences.boolean(MusicPreferences.RESCAN_ON_START, true)) rescan()
+        if (changed && profileId != null && services.preferences.boolean(MusicPreferences.RESCAN_ON_START, true)) {
+            rescan()
+            syncAllSources()
+        }
+        // Only when the app starts, never on a profile switch: pick the music up where it stopped.
+        if (profileId != null && !activatedOnce && services.preferences.boolean(MusicPreferences.RESUME_ON_START, false)) {
+            services.player.resume()
+        }
+        if (profileId != null) activatedOnce = true
     }
 
     override fun onProfileDeleted(profileId: Long) {
         val services = _services.value ?: return
         services.player.deleteProfile(profileId)
+        // Before the library rows go: the connections are needed to find their stored passwords.
+        services.sources.deleteProfile(profileId)
         services.library.deleteProfile(profileId)
     }
 
@@ -102,8 +136,49 @@ class MusicModule(
         _services.value?.player?.close()
     }
 
-    /** What the engine should open for [track]: its file, or its downloaded copy. */
-    private fun resolveUri(profileId: Long, track: Track): String? = track.offlinePath ?: if (track.isLocal) track.path else null
+    private val builtInSources = listOf(
+        PluginDescriptor("local-files", "Files on this computer", PluginKind.SOURCE, description = "Folders and files you add. Read in place, never copied.", builtIn = true),
+        PluginDescriptor("subsonic", "Navidrome / Subsonic", PluginKind.LIBRARY_INTEGRATION, description = "Your own Subsonic-compatible music server.", builtIn = true),
+        PluginDescriptor("jellyfin", "Jellyfin", PluginKind.LIBRARY_INTEGRATION, description = "The music libraries of your own Jellyfin server.", builtIn = true),
+        PluginDescriptor("stream-url", "Radio and stream addresses", PluginKind.SOURCE, description = "Internet radio and other direct audio streams.", builtIn = true),
+    )
+
+    override val pluginImportUnavailableReason: String =
+        "Music's sources are built in: add a Navidrome/Subsonic or Jellyfin server, or a stream address, as a connection. " +
+            "Plugin files or addresses from elsewhere are not accepted, because they could not be checked before handling your sign-in."
+
+    override suspend fun importPlugin(location: String): PluginActionResult = PluginActionResult.NotAvailableYet(pluginImportUnavailableReason)
+
+    // ---------------------------------------------------------------- source actions
+
+    /** Reads a server's library into the active profile's library, in the background. */
+    fun syncSource(sourceId: Long, onDone: (Result<SyncSummary>) -> Unit = {}): Job = moduleScope.launch(Dispatchers.IO) {
+        val profileId = _activeProfile.value ?: return@launch
+        val services = _services.value ?: return@launch
+        val result = runCatching { sourceMutex.withLock { services.sources.sync(profileId, sourceId) } }
+        if (result.exceptionOrNull() is kotlinx.coroutines.CancellationException) throw result.exceptionOrNull()!!
+        services.player.removeDeletedFromQueue()
+        onDone(result)
+    }
+
+    fun syncAllSources(): Job = moduleScope.launch(Dispatchers.IO) {
+        val profileId = _activeProfile.value ?: return@launch
+        val services = _services.value ?: return@launch
+        for (connection in services.sources.connections(profileId)) {
+            if (!connection.enabled || connection.adapter == MusicSourceManager.STREAM_ADAPTER) continue
+            runCatching { sourceMutex.withLock { services.sources.sync(profileId, connection.id) } }
+        }
+        services.player.removeDeletedFromQueue()
+    }
+
+    /** Saves offline copies of remote songs, in the background. */
+    fun download(trackIds: List<Long>, onDone: (Int) -> Unit = {}): Job = moduleScope.launch(Dispatchers.IO) {
+        val profileId = _activeProfile.value ?: return@launch
+        val services = _services.value ?: return@launch
+        onDone(services.sources.download(profileId, trackIds))
+    }
+
+    private val sourceMutex = Mutex()
 
     // ---------------------------------------------------------------- library actions
 
@@ -172,9 +247,9 @@ class MusicModule(
 
     override val defaultMetadataProviders = listOf(
         MetadataProvider("embedded-tags", "Embedded tags", "Title, artist, album and artwork stored inside your music files.", enabled = true, priority = 0, implemented = true),
-        MetadataProvider("musicbrainz", "MusicBrainz", "Open music encyclopedia: releases, artists, track listings.", enabled = true, priority = 10, implemented = false),
-        MetadataProvider("cover-art-archive", "Cover Art Archive", "Album artwork linked to MusicBrainz releases.", enabled = true, priority = 20, implemented = false),
-        MetadataProvider("lrclib", "LRCLIB", "Community lyrics, including time-synced lyrics.", enabled = true, priority = 30, implemented = false),
+        MetadataProvider("musicbrainz", "MusicBrainz", "Open music encyclopedia: releases, artists, track listings. Asked only when you look a song up.", enabled = true, priority = 10, implemented = true),
+        MetadataProvider("cover-art-archive", "Cover Art Archive", "Album artwork linked to MusicBrainz releases, for songs without a cover.", enabled = true, priority = 20, implemented = true),
+        MetadataProvider("lrclib", "LRCLIB", "Community lyrics, including time-synced lyrics. Asked when you open the lyrics of a song that has none.", enabled = true, priority = 30, implemented = true),
     )
 
     override val appearanceOptions: List<AppearanceOption> = listOf(
@@ -186,14 +261,22 @@ class MusicModule(
             listOf(ChoiceValue("grid", "Cover grid"), ChoiceValue("list", "Track list")), "grid",
         ),
         AppearanceOption.Choice(
-            "player_layout", "Player layout",
-            listOf(ChoiceValue("compact", "Compact bar"), ChoiceValue("expanded", "Expanded with artwork")), "expanded",
+            "player_layout", "Full-screen player",
+            listOf(ChoiceValue("expanded", "Artwork with queue or lyrics beside it"), ChoiceValue("compact", "Artwork only; queue and lyrics on request")), "expanded",
         ),
         AppearanceOption.Choice(
-            "artwork_size", "Now-playing artwork size",
+            "player_background", "Player background",
+            listOf(ChoiceValue("gradient", "Colour from the artwork"), ChoiceValue("blur", "Blurred artwork"), ChoiceValue("plain", "Plain")), "gradient",
+        ),
+        AppearanceOption.Choice(
+            "artwork_size", "Artwork size",
             listOf(ChoiceValue("small", "Small"), ChoiceValue("medium", "Medium"), ChoiceValue("large", "Large")), "large",
         ),
-        AppearanceOption.Toggle("dynamic_album_colours", "Dynamic album colours", true, "Tint the player from the current album artwork."),
+        AppearanceOption.Choice(
+            "text_size", "Text size",
+            listOf(ChoiceValue("small", "Small"), ChoiceValue("medium", "Standard"), ChoiceValue("large", "Large")), "medium",
+        ),
+        AppearanceOption.Toggle("dynamic_album_colours", "Dynamic album colours", true, "Tint album, artist and playlist pages and the player from the artwork."),
         AppearanceOption.Choice(
             "lyrics_style", "Lyrics appearance",
             listOf(ChoiceValue("standard", "Standard"), ChoiceValue("large", "Large, centred"), ChoiceValue("minimal", "Minimal")), "standard",

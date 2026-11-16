@@ -25,6 +25,8 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -51,6 +53,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.debridone.app.DebridOneRuntime
@@ -154,6 +158,13 @@ internal fun TrackMenu(track: Track, dismiss: () -> Unit, extra: @Composable (()
     if (track.isLocal && track.path != null && !track.missing) {
         MenuItem("Show in folder", Icons.Rounded.FolderOpen) { run { actions.revealInFileManager(track) } }
     }
+    if (!track.isLocal && !track.missing && track.durationMs > 0) {
+        if (track.offlinePath == null) {
+            MenuItem("Download for offline", Icons.Rounded.DownloadForOffline) { run { actions.download(listOf(track)) } }
+        } else {
+            MenuItem("Remove the download", Icons.Rounded.DownloadDone) { run { actions.removeDownload(track) } }
+        }
+    }
     extra?.let {
         MenuDivider()
         it()
@@ -248,6 +259,7 @@ internal fun DialogTextField(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     onSubmit: (() -> Unit)? = null,
+    secret: Boolean = false,
 ) {
     val tokens = MaterialTheme.nuvio
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -259,6 +271,7 @@ internal fun DialogTextField(
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = tokens.colors.textPrimary),
             cursorBrush = SolidColor(LocalMusic.current.style.accent),
             keyboardActions = KeyboardActions(onDone = { onSubmit?.invoke() }),
+            visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
