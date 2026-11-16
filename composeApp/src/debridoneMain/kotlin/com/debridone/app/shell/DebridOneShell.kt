@@ -48,7 +48,7 @@ internal val ShellSidebarExpandedWidth = 208.dp
 
 /**
  * The DebridOne application shell: one sidebar, and one content area that shows exactly one
- * section at a time. Streaming is Nuvio, passed in as [streaming]; Music, Games and Manga are
+ * section at a time. Streaming is Nuvio, passed in as [streaming]; Music and Manga are
  * rendered from their own module engines. The shell never mixes content between modules.
  */
 @Composable
@@ -108,7 +108,6 @@ fun DebridOneShell(
                 ShellSection.STREAMING -> Unit
                 ShellSection.HOME -> HomeDashboard()
                 ShellSection.MUSIC -> MusicScreen()
-                ShellSection.GAMES -> ModuleScreen(ModuleId.GAMING)
                 ShellSection.MANGA -> ModuleScreen(ModuleId.MANGA)
                 ShellSection.PLUGINS -> PluginsScreen()
                 ShellSection.DOWNLOADS -> DownloadsScreen()

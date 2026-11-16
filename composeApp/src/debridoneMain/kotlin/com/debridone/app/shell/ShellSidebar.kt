@@ -34,7 +34,6 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -67,7 +66,6 @@ internal val ShellSection.icon: ImageVector
         ShellSection.HOME -> Icons.Rounded.Home
         ShellSection.STREAMING -> Icons.Rounded.Movie
         ShellSection.MUSIC -> Icons.Rounded.MusicNote
-        ShellSection.GAMES -> Icons.Rounded.SportsEsports
         ShellSection.MANGA -> Icons.AutoMirrored.Rounded.MenuBook
         ShellSection.PLUGINS -> Icons.Rounded.Extension
         ShellSection.DOWNLOADS -> Icons.Rounded.Download

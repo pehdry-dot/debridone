@@ -72,8 +72,7 @@ private fun handleShortcut(keyCode: Int): Boolean {
     return when (keyCode) {
         KeyEvent.VK_1 -> select(ShellSection.STREAMING)
         KeyEvent.VK_2 -> select(ShellSection.MUSIC)
-        KeyEvent.VK_3 -> select(ShellSection.GAMES)
-        KeyEvent.VK_4 -> select(ShellSection.MANGA)
+        KeyEvent.VK_3 -> select(ShellSection.MANGA)
         KeyEvent.VK_COMMA -> {
             ShellState.openSettings(ShellState.settingsPage.value)
             true

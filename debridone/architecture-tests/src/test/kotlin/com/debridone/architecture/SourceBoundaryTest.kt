@@ -2,6 +2,7 @@ package com.debridone.architecture
 
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
@@ -167,6 +168,39 @@ class SourceBoundaryTest {
         assertTrue(referenced.isNotEmpty(), "expected the docs to reference scripts/debridone")
         val missing = referenced.filter { (script, _) -> script !in tracked }.map { (script, source) -> "$script (referenced in $source)" }.distinct()
         assertTrue(missing.isEmpty(), "Scripts referenced but not committed (check .gitignore): $missing")
+    }
+
+    /**
+     * Games is not part of the application for now. Its module stays in the repository so it can
+     * return, but the app neither links nor mentions it.
+     */
+    @Test
+    fun gamesIsDormantInTheApplication() {
+        assertEquals(listOf("streaming", "music", "manga"), com.debridone.module.ModuleId.active.map { it.key }, "the sections the application offers")
+
+        val appBuild = File(root, "composeApp/build.gradle.kts").readText()
+        val linked = appBuild.lineSequence().map { it.trim() }.filter { it.startsWith("implementation(") && it.contains("modules.gaming") }.toList()
+        assertTrue(linked.isEmpty(), "the application must not link the gaming module: $linked")
+        assertTrue(File(root, "settings.gradle.kts").readText().contains("\":debridone:modules:gaming\""), "the gaming module stays in the build so it can be brought back")
+        assertTrue(File(root, "debridone/modules/gaming/src/main/kotlin/com/debridone/gaming/GamingModule.kt").isFile, "its source is kept")
+
+        val appSources = kotlinFiles(File(root, "composeApp/src/debridoneMain")) + kotlinFiles(File(root, "composeApp/src/desktopMain"))
+        val importing = appSources.filter { file -> imports(file).any { it.startsWith("com.debridone.gaming") } }
+        assertTrue(importing.isEmpty(), "no application source may use the gaming module: ${importing.map { it.name }}")
+
+        val shell = kotlinFiles(File(root, "composeApp/src/debridoneMain/kotlin/com/debridone/app/shell"))
+        val mentions = shell.flatMap { file ->
+            file.readLines().mapIndexedNotNull { index, line ->
+                val code = line.substringBefore("//").trim()
+                val comment = code.startsWith("*") || code.startsWith("/*")
+                if (!comment && Regex("\\bGAMES\\b|\"Games\"|\\bHydra\\b|ModuleId\\.GAMING").containsMatchIn(code)) "${file.name}:${index + 1}" else null
+            }
+        }
+        assertTrue(mentions.isEmpty(), "the shell must not offer Games anywhere: $mentions")
+
+        val state = File(root, "composeApp/src/debridoneMain/kotlin/com/debridone/app/shell/ShellState.kt").readText()
+        val sections = Regex("""^\s{4}([A-Z_]+)\("([a-z]+)", "([A-Za-z]+)"""", RegexOption.MULTILINE).findAll(state).map { it.groupValues[3] }.toList()
+        assertEquals(listOf("Home", "Streaming", "Music", "Manga", "Plugins", "Downloads", "Settings"), sections, "the sidebar's sections")
     }
 
     private fun kotlinFiles(dir: File): List<File> =

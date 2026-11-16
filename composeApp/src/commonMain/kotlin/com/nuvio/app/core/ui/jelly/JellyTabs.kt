@@ -27,6 +27,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.foundation.background
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.delay
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
@@ -78,7 +94,7 @@ internal fun JellyTabRow(
                 },
                 contentAlignment = Alignment.Center,
             ) {
-                JellyTabContent(item.label, labelFraction, compactSize, horizontalLabels, iconSize, color, active) {
+                JellyTabContent(item.label, if (item.iconOnly) 0f else labelFraction, compactSize, horizontalLabels, iconSize, color, active) {
                     when {
                         item.icon != null -> Icon(item.icon, null, iconModifier, tint = iconTint)
                         item.drawable != null -> Icon(painterResource(item.drawable), null, iconModifier, tint = iconTint)
@@ -107,8 +123,21 @@ internal fun JellyTabTargets(
                 motion.select(visualIndex)
                 item.onClick()
             }
+            // DebridOne: an icon-only item says what it is when the pointer rests on it.
+            val hoverSource = remember { MutableInteractionSource() }
+            val hovered by hoverSource.collectIsHoveredAsState()
+            var tooltipVisible by remember { mutableStateOf(false) }
+            LaunchedEffect(hovered, item.iconOnly) {
+                if (item.iconOnly && hovered) {
+                    delay(450)
+                    tooltipVisible = true
+                } else {
+                    tooltipVisible = false
+                }
+            }
             Box(
                 modifier = Modifier.weight(1f).fillMaxHeight()
+                    .then(if (item.iconOnly) Modifier.hoverable(hoverSource) else Modifier)
                     .selectable(
                         selected = item.selected,
                         role = Role.Tab,
@@ -124,6 +153,20 @@ internal fun JellyTabTargets(
                     },
                 contentAlignment = Alignment.Center,
             ) {
+                if (item.iconOnly && tooltipVisible) {
+                    val tokens = MaterialTheme.nuvio
+                    Popup(
+                        alignment = Alignment.BottomCenter,
+                        offset = IntOffset(0, with(LocalDensity.current) { (iconSize + 18.dp).roundToPx() }),
+                        properties = PopupProperties(focusable = false),
+                    ) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(8.dp)).background(tokens.colors.surfacePopover).padding(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Text(item.label, style = MaterialTheme.typography.labelMedium, color = tokens.colors.textPrimary, maxLines = 1)
+                        }
+                    }
+                }
                 if (item.content != null) {
                     Box(
                         modifier = Modifier.graphicsLayer {

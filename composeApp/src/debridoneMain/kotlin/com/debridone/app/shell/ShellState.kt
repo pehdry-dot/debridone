@@ -11,7 +11,6 @@ enum class ShellSection(val key: String, val label: String, val module: ModuleId
     HOME("home", "Home"),
     STREAMING("streaming", "Streaming", ModuleId.STREAMING),
     MUSIC("music", "Music", ModuleId.MUSIC),
-    GAMES("games", "Games", ModuleId.GAMING),
     MANGA("manga", "Manga", ModuleId.MANGA),
     PLUGINS("plugins", "Plugins"),
     DOWNLOADS("downloads", "Downloads"),
@@ -21,8 +20,8 @@ enum class ShellSection(val key: String, val label: String, val module: ModuleId
     companion object {
         fun fromKey(key: String?): ShellSection? = entries.firstOrNull { it.key == key }
 
-        /** The four entertainment modules, in Cmd+1…Cmd+4 order. */
-        val modules: List<ShellSection> = listOf(STREAMING, MUSIC, GAMES, MANGA)
+        /** The entertainment sections, in Cmd+1…Cmd+3 order. (Games is not part of the app for now.) */
+        val modules: List<ShellSection> = listOf(STREAMING, MUSIC, MANGA)
     }
 }
 

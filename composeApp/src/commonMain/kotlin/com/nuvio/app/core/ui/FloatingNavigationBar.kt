@@ -16,6 +16,11 @@ internal class FloatingNavigationItem(
     val icon: ImageVector? = null,
     val drawable: DrawableResource? = null,
     val content: (@Composable (onClick: () -> Unit) -> Unit)? = null,
+    /**
+     * DebridOne: shows the icon alone even where the other items show their labels. [label] is
+     * then the item's tooltip and its name for screen readers.
+     */
+    val iconOnly: Boolean = false,
 )
 
 internal expect val floatingNavigationGlowSupported: Boolean

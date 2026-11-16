@@ -1256,7 +1256,8 @@ kotlin {
                 implementation(projects.debridone.accounts)
                 implementation(projects.debridone.moduleApi)
                 implementation(projects.debridone.modules.music)
-                implementation(projects.debridone.modules.gaming)
+                // Games is dormant: :debridone:modules:gaming stays in the repository (and keeps its own
+                // tests) but is not linked into the application.
                 implementation(projects.debridone.modules.manga)
             }
         }

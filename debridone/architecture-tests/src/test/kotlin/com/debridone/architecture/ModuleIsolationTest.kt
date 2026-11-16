@@ -61,6 +61,31 @@ class ModuleIsolationTest {
     private fun gaming() = GamingModule(storage(ModuleId.GAMING)).also { opened += it }
     private fun manga() = MangaModule(storage(ModuleId.MANGA)).also { opened += it }
 
+    /** What an earlier version saved for Games is left exactly as it is while the others run. */
+    @Test
+    fun savedGamesDataIsNotTouchedByTheRunningSections() = runBlocking {
+        val folder = paths.moduleDataDir(ModuleId.GAMING.key)
+        java.nio.file.Files.createDirectories(folder)
+        val database = folder.resolve("gaming.db")
+        val saved = ByteArray(4096) { (it * 31 % 251).toByte() }
+        java.nio.file.Files.write(database, saved)
+        val note = folder.resolve("library-export.json")
+        java.nio.file.Files.writeString(note, "{\"games\":[\"kept\"]}")
+
+        val music = music().apply { start() }
+        val manga = manga().apply { start() }
+        music.onProfileChanged(1)
+        manga.onProfileChanged(1)
+        music.deleteProfileData(2)
+        manga.deleteProfileData(2)
+        music.close()
+        manga.close()
+
+        assertTrue(java.util.Arrays.equals(saved, java.nio.file.Files.readAllBytes(database)), "gaming.db is byte for byte what it was")
+        assertEquals("{\"games\":[\"kept\"]}", java.nio.file.Files.readString(note))
+        assertEquals(setOf("gaming.db", "library-export.json"), java.nio.file.Files.list(folder).use { stream -> stream.map { it.fileName.toString() }.toList().toSet() })
+    }
+
     @Test
     fun musicSourcesExistOnlyInMusic() = runBlocking {
         val music = music().apply { start() }

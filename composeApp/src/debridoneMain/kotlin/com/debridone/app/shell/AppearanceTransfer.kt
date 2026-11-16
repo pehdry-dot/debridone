@@ -24,7 +24,7 @@ internal object AppearanceTransfer {
     private const val FORMAT = "debridone-appearance"
     private const val VERSION = 1
     private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
-    private val engineModules = listOf(ModuleId.MUSIC, ModuleId.GAMING, ModuleId.MANGA)
+    private val engineModules = listOf(ModuleId.MUSIC, ModuleId.MANGA)
 
     fun export(): String {
         val document = buildJsonObject {

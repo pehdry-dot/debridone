@@ -2,7 +2,6 @@ package com.debridone.app.modules
 
 import com.debridone.app.music.MusicAudio
 import com.debridone.app.music.MusicSystemIntegration
-import com.debridone.gaming.GamingModule
 import com.debridone.manga.MangaModule
 import com.debridone.module.EntertainmentModule
 import com.debridone.module.ModuleId
@@ -17,8 +16,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * Owns the three module engines that are not Nuvio. (Streaming is Nuvio itself and is hosted by the
- * shell as a composable; it keeps its own storage under `modules/streaming`.)
+ * Owns the module engines that are not Nuvio: Music and Manga. (Streaming is Nuvio itself and is
+ * hosted by the shell as a composable; it keeps its own storage under `modules/streaming`.)
+ *
+ * Games is not part of the application for now. Its module (`:debridone:modules:gaming`) is kept in
+ * the repository but is neither linked into the app nor started, and its data folder
+ * (`modules/gaming`) is never opened, so whatever an earlier version saved there stays as it is.
  *
  * This is the only place that holds more than one module. It never passes one module's objects to
  * another: each is constructed with its own [ModuleStorage] and started in its own coroutine, so a
@@ -26,10 +29,9 @@ import kotlinx.coroutines.launch
  */
 class ModuleHost(paths: AppPaths, secrets: SecretStore) {
     val music: MusicModule = MusicModule(ModuleStorage(ModuleId.MUSIC, paths, secrets), engineFactory = MusicAudio::createEngine)
-    val gaming: GamingModule = GamingModule(ModuleStorage(ModuleId.GAMING, paths, secrets))
     val manga: MangaModule = MangaModule(ModuleStorage(ModuleId.MANGA, paths, secrets))
 
-    private val engines: List<SqliteBackedModule> = listOf(music, gaming, manga)
+    private val engines: List<SqliteBackedModule> = listOf(music, manga)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Volatile
@@ -37,7 +39,8 @@ class ModuleHost(paths: AppPaths, secrets: SecretStore) {
 
     fun module(id: ModuleId): EntertainmentModule? = when (id) {
         ModuleId.MUSIC -> music
-        ModuleId.GAMING -> gaming
+        // Dormant: there is no Games engine in this build.
+        ModuleId.GAMING -> null
         ModuleId.MANGA -> manga
         ModuleId.STREAMING -> null
     }

@@ -365,7 +365,7 @@ private fun AppearancePage() {
     val scope = rememberCoroutineScope()
     val selectedModule by ShellState.appearanceModule.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<Pair<String, PillTone>?>(null) }
-    val tabs: List<Pair<ModuleId?, String>> = listOf<Pair<ModuleId?, String>>(null to "Global") + ModuleId.entries.map { it to it.displayName }
+    val tabs: List<Pair<ModuleId?, String>> = listOf<Pair<ModuleId?, String>>(null to "Global") + ModuleId.active.map { it to it.displayName }
 
     ShellPage(
         title = "Appearance",
@@ -623,7 +623,7 @@ private fun StoragePage() {
             SelectionContainer {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     StorageLine("Accounts and profiles", paths.accountsDir.resolve("accounts.db").toString())
-                    ModuleId.entries.forEach { id -> StorageLine(id.displayName, paths.moduleDataDir(id.key).toString()) }
+                    ModuleId.active.forEach { id -> StorageLine(id.displayName, paths.moduleDataDir(id.key).toString()) }
                     StorageLine("Backups", paths.backupsDir.toString())
                     StorageLine("Caches (safe to delete)", paths.cacheRoot.toString())
                 }
@@ -695,14 +695,12 @@ private fun AboutPage() {
             BulletList(
                 listOf(
                     "Streaming is Nuvio Desktop by Nuvio Media (GPL-3.0). DebridOne is a modified version and is distributed under the same licence.",
-                    "Games follows Hydra Launcher (MIT). Its engine is being ported; no Hydra code runs yet.",
                     "Manga follows Houdoku and the Tiyo extension system (MIT). Its engine is being built; no extensions run yet.",
                     "Music is original DebridOne code. Eclipse Music is a feature reference only.",
                 ),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = { uriHandler.openUri("https://github.com/NuvioMedia/NuvioDesktop") }) { Text("Nuvio Desktop") }
-                OutlinedButton(onClick = { uriHandler.openUri("https://github.com/hydralauncher/hydra") }) { Text("Hydra") }
                 OutlinedButton(onClick = { uriHandler.openUri("https://github.com/xgi/houdoku") }) { Text("Houdoku") }
                 OutlinedButton(onClick = { uriHandler.openUri("https://github.com/xgi/tiyo") }) { Text("Tiyo") }
             }

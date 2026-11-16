@@ -25,12 +25,11 @@ import com.nuvio.app.features.profiles.ProfileRepository
 private val moduleBlurb = mapOf(
     ShellSection.STREAMING to "Movies and series through your own addons.",
     ShellSection.MUSIC to "Your music library, playlists and player.",
-    ShellSection.GAMES to "Your game library, launcher and playtime.",
     ShellSection.MANGA to "Manga and manhwa with compatible extensions.",
 )
 
 /**
- * Launch dashboard. It only links to the four sections and shows the current profile; it never
+ * Launch dashboard. It only links to the sections and shows the current profile; it never
  * lists, searches or mixes content from the modules.
  */
 @Composable

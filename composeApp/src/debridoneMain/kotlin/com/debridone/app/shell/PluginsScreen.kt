@@ -55,7 +55,7 @@ internal fun PluginsScreen() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SegmentedTabs(
-                items = ModuleId.entries.map { it to it.displayName },
+                items = ModuleId.active.map { it to it.displayName },
                 selected = tab,
                 onSelect = ShellState::selectPluginsTab,
             )

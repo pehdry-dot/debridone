@@ -20,7 +20,7 @@ import com.nuvio.app.features.settings.PluginsSettingsScreen
 /**
  * Streaming's side of the shell screens. Everything here is Nuvio's own UI and Nuvio's own
  * repositories: its addon system, its plugin (provider) system and its download manager. Nothing
- * from Music, Games or Manga is referenced.
+ * from Music or Manga is referenced.
  */
 @Composable
 internal fun StreamingPluginsTab() {

@@ -29,7 +29,7 @@ internal fun DownloadsScreen() {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(start = 40.dp, end = 40.dp, top = topInset + 20.dp, bottom = 8.dp)) {
             SegmentedTabs(
-                items = ModuleId.entries.map { it to it.displayName },
+                items = ModuleId.active.map { it to it.displayName },
                 selected = tab,
                 onSelect = { tabKey = it.key },
             )

@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.rounded.Settings
+import nuvio.composeapp.generated.resources.compose_nav_settings_tooltip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.Scaffold
@@ -162,23 +164,35 @@ internal fun MainTabsDestination(
                 drawable = Res.drawable.sidebar_library,
                 label = stringResource(Res.string.compose_nav_library),
             ),
-            FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Settings,
-                onClick = { onTabSelected(AppScreenTab.Settings) },
-                label = stringResource(if (isDesktop) Res.string.compose_nav_settings else Res.string.compose_nav_profile),
-                content = { onClick ->
-                    ProfileSwitcherTab(
-                        selected = selectedTab == AppScreenTab.Settings,
-                        onClick = onClick,
-                        onProfileSelected = onProfileSelected,
-                        onAddProfileRequested = onAddProfileRequested,
-                        hazeState = navBarHazeState,
-                        onPopupStateChanged = { isTopProfileSwitcherOpen = it },
-                        avatarSize = if (isDesktop && screenWidth < 800.dp) 26 else if (isDesktop && screenWidth > 1600.dp) 30 else 28,
-                        popupBelowAnchor = isDesktop || isTabletLayout,
-                    )
-                },
-            ),
+            if (isDesktop) {
+                // DebridOne: Settings is a cogwheel alone. The profile picture made the tab read as
+                // "profile" and its label did not fit; profiles are switched from the sidebar.
+                FloatingNavigationItem(
+                    selected = selectedTab == AppScreenTab.Settings,
+                    onClick = { onTabSelected(AppScreenTab.Settings) },
+                    icon = Icons.Rounded.Settings,
+                    label = stringResource(Res.string.compose_nav_settings_tooltip),
+                    iconOnly = true,
+                )
+            } else {
+                FloatingNavigationItem(
+                    selected = selectedTab == AppScreenTab.Settings,
+                    onClick = { onTabSelected(AppScreenTab.Settings) },
+                    label = stringResource(Res.string.compose_nav_profile),
+                    content = { onClick ->
+                        ProfileSwitcherTab(
+                            selected = selectedTab == AppScreenTab.Settings,
+                            onClick = onClick,
+                            onProfileSelected = onProfileSelected,
+                            onAddProfileRequested = onAddProfileRequested,
+                            hazeState = navBarHazeState,
+                            onPopupStateChanged = { isTopProfileSwitcherOpen = it },
+                            avatarSize = 28,
+                            popupBelowAnchor = isTabletLayout,
+                        )
+                    },
+                )
+            },
         )
 
         Scaffold(
