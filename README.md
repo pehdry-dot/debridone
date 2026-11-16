@@ -1,80 +1,60 @@
-<div align="center">
+# DebridOne
 
-  <img src="https://nuvio.tv/assets/nuvio-app-logo-wordmark.webp" alt="Nuvio" width="320" />
+A free macOS entertainment app with four independent sections in one window:
+**Streaming**, **Music**, **Games** and **Manga**. Each section has its own plugins, metadata,
+library, settings and storage. One account holds several profiles.
 
-  <p>
-    A free, open-source media app for Windows, macOS, and Linux.
-    <br />
-    Bring your own sources. Nuvio turns them into a library with artwork, ratings, subtitles, and your place saved on every screen.
-  </p>
+DebridOne is built on [Nuvio Desktop](https://github.com/NuvioMedia/NuvioDesktop) and is free
+software under the GPL-3.0. There are no subscriptions, tiers or paywalls.
 
-  [Website](https://nuvio.tv) · [GitHub releases](https://github.com/NuvioMedia/NuvioDesktop/releases/latest) · [Support Nuvio](https://nuvio.tv/support)
+## Status
 
-</div>
+This is the foundation milestone.
 
-## ⚠️ Alpha Software - Slow Development - Testers Only
+| Section | State |
+|---|---|
+| Streaming | Working. It is Nuvio Desktop, running on DebridOne's on-device accounts. |
+| Music | In development: storage, plugin registry, metadata settings and appearance exist; no player yet. |
+| Games | In development: same foundation; no library or launcher yet. |
+| Manga | In development: same foundation; no reader or extension host yet. |
 
-Nuvio Desktop is currently in alpha and is intended only for testers. It is under development and is not suitable for daily use.
+Also in place: on-device accounts with multiple profiles that survive restarts, crash-safe storage
+with automatic backups and recovery, a four-tab Plugins screen with isolated registries, per-section
+appearance settings, and keyboard shortcuts.
 
-Expect breaking changes with every update. Features, settings, stored data, and compatibility may change or stop working without notice. Do not rely on this build as your primary media app, and report any issues you encounter during testing.
+The macOS app bundle has not been built or tested yet; so far the app has been run from source on
+Linux. See [Known limitations](debridone/docs/LIMITATIONS.md) before relying on anything.
 
-## Get Nuvio Desktop
+DebridOne ships with no addons, sources or extensions. What you install is your choice.
 
-Download the latest build from [GitHub Releases](https://github.com/NuvioMedia/NuvioDesktop/releases/latest).
-
-- Windows: MSI installer
-- macOS: DMG installer
-- Linux: DEB, RPM, Flatpak, or AppImage
-
-## Build from source
-
-```bash
-git clone https://github.com/NuvioMedia/NuvioDesktop.git
-cd NuvioDesktop
-```
-
-### Run the app
+## Run it
 
 ```bash
-./gradlew :composeApp:run
+./scripts/debridone/dev.sh
 ```
 
-On Windows PowerShell:
-
-```powershell
-.\gradlew.bat :composeApp:run
-```
-
-### Package the app
-
-Build a release package for the current host:
+Build an unsigned development DMG on a Mac:
 
 ```bash
-./gradlew :composeApp:packageReleaseDistributionForCurrentOS
+./scripts/debridone/build-macos-dev-dmg.sh
 ```
 
-For platform-specific packaging:
-
-Windows PowerShell:
-
-```powershell
-.\gradlew.bat :composeApp:packageReleaseMsi --rerun-tasks
-```
-
-macOS:
+Run the tests:
 
 ```bash
-./scripts/build-macos-release-dmgs.sh --package-only
+./scripts/debridone/test.sh
 ```
 
-Linux:
+## Documentation
 
-```bash
-./gradlew :composeApp:packageReleaseDeb
-```
+- [Building](debridone/docs/BUILD.md)
+- [Testing](debridone/docs/TESTING.md)
+- [Architecture](debridone/docs/ARCHITECTURE.md)
+- [Upstream projects and how to merge them](debridone/docs/UPSTREAM.md)
+- [Known limitations](debridone/docs/LIMITATIONS.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
-The shared app is built with Kotlin Multiplatform and Compose Multiplatform.
+## Licence
 
-## License
-
-[GNU General Public License v3.0](./LICENSE)
+[GNU General Public License v3.0](./LICENSE). DebridOne is a modified version of Nuvio Desktop by
+Nuvio Media; it is not affiliated with or endorsed by Nuvio Media.

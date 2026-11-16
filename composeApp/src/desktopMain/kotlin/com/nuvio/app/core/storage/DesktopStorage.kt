@@ -1,5 +1,7 @@
 package com.nuvio.app.core.storage
 
+import com.debridone.platform.AppPaths
+import com.debridone.platform.io.AtomicFiles
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
@@ -40,36 +42,32 @@ internal object DesktopStorage {
         }
     }
 
-    private fun resolveAppDataDir(): Path {
-        val osName = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
-        val userHome = Paths.get(System.getProperty("user.home").orEmpty())
-        return when {
-            osName.contains("mac") -> userHome.resolve("Library/Application Support/Nuvio")
-            osName.contains("win") -> {
-                val appData = System.getenv("APPDATA")?.takeIf { it.isNotBlank() }
-                (appData?.let(Paths::get) ?: userHome.resolve("AppData/Roaming")).resolve("Nuvio")
-            }
-            else -> {
-                val xdgConfig = System.getenv("XDG_CONFIG_HOME")?.takeIf { it.isNotBlank() }
-                (xdgConfig?.let(Paths::get) ?: userHome.resolve(".config")).resolve("nuvio")
-            }
-        }
-    }
+    // DebridOne: Nuvio is the Streaming module, so its files live in the Streaming module's own
+    // directories (macOS: ~/Library/Application Support/DebridOne/modules/streaming and
+    // ~/Library/Caches/DebridOne/streaming). Accounts and the other modules are outside this
+    // tree, which also means [wipe] can only ever remove Streaming data.
+    private fun resolveAppDataDir(): Path = AppPaths.system().moduleDataDir(STREAMING_MODULE_KEY)
 
-    private fun resolveCacheDir(): Path {
-        val osName = System.getProperty("os.name").orEmpty().lowercase(Locale.ROOT)
-        val userHome = Paths.get(System.getProperty("user.home").orEmpty())
-        return when {
-            osName.contains("mac") -> userHome.resolve("Library/Caches/Nuvio")
-            osName.contains("win") -> {
-                val localAppData = System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }
-                (localAppData?.let(Paths::get) ?: userHome.resolve("AppData/Local")).resolve("Nuvio/Cache")
+    private fun resolveCacheDir(): Path = AppPaths.system().moduleCacheDir(STREAMING_MODULE_KEY)
+
+    private const val STREAMING_MODULE_KEY = "streaming"
+
+    /**
+     * DebridOne: removes every key that belongs to [profileId] from all stores. Nuvio scopes
+     * per-profile data by appending `_<profileId>` to the key (see ProfileScopedKey); profile ids
+     * are unique and never reused, so this cannot touch another profile's data.
+     */
+    fun removeProfileScopedKeys(profileId: Int) {
+        val suffix = "_$profileId"
+        val names = runCatching {
+            Files.list(rootDir).use { stream ->
+                stream.map { it.fileName.toString() }
+                    .filter { it.endsWith(".properties") }
+                    .map { it.removeSuffix(".properties") }
+                    .toList()
             }
-            else -> {
-                val xdgCache = System.getenv("XDG_CACHE_HOME")?.takeIf { it.isNotBlank() }
-                (xdgCache?.let(Paths::get) ?: userHome.resolve(".cache")).resolve("nuvio")
-            }
-        }
+        }.getOrDefault(emptyList())
+        names.forEach { name -> store(name).removeKeysEndingWith(suffix) }
     }
 
     internal class Store(
@@ -152,18 +150,25 @@ internal object DesktopStorage {
             if (loaded) return
             loaded = true
             properties.clear()
-            if (!file.exists()) return
-            runCatching {
-                Files.newInputStream(file).use { input ->
-                    properties.load(input)
-                }
-            }
+            // DebridOne: fall back to the previous good copy if the file is missing or unreadable.
+            AtomicFiles.readWithBackup(file) { bytes ->
+                Properties().apply { load(bytes.inputStream()) }
+            }?.let(properties::putAll)
+        }
+
+        fun removeKeysEndingWith(suffix: String) = synchronized(lock) {
+            ensureLoaded()
+            val doomed = properties.stringPropertyNames().filter { it.endsWith(suffix) }
+            if (doomed.isEmpty()) return@synchronized
+            doomed.forEach(properties::remove)
+            persist()
         }
 
         private fun persist() {
-            Files.createDirectories(file.parent)
-            Files.newOutputStream(file).use { output ->
-                properties.store(output, "Nuvio desktop preferences")
+            // DebridOne: write to a temp file, fsync, keep a .bak, then rename into place, so a
+            // crash or power loss mid-write can no longer truncate the store.
+            AtomicFiles.write(file) { output ->
+                properties.store(output, "DebridOne streaming preferences")
             }
         }
     }

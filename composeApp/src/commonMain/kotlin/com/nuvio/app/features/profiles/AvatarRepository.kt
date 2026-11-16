@@ -161,6 +161,12 @@ object AvatarRepository {
     }
 
     private suspend fun fetchStandardCatalog() {
+        // DebridOne: on-device accounts have no avatar server. Profiles use a colour, or a picture
+        // imported from this computer (see LocalAvatarImporter).
+        if (com.nuvio.app.core.auth.LocalAccounts.isActive) {
+            standardLoaded = true
+            return
+        }
         if (standardFetchInFlight) return
         standardFetchInFlight = true
         try {

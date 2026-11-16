@@ -518,6 +518,26 @@ internal fun AppGate(
                 }
                 AppGateScreen.Main.name -> {
                     if (renderMainContent) {
+                        val switchProfile = {
+                            autoSkipProfileSelection = false
+                            profileSelectionLoading = false
+                            profileSelectionTransitionActive = false
+                            skipProfileSelectionEnterAnimation = false
+                            gateScreen = AppGateScreen.ProfileSelection.name
+                        }
+                        if (AppShellHost.isActive) {
+                            // DebridOne: the shell is the root content and is usable at once.
+                            // Upstream waits for Streaming's home screen to report readiness, but
+                            // Streaming may not be the section that is open, so that signal might
+                            // never arrive and the loading overlay would stay up.
+                            LaunchedEffect(Unit) {
+                                profileSelectionLoading = false
+                                onAppReady?.invoke(true)
+                            }
+                        }
+                        // DebridOne: the application shell (when installed) hosts Nuvio as its
+                        // Streaming section. Without a shell this renders Nuvio directly.
+                        AppShellHost.Wrap(onSwitchProfile = switchProfile) {
                         MainAppContent(
                             initialTab = initialTab,
                             initialRoute = initialRoute,
@@ -540,14 +560,9 @@ internal fun AppGate(
                                     ready && gateScreen == AppGateScreen.Main.name,
                                 )
                             },
-                            onSwitchProfile = {
-                                autoSkipProfileSelection = false
-                                profileSelectionLoading = false
-                                profileSelectionTransitionActive = false
-                                skipProfileSelectionEnterAnimation = false
-                                gateScreen = AppGateScreen.ProfileSelection.name
-                            },
+                            onSwitchProfile = switchProfile,
                         )
+                        }
                     }
                 }
             }

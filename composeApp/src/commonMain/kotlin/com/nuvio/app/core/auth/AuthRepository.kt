@@ -47,6 +47,16 @@ object AuthRepository {
         if (initialized) return
         initialized = true
 
+        // DebridOne: on-device accounts. Supabase is not contacted in this mode.
+        LocalAccounts.active?.let { backend ->
+            _state.value = runCatching { backend.restoreSession() }
+                .onFailure { e -> log.e(e) { "Could not restore the local session" } }
+                .getOrNull()
+                ?.toAuthState()
+                ?: AuthState.Unauthenticated
+            return
+        }
+
         val savedAnonId = AuthStorage.loadAnonymousUserId()
         if (savedAnonId != null) {
             _state.value = AuthState.Authenticated(
@@ -116,6 +126,15 @@ object AuthRepository {
     @OptIn(ExperimentalUuidApi::class)
     fun signInAnonymously() {
         _error.value = null
+        LocalAccounts.active?.let { backend ->
+            runCatching { backend.signInGuest() }
+                .onSuccess { session -> _state.value = session.toAuthState() }
+                .onFailure { e ->
+                    log.e(e) { "Guest sign-in failed" }
+                    _error.value = e.message
+                }
+            return
+        }
         val userId = Uuid.random().toString()
         AuthStorage.saveAnonymousUserId(userId)
         _state.value = AuthState.Authenticated(
@@ -127,6 +146,10 @@ object AuthRepository {
 
     suspend fun signUpWithEmail(email: String, password: String): Result<Unit> = runCatching {
         _error.value = null
+        LocalAccounts.active?.let { backend ->
+            _state.value = localAccountCall { backend.signUp(email, password) }.toAuthState()
+            return@runCatching
+        }
         SupabaseProvider.client.auth.signUpWith(Email) {
             this.email = email
             this.password = password
@@ -134,24 +157,41 @@ object AuthRepository {
         Unit
     }.onFailure { e ->
         log.e(e) { "Email sign-up failed" }
-        _error.value = e.safeAuthErrorDescription()
+        _error.value = (e as? LocalAccountException)?.message
+            ?: e.safeAuthErrorDescription()
             ?: getString(Res.string.auth_sign_up_failed)
     }
 
     suspend fun signInWithEmail(email: String, password: String): Result<Unit> = runCatching {
         _error.value = null
+        LocalAccounts.active?.let { backend ->
+            _state.value = localAccountCall { backend.signIn(email, password) }.toAuthState()
+            return@runCatching
+        }
         SupabaseProvider.client.auth.signInWith(Email) {
             this.email = email
             this.password = password
         }
     }.onFailure { e ->
         log.e(e) { "Email sign-in failed" }
-        _error.value = e.safeAuthErrorDescription()
+        _error.value = (e as? LocalAccountException)?.message
+            ?: e.safeAuthErrorDescription()
             ?: getString(Res.string.auth_sign_in_failed)
     }
 
     suspend fun signOut(): Result<Unit> {
         _error.value = null
+        // DebridOne: signing out of an on-device account only ends the session. Its profiles,
+        // libraries and settings stay on disk, because there is no server to restore them from.
+        LocalAccounts.active?.let { backend ->
+            val result = runCatching { backend.signOut() }
+            result.onFailure { e ->
+                log.e(e) { "Local sign-out failed" }
+                _error.value = e.message
+            }
+            if (result.isSuccess) _state.value = AuthState.Unauthenticated
+            return result
+        }
         val anonymousRead = runCatching { AuthStorage.loadAnonymousUserId() }
         val wasAnonymous = anonymousRead.getOrNull() != null
         val anonymousClear = runCatching { AuthStorage.clearAnonymousUserId() }
@@ -278,6 +318,17 @@ object AuthRepository {
     fun clearError() {
         _error.value = null
     }
+
+    /** DebridOne: the on-device session changed outside this repository (e.g. account deleted). */
+    fun refreshLocalSession() {
+        val backend = LocalAccounts.active ?: return
+        _state.value = runCatching { backend.restoreSession() }.getOrNull()?.toAuthState()
+            ?: AuthState.Unauthenticated
+    }
+
+    /** Password hashing is deliberately slow; keep it off the UI thread. */
+    private suspend fun localAccountCall(block: () -> LocalAccountSession): LocalAccountSession =
+        kotlinx.coroutines.withContext(Dispatchers.Default) { block() }
 
     private fun Throwable.safeAuthErrorDescription(): String? =
         findCause<AuthRestException>()

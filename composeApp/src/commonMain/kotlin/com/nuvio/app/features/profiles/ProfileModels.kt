@@ -103,7 +103,11 @@ fun String.isValidAvatarUrl(): Boolean {
     val value = trim()
     return value.length <= 2048 &&
         !value.any { it.isWhitespace() } &&
-        (value.startsWith("https://") || value.startsWith("http://"))
+        (
+            value.startsWith("https://") || value.startsWith("http://") ||
+                // DebridOne: on-device accounts can use an image imported from this computer.
+                (value.startsWith("file:") && com.nuvio.app.core.auth.LocalAccounts.isActive)
+            )
 }
 
 fun profileAvatarImageUrl(profile: NuvioProfile, avatar: AvatarCatalogItem?): String? =

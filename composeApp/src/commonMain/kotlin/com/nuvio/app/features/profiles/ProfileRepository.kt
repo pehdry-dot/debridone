@@ -61,7 +61,7 @@ import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.getString
 
 @Serializable
-private data class StoredProfilePayload(
+internal data class StoredProfilePayload(
     val userId: String,
     val activeProfileIndex: Int = 1,
     val hasEverSelectedProfile: Boolean = false,
@@ -233,7 +233,15 @@ object ProfileRepository {
         usesPrimaryAddons: Boolean = false,
     ) {
         val existing = _state.value.profiles
-        val nextIndex = ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull() ?: return
+        // DebridOne: on-device profiles get an index that is unique on this device and never
+        // reused, so per-profile data cannot collide between accounts or resurface later.
+        val localBackend = com.nuvio.app.core.auth.LocalAccounts.active
+        val nextIndex = if (localBackend != null) {
+            if (existing.size >= MAX_PROFILES) return
+            withContext(Dispatchers.Default) { localBackend.reserveProfileIndex() }
+        } else {
+            ((1..MAX_PROFILES).toSet() - existing.map { it.profileIndex }.toSet()).minOrNull() ?: return
+        }
 
         val allPayloads = existing.map { profile ->
             ProfilePushPayload(
@@ -304,6 +312,13 @@ object ProfileRepository {
             val remaining = _state.value.profiles.filter { it.profileIndex != profileIndex }
             ProfilePinCacheStorage.removePayload(profileIndex)
             ServerRepository.removeProfile(profileIndex)
+            // DebridOne: remove the profile row and everything it owned, in every module.
+            com.nuvio.app.core.auth.LocalAccounts.active?.let { backend ->
+                withContext(Dispatchers.Default) {
+                    runCatching { backend.deleteProfile(profileIndex) }
+                        .onFailure { e -> log.e(e) { "Failed to delete local profile $profileIndex" } }
+                }
+            }
             _state.value = _state.value.copy(
                 profiles = remaining,
                 activeProfile = if (_state.value.activeProfile?.profileIndex == profileIndex) remaining.firstOrNull() else _state.value.activeProfile,
@@ -329,6 +344,9 @@ object ProfileRepository {
     }
 
     suspend fun verifyPin(profileIndex: Int, pin: String): PinVerifyResult {
+        com.nuvio.app.core.auth.LocalAccounts.active?.let { backend ->
+            return localPinCall { backend.verifyPin(profileIndex, pin) }
+        }
         if (AuthRepository.state.value !is AuthState.Authenticated) {
             return verifyPinLocally(profileIndex, pin)
         }
@@ -352,6 +370,9 @@ object ProfileRepository {
     }
 
     suspend fun setPin(profileIndex: Int, pin: String, currentPin: String? = null): PinVerifyResult {
+        com.nuvio.app.core.auth.LocalAccounts.active?.let { backend ->
+            return localPinCall(reload = true) { backend.setPin(profileIndex, pin, currentPin) }
+        }
         if (AuthRepository.state.value !is AuthState.Authenticated) {
             return PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_set_requires_internet))
         }
@@ -374,6 +395,9 @@ object ProfileRepository {
     }
 
     suspend fun clearPin(profileIndex: Int, currentPin: String? = null): PinVerifyResult {
+        com.nuvio.app.core.auth.LocalAccounts.active?.let { backend ->
+            return localPinCall(reload = true) { backend.clearPin(profileIndex, currentPin) }
+        }
         if (AuthRepository.state.value !is AuthState.Authenticated) {
             return PinVerifyResult(unlocked = false, message = getString(Res.string.profile_pin_clear_requires_internet))
         }
@@ -395,6 +419,14 @@ object ProfileRepository {
     }
 
     suspend fun clearPinWithPassword(profileIndex: Int, accountPassword: String) {
+        com.nuvio.app.core.auth.LocalAccounts.active?.let { backend ->
+            withContext(Dispatchers.Default) {
+                runCatching { backend.clearPinWithAccountPassword(profileIndex, accountPassword) }
+                    .onFailure { e -> log.e(e) { "Failed to clear local pin with password" } }
+            }
+            reloadFromStorage()
+            return
+        }
         runCatching {
             val params = buildJsonObject {
                 put("p_account_password", accountPassword)
@@ -409,6 +441,12 @@ object ProfileRepository {
     }
 
     suspend fun pullProfileLocks(): List<ProfileLockState> {
+        if (com.nuvio.app.core.auth.LocalAccounts.isActive) {
+            reloadFromStorage()
+            return _state.value.profiles.map { profile ->
+                ProfileLockState(profile.profileIndex, profile.pinEnabled, profile.pinLockedUntil)
+            }
+        }
         return runCatching {
             val result = SupabaseProvider.client.postgrest.rpc("sync_pull_profile_locks")
             result.decodeList<ProfileLockState>()
@@ -549,6 +587,39 @@ object ProfileRepository {
                 ProfilePinCacheStorage.removePayload(profileIndex)
             }
         }
+    }
+
+    /** DebridOne: re-reads profiles from storage after the local backend changed them (PINs, default). */
+    fun reloadFromStorage() {
+        val stored = decodeStoredPayload() ?: return
+        val selectedIndex = activeProfileIndex
+        val hadSelection = _state.value.activeProfile != null
+        applyStoredPayload(stored)
+        if (hadSelection) {
+            // Keep the profile that is in use; storage only decides the start-up profile.
+            _state.value.profiles.find { it.profileIndex == selectedIndex }?.let { current ->
+                activeProfileIndex = selectedIndex
+                _state.value = _state.value.copy(activeProfile = current)
+            }
+        }
+    }
+
+    private suspend fun localPinCall(
+        reload: Boolean = false,
+        block: () -> com.nuvio.app.core.auth.LocalPinResult,
+    ): PinVerifyResult {
+        val result = withContext(Dispatchers.Default) {
+            runCatching(block).getOrElse { e ->
+                log.e(e) { "Local profile PIN operation failed" }
+                com.nuvio.app.core.auth.LocalPinResult(unlocked = false, message = e.message)
+            }
+        }
+        if (reload && result.unlocked) reloadFromStorage()
+        return PinVerifyResult(
+            unlocked = result.unlocked,
+            retryAfterSeconds = result.retryAfterSeconds,
+            message = result.message,
+        )
     }
 
     private fun persist() {

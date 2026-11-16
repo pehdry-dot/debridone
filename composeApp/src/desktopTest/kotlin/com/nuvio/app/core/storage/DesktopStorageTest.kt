@@ -28,6 +28,8 @@ class DesktopStorageTest {
             assertNotEquals(sentinel, Files.getLastModifiedTime(file))
         } finally {
             Files.deleteIfExists(file)
+            // DebridOne: stores are written atomically and keep the previous version as .bak.
+            Files.deleteIfExists(com.debridone.platform.io.AtomicFiles.backupPathOf(file))
             Files.deleteIfExists(directory)
         }
     }

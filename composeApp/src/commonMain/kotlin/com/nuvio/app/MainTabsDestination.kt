@@ -95,7 +95,9 @@ internal fun MainTabsDestination(
         val useDesktopSidebar = isDesktop &&
             isTabletLayout &&
             !useNativeBottomTabs &&
-            desktopNavigationLayout == DesktopNavigationLayout.Sidebar
+            desktopNavigationLayout == DesktopNavigationLayout.Sidebar &&
+            // DebridOne: the application shell owns the sidebar; Streaming keeps its top bar.
+            !AppShellHost.isActive
         val useDesktopTopBar = isDesktop && !useNativeBottomTabs && !useDesktopSidebar
         val useFloatingTopBar = !isDesktop && isTabletLayout && !useNativeBottomTabs
         val topChromePadding = if (useFloatingTopBar || useDesktopTopBar) {

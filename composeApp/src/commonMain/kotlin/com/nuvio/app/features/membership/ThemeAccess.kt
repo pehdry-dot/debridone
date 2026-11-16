@@ -28,11 +28,9 @@ fun resolveAppTheme(
     entitlements: CosmeticEntitlements,
 ): AppTheme {
     if (selectedTheme == null) {
-        return supporterThemes
-            .filterValues(entitlements::includes)
-            .keys
-            .firstOrNull()
-            ?: AppTheme.WHITE
+        // DebridOne: every theme is available to everyone, so there is no "best unlocked" theme
+        // to pick. Start from the violet theme, which matches the DebridOne mark.
+        return AppTheme.VIOLET
     }
     return selectedTheme.takeIf { it in availableAppThemes(entitlements) } ?: AppTheme.WHITE
 }

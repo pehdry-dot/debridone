@@ -1,0 +1,132 @@
+name: DebridOne macOS dev build
+
+# Builds UNSIGNED development DMGs for Apple Silicon and Intel and smoke-tests the app bundle.
+# Nothing here signs or notarizes; see debridone/docs/BUILD.md for release signing.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - nuvio-rebuild
+    paths-ignore:
+      - "**.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debridone-macos-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Unit and isolation tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Run DebridOne tests
+        run: >
+          ./gradlew
+          :debridone:platform:test
+          :debridone:accounts:test
+          :debridone:architecture-tests:test
+          --no-configuration-cache
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: tests
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    env:
+      MACOS_ARCH: ${{ matrix.arch }}
+      # Explicitly empty: this workflow must never sign or notarize.
+      NUVIO_MACOS_SIGNING_IDENTITY: ""
+      NUVIO_MACOS_NOTARY_KEYCHAIN_PROFILE: ""
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fetch the macOS libmpv runtime (Git LFS)
+        run: |
+          include="composeApp/src/desktopMain/native/macos/runtime/${MACOS_ARCH}/**"
+          if ! git lfs pull --include="${include}" --exclude=""; then
+            echo "LFS objects are not in this repository; fetching them from upstream Nuvio Desktop."
+            git remote add upstream https://github.com/NuvioMedia/NuvioDesktop.git
+            git lfs fetch upstream --include="${include}" --exclude=""
+            git lfs checkout
+          fi
+          test -s "composeApp/src/desktopMain/native/macos/runtime/${MACOS_ARCH}/libmpv.2.dylib"
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Platform tests on macOS (includes the Keychain test)
+        run: ./gradlew :debridone:platform:test --no-configuration-cache
+
+      - name: Build unsigned DMG
+        run: >
+          ./gradlew
+          :composeApp:packageReleaseDmg
+          "-Pnuvio.macos.arch=${MACOS_ARCH}"
+          -Pcompose.desktop.packaging.checkJdkVendor=false
+          --no-configuration-cache
+          --no-daemon
+          --stacktrace
+
+      - name: Smoke-test the app bundle
+        run: |
+          app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
+          test -d "${app}" || { echo "No .app bundle was produced." >&2; exit 1; }
+          export DEBRIDONE_DATA_DIR="${RUNNER_TEMP}/debridone-data"
+          export DEBRIDONE_CACHE_DIR="${RUNNER_TEMP}/debridone-cache"
+          "${app}/Contents/MacOS/DebridOne" > "${RUNNER_TEMP}/debridone.log" 2>&1 &
+          pid=$!
+          sleep 45
+          if ! kill -0 "${pid}" 2>/dev/null; then
+            echo "DebridOne exited during start-up:" >&2
+            cat "${RUNNER_TEMP}/debridone.log" >&2
+            exit 1
+          fi
+          test -s "${DEBRIDONE_DATA_DIR}/accounts/accounts.db" || { echo "accounts.db was not created." >&2; cat "${RUNNER_TEMP}/debridone.log" >&2; exit 1; }
+          for module in music gaming manga; do
+            test -s "${DEBRIDONE_DATA_DIR}/modules/${module}/${module}.db" || { echo "${module}.db was not created." >&2; exit 1; }
+          done
+          kill "${pid}" || true
+          echo "Smoke test passed: the app started and created its databases."
+
+      - name: Report signature status
+        run: |
+          app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
+          {
+            echo "### Signature status (${MACOS_ARCH})"
+            echo '```'
+            codesign -dv --verbose=2 "${app}" 2>&1 || true
+            spctl --assess --type execute -vv "${app}" 2>&1 || true
+            echo '```'
+            echo "This is an unsigned development build. Gatekeeper rejection above is expected."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: DebridOne-macOS-${{ matrix.arch }}-dev
+          path: |
+            composeApp/build/compose/binaries/main-release/dmg/*.dmg
+            composeApp/build/compose/release-dmgs/*.dmg
+          if-no-files-found: error
+          retention-days: 14

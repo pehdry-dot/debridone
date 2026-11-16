@@ -8,7 +8,9 @@ import java.nio.file.Paths
 import kotlin.system.exitProcess
 
 internal actual object AppIconPlatform {
-    actual val isSupported: Boolean = true
+    // DebridOne: there is one app icon. Upstream's picker would swap in Nuvio-branded icons and
+    // rewrite the installed app bundle, so it is switched off.
+    actual val isSupported: Boolean = false
     actual val requiresCloseConfirmation: Boolean = true
 
     private val store = DesktopStorage.store("nuvio_app_icon")

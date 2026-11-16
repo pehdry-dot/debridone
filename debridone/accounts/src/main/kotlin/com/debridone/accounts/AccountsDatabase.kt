@@ -284,30 +284,44 @@ class AccountsDatabase private constructor(
      * or updated (PINs and the default flag are left untouched), profiles that are not listed are
      * deleted. Returns the ids of deleted profiles.
      */
-    fun replaceProfiles(accountId: String, drafts: List<ProfileDraft>): List<Long> = database.transaction {
+    fun replaceProfiles(accountId: String, drafts: List<ProfileDraft>): List<Long> =
+        writeProfiles(accountId, drafts, deleteMissing = true)
+
+    /**
+     * Creates or updates the listed profiles and never deletes any. Use this when the caller's
+     * list may be incomplete; deletion is always an explicit [deleteProfile].
+     */
+    fun saveProfiles(accountId: String, drafts: List<ProfileDraft>) {
+        writeProfiles(accountId, drafts, deleteMissing = false)
+    }
+
+    private fun writeProfiles(accountId: String, drafts: List<ProfileDraft>, deleteMissing: Boolean): List<Long> = database.transaction {
         if (findAccount(accountId) == null) throw accountNotFound()
-        if (drafts.size > MAX_PROFILES_PER_ACCOUNT) {
-            throw AccountException(AccountError.PROFILE_LIMIT_REACHED, "An account can have up to $MAX_PROFILES_PER_ACCOUNT profiles.")
-        }
         val existing = query("SELECT id FROM profiles WHERE account_id = ?", accountId) { it.getLong(1) }.toSet()
         val keep = HashSet<Long>()
+        var created = 0
         drafts.forEachIndexed { index, draft ->
             val profileId = draft.id ?: reserveProfileId()
             if (profileId in existing) {
                 updateProfileRow(profileId, draft)
-                execute("UPDATE profiles SET sort_order = ? WHERE id = ?", index, profileId)
+                if (deleteMissing) execute("UPDATE profiles SET sort_order = ? WHERE id = ?", index, profileId)
             } else {
                 if (profileOwner(profileId) != null) {
                     throw AccountException(AccountError.INVALID_PROFILE, "Profile id $profileId belongs to another account.")
                 }
-                insertProfile(accountId, profileId, draft, sortOrder = index)
+                insertProfile(accountId, profileId, draft, sortOrder = if (deleteMissing) index else existing.size + created)
+                created++
             }
             keep += profileId
         }
-        val removed = (existing - keep).toList()
+        val removed = if (deleteMissing) (existing - keep).toList() else emptyList()
         removed.forEach { profileId ->
             deleteSettings(SettingsScope.OfProfile(profileId))
             execute("DELETE FROM profiles WHERE id = ?", profileId)
+        }
+        val total = queryOne("SELECT COUNT(*) FROM profiles WHERE account_id = ?", accountId) { it.getInt(1) } ?: 0
+        if (total > MAX_PROFILES_PER_ACCOUNT) {
+            throw AccountException(AccountError.PROFILE_LIMIT_REACHED, "An account can have up to $MAX_PROFILES_PER_ACCOUNT profiles.")
         }
         execute(
             "UPDATE accounts SET last_profile_id = NULL WHERE id = ? AND last_profile_id IS NOT NULL " +

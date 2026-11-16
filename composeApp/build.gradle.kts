@@ -124,7 +124,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |object TraktConfig {
                 |    const val CLIENT_ID = "${props.getProperty("TRAKT_CLIENT_ID", "")}" 
                 |    const val CLIENT_SECRET = "${props.getProperty("TRAKT_CLIENT_SECRET", "")}" 
-                |    const val REDIRECT_URI = "${props.getProperty("TRAKT_REDIRECT_URI", "nuvio://auth/trakt")}" 
+                |    const val REDIRECT_URI = "${props.getProperty("TRAKT_REDIRECT_URI", "debridone://auth/trakt")}" 
                 |}
                 """.trimMargin()
             )
@@ -138,8 +138,8 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |
                 |object SimklConfig {
                 |    const val CLIENT_ID = "${props.getProperty("SIMKL_CLIENT_ID", "")}"
-                |    const val REDIRECT_URI = "${props.getProperty("SIMKL_REDIRECT_URI", "nuvio://auth/simkl")}"
-                |    const val APP_NAME = "${props.getProperty("SIMKL_APP_NAME", "nuvio")}"
+                |    const val REDIRECT_URI = "${props.getProperty("SIMKL_REDIRECT_URI", "debridone://auth/simkl")}"
+                |    const val APP_NAME = "${props.getProperty("SIMKL_APP_NAME", "debridone")}"
                 |}
                 """.trimMargin()
             )
@@ -152,7 +152,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |package com.nuvio.app.features.discordrpc
                 |
                 |object DiscordConfig {
-                |    const val CLIENT_ID = "${props.getProperty("NUVIO_DISCORD_CLIENT_ID", "1538974392376369212")}" 
+                |    const val CLIENT_ID = "${props.getProperty("NUVIO_DISCORD_CLIENT_ID", "")}" 
                 |}
                 """.trimMargin()
             )
@@ -235,7 +235,7 @@ abstract class GenerateRuntimeConfigsTask : DefaultTask() {
                 |
                 |object CommunityConfig {
                 |    const val CONTRIBUTIONS_URL = "${props.getProperty("CONTRIBUTIONS_URL", "")}" 
-                |    const val SUPPORTERS_WALL_URL = "${props.getProperty("SUPPORTERS_WALL_URL", "https://nuvio.tv/api/supporters/wall")}"
+                |    const val SUPPORTERS_WALL_URL = "${props.getProperty("SUPPORTERS_WALL_URL", "")}"
                 |    const val DONATIONS_BASE_URL = "${props.getProperty("DONATIONS_BASE_URL", "")}" 
                 |    const val DONATIONS_DONATE_URL = "${props.getProperty("DONATIONS_DONATE_URL", "")}" 
                 |}
@@ -478,7 +478,7 @@ val desktopReleaseVersionCode = (
     ?.toIntOrNull()
     ?: 1
 val desktopReleasePackageVersion = jpackageCompatibleVersion(desktopReleaseVersionName)
-val windowsMsiUpgradeUuid = "395990ee-9b8a-3548-922c-e7a23a495b8d"
+val windowsMsiUpgradeUuid = "7c1f0f4e-52d8-4b53-9d0f-2a3d6c1b8e55"
 val iosDistribution = (
     providers.gradleProperty("nuvio.ios.distribution").orNull
         ?: System.getenv("NUVIO_IOS_DISTRIBUTION")
@@ -1178,6 +1178,9 @@ kotlin {
         val desktopMain by getting {
             kotlin.srcDir(fullPluginSourceDir)
             kotlin.srcDir(fullTrailerSourceDir)
+            // DebridOne: app shell and module screens live apart from upstream Nuvio sources.
+            kotlin.srcDir("src/debridoneMain/kotlin")
+            resources.srcDir("src/debridoneMain/resources")
             kotlin.srcDir(
                 if (isWindowsHost) {
                     "src/windowsDesktopMain/kotlin"
@@ -1199,6 +1202,13 @@ kotlin {
                 implementation(libs.sentry.jvm)
                 implementation(libs.jna)
                 implementation(files("libs/nuvio-engine-jvm-0.1.6.jar"))
+                // DebridOne: shared infrastructure, accounts and the independent module engines.
+                implementation(projects.debridone.platform)
+                implementation(projects.debridone.accounts)
+                implementation(projects.debridone.moduleApi)
+                implementation(projects.debridone.modules.music)
+                implementation(projects.debridone.modules.gaming)
+                implementation(projects.debridone.modules.manga)
             }
         }
         val androidHostTest by getting {
@@ -1273,8 +1283,64 @@ tasks.matching {
 
 // DebridOne: the root project was renamed, which would change the generated resources package.
 // Pin upstream's package so Nuvio sources (and future upstream merges) compile unchanged.
+//
+// DebridOne branding is applied to a generated copy of the resources instead of editing upstream
+// files: user-visible strings say "DebridOne", and brand images are overlaid from
+// src/debridoneMain/composeResources. Upstream's composeResources directory stays byte-identical.
+val debridoneBrandedResources = tasks.register<Sync>("debridoneBrandedResources") {
+    // Strings that must keep naming Nuvio because they describe the upstream project itself.
+    val keepUpstreamName = listOf(
+        "compose_about_based_on_version_format",
+        "settings_licenses_attributions_nuvio_title",
+    )
+    // DebridOne wording for strings whose upstream text does not fit (English). The same keys are
+    // dropped from the translations so they fall back to these instead of saying something else.
+    val overrides = mapOf(
+        "compose_auth_tagline" to "All your entertainment. One app.",
+        "compose_auth_sign_up_subtitle" to "Create your DebridOne account",
+        "compose_auth_email" to "Email or name",
+        "profile_avatar_options_pending" to "Pick a colour, or choose a picture.",
+        "profile_custom_avatar_url_description" to "Paste an image link, or choose a picture from this computer.",
+    )
+    // Brand images in the overlay replace upstream's files of the same path.
+    val overlayDir = file("src/debridoneMain/composeResources")
+    val overlayPaths = fileTree(overlayDir).files.map { it.relativeTo(overlayDir).invariantSeparatorsPath }.toSet()
+    inputs.property("debridoneStringOverrides", overrides)
+
+    from("src/commonMain/composeResources") {
+        exclude { element -> element.relativePath.pathString in overlayPaths }
+        filesMatching("values/strings.xml") {
+            filter { line: String ->
+                val key = line.substringAfter("name=\"", "").substringBefore('"')
+                val replacement = overrides[key]
+                when {
+                    replacement != null -> line.substringBefore('>') + ">" + replacement + "</string>"
+                    key in keepUpstreamName -> line
+                    else -> line.replace("Nuvio", "DebridOne")
+                }
+            }
+        }
+        filesMatching("values-*/strings.xml") {
+            filter { line: String ->
+                val key = line.substringAfter("name=\"", "").substringBefore('"')
+                when {
+                    key in overrides -> ""
+                    key in keepUpstreamName -> line
+                    else -> line.replace("Nuvio", "DebridOne")
+                }
+            }
+        }
+    }
+    from(overlayDir)
+    into(layout.buildDirectory.dir("generated/debridone/composeResources"))
+}
+
 compose.resources {
     packageOfResClass = "nuvio.composeapp.generated.resources"
+    customDirectory(
+        sourceSetName = "commonMain",
+        directoryProvider = layout.dir(debridoneBrandedResources.map { it.destinationDir }),
+    )
 }
 
 compose.desktop {
@@ -1297,9 +1363,9 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
-            packageName = "Nuvio"
+            packageName = "DebridOne"
             packageVersion = desktopReleasePackageVersion
-            vendor = "Nuvio Media"
+            vendor = "DebridOne"
             if (isMacHost) {
                 appResourcesRootDir.set(macosPlayerAppResourcesRoot)
             }
@@ -1310,20 +1376,22 @@ compose.desktop {
                 "jdk.accessibility",
                 "jdk.httpserver",
                 "jdk.unsupported",
+                // DebridOne: required by the SQLite driver (accounts and module databases).
+                "java.sql",
             )
             macOS {
-                bundleID = "com.nuvio.media.desktop"
-                iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon-transparent.icns"))
+                bundleID = "com.debridone.desktop"
+                iconFile.set(project.file("src/debridoneMain/resources/icons/debridone-app-icon.icns"))
                 infoPlist {
                     extraKeysRawXml = """
                         <key>CFBundleURLTypes</key>
                         <array>
                             <dict>
                                 <key>CFBundleURLName</key>
-                                <string>com.nuvio.media.desktop</string>
+                                <string>com.debridone.desktop</string>
                                 <key>CFBundleURLSchemes</key>
                                 <array>
-                                    <string>nuvio</string>
+                                    <string>debridone</string>
                                     <string>stremio</string>
                                 </array>
                             </dict>
@@ -1349,17 +1417,17 @@ compose.desktop {
                 }
             }
             windows {
-                iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon-transparent.ico"))
+                iconFile.set(project.file("src/debridoneMain/resources/icons/debridone-app-icon.ico"))
                 upgradeUuid = windowsMsiUpgradeUuid
                 shortcut = true
                 menu = true
-                menuGroup = "Nuvio"
+                menuGroup = "DebridOne"
             }
             linux {
-                iconFile.set(project.file("src/desktopMain/resources/icons/nuvio-app-icon-transparent.png"))
-                debMaintainer = "contact@nuvio.tv"
+                iconFile.set(project.file("src/debridoneMain/resources/icons/debridone-app-icon.png"))
+                debMaintainer = "noreply@debridone.invalid"
                 shortcut = true
-                menuGroup = "Nuvio"
+                menuGroup = "DebridOne"
                 appCategory = "AudioVideo"
             }
         }
@@ -1381,8 +1449,8 @@ fun renameMacosDmgOutput(release: Boolean) {
 
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/dmg").get().asFile
-    val finalDmg = outputDir.resolve("Nuvio-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
-    val defaultDmg = outputDir.resolve("Nuvio-$desktopReleasePackageVersion.dmg")
+    val finalDmg = outputDir.resolve("DebridOne-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
+    val defaultDmg = outputDir.resolve("DebridOne-$desktopReleasePackageVersion.dmg")
     val sourceDmg = defaultDmg.takeIf { it.exists() }
         ?: finalDmg.takeIf { it.exists() }
         ?: error("Expected macOS DMG output in ${outputDir.absolutePath}")
@@ -1418,8 +1486,8 @@ fun publishWindowsMsiOutput(release: Boolean) {
 
     val distributionName = if (release) "main-release" else "main"
     val outputDir = layout.buildDirectory.dir("compose/binaries/$distributionName/msi").get().asFile
-    val finalMsi = outputDir.resolve("Nuvio-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
-    val defaultMsi = outputDir.resolve("Nuvio-$desktopReleasePackageVersion.msi")
+    val finalMsi = outputDir.resolve("DebridOne-Windows-$windowsPlayerBridgeArch-$desktopReleaseVersionName.msi")
+    val defaultMsi = outputDir.resolve("DebridOne-$desktopReleasePackageVersion.msi")
     val sourceMsi = defaultMsi.takeIf { it.exists() }
         ?: finalMsi.takeIf { it.exists() }
         ?: error("Expected Windows MSI output in ${outputDir.absolutePath}")
@@ -1577,7 +1645,7 @@ if (isLinuxHost) {
             ?: System.getenv("APPIMAGE_WEBSITE_URL")?.takeIf { it.isNotBlank() }
 
         val distributionName = if (release) "main-release" else "main"
-        val appImageName = "Nuvio-Linux-$linuxAppImageArch-$desktopReleaseVersionName.AppImage"
+        val appImageName = "DebridOne-Linux-$linuxAppImageArch-$desktopReleaseVersionName.AppImage"
         val outputAppImage = layout.buildDirectory
             .dir("compose/binaries/$distributionName/app")
             .get()
@@ -1686,8 +1754,8 @@ if (isMacHost) {
         dependsOn("packageReleaseDmg")
         dmgDir.set(layout.buildDirectory.dir("compose/binaries/main-release/dmg"))
         artifactDir.set(layout.buildDirectory.dir("compose/release-dmgs"))
-        finalDmgName.set("Nuvio-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
-        defaultDmgName.set("Nuvio-$desktopReleasePackageVersion.dmg")
+        finalDmgName.set("DebridOne-macOS-$macosDmgArchName-$desktopReleaseVersionName.dmg")
+        defaultDmgName.set("DebridOne-$desktopReleasePackageVersion.dmg")
         keychainProfile.set(macosNotaryKeychainProfile.orEmpty())
         keychainPath.set(macosNotaryKeychainPath.orEmpty())
         signingIdentity.set(macosSigningIdentity.orEmpty())

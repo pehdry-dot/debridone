@@ -117,8 +117,11 @@ internal object PartyApi {
     suspend fun clock(): Long =
         SupabaseProvider.client.postgrest.rpc("watch_party_clock").data.trim().toLong()
 
-    suspend fun enabled(): Boolean =
-        SupabaseProvider.client.postgrest.rpc("watch_party_enabled").data.trim().toBooleanStrict()
+    suspend fun enabled(): Boolean {
+        // DebridOne: watch parties need a sync server; on-device accounts have none to ask.
+        if (com.nuvio.app.core.auth.LocalAccounts.isActive) return false
+        return SupabaseProvider.client.postgrest.rpc("watch_party_enabled").data.trim().toBooleanStrict()
+    }
 
     private suspend fun call(function: String, params: JsonObject): PartySnapshot {
         val body = SupabaseProvider.client.postgrest.rpc(function, params).data

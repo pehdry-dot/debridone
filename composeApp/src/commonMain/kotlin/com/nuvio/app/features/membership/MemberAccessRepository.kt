@@ -21,12 +21,30 @@ import kotlinx.serialization.json.Json
 private const val VerificationIntervalMs = 15L * 60L * 1_000L
 private val RetryDelaysMs = listOf(1_000L, 2_000L, 4_000L)
 
+/**
+ * DebridOne: all themes and custom theme colours are unlocked. Profile backgrounds and member
+ * avatars are left out because upstream serves those images from its own backend.
+ */
+internal val DebridOneFullAccess = MemberAccess(
+    tier = MemberTier.SUPPORTER_PLUS,
+    entitlements = CosmeticEntitlements(
+        setOf(
+            CosmeticEntitlement.GOLD_THEME,
+            CosmeticEntitlement.JADE_THEME,
+            CosmeticEntitlement.ROSE_GOLD_THEME,
+            CosmeticEntitlement.ARCTIC_BLUE_THEME,
+            CosmeticEntitlement.GRAPHITE_THEME,
+        ),
+    ),
+)
+
 object MemberAccessRepository {
+    private const val alwaysUnlocked = true
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val log = Logger.withTag("MemberAccessRepository")
     private val json = Json { ignoreUnknownKeys = true }
     private val refreshGeneration = MutableStateFlow(0L)
-    private val _access = MutableStateFlow(MemberAccess.None)
+    private val _access = MutableStateFlow(DebridOneFullAccess)
     val access: StateFlow<MemberAccess> = _access.asStateFlow()
     private var started = false
     private var verifiedUserId: String? = null
@@ -62,7 +80,7 @@ object MemberAccessRepository {
     }
 
     fun clearLocalState() {
-        _access.value = MemberAccess.None
+        _access.value = DebridOneFullAccess
         verifiedUserId = null
         verifiedAtMs = 0L
         MemberAssetStorage.clearAccess()
@@ -70,15 +88,19 @@ object MemberAccessRepository {
     }
 
     private suspend fun loadAccess(auth: AuthState) {
+        // DebridOne: every cosmetic option is free for everyone. Nothing is checked remotely and
+        // no supporter tier exists, so access never depends on the account.
+        _access.value = DebridOneFullAccess
+        if (alwaysUnlocked) return
         when (auth) {
             AuthState.Loading -> return
             AuthState.Unauthenticated -> {
-                _access.value = MemberAccess.None
+                _access.value = DebridOneFullAccess
                 return
             }
             is AuthState.Authenticated -> {
                 if (auth.isAnonymous) {
-                    _access.value = MemberAccess.None
+                    _access.value = DebridOneFullAccess
                     return
                 }
             }
@@ -120,7 +142,7 @@ object MemberAccessRepository {
 
     private fun hydrateCachedAccess() {
         val cached = loadStoredAccess()?.toMemberAccess() ?: return
-        _access.value = cached
+        _access.value = DebridOneFullAccess
         warmMemberAssets(cached)
     }
 

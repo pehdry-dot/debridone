@@ -287,7 +287,9 @@ fun AuthScreen(
                         isLoading = isLoading,
                         authError = authError,
                         deviceLinkAuthState = deviceLinkAuthState,
-                        deviceLinkEnabled = serverConnectionState.activeServer.capabilities.tvLogin,
+                        // DebridOne: device-link sign-in needs a sync server.
+                        deviceLinkEnabled = serverConnectionState.activeServer.capabilities.tvLogin &&
+                            !com.nuvio.app.core.auth.LocalAccounts.isActive,
                         formPaneWidth = if (compactLargeScreen) 460.dp else formPaneWidth,
                         brandHorizontalPadding = brandHorizontalPadding,
                         formHorizontalPadding = formHorizontalPadding,
@@ -323,7 +325,9 @@ fun AuthScreen(
                         isLoading = isLoading,
                         authError = authError,
                         deviceLinkAuthState = deviceLinkAuthState,
-                        deviceLinkEnabled = serverConnectionState.activeServer.capabilities.tvLogin,
+                        // DebridOne: device-link sign-in needs a sync server.
+                        deviceLinkEnabled = serverConnectionState.activeServer.capabilities.tvLogin &&
+                            !com.nuvio.app.core.auth.LocalAccounts.isActive,
                         statusBarTop = statusBarTop,
                         onEmailChange = {
                             email = it

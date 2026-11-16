@@ -8,10 +8,20 @@ import kotlin.test.assertTrue
 
 class ThemeAccessTest {
     @Test
-    fun memberWithoutSavedThemeDefaultsToGold() {
+    fun noSavedThemeDefaultsToVioletWhateverIsUnlocked() {
+        // DebridOne: there are no tiers, so the start theme never depends on entitlements.
         val entitlements = CosmeticEntitlements(setOf(CosmeticEntitlement.GOLD_THEME))
 
-        assertEquals(AppTheme.GOLD, resolveAppTheme(null, entitlements))
+        assertEquals(AppTheme.VIOLET, resolveAppTheme(null, entitlements))
+        assertEquals(AppTheme.VIOLET, resolveAppTheme(null, CosmeticEntitlements.None))
+    }
+
+    @Test
+    fun debridOneUnlocksEveryThemeAndCustomGradients() {
+        val themes = availableAppThemes(DebridOneFullAccess.entitlements)
+
+        assertTrue(AppTheme.entries.all { it in themes }, "every theme must be selectable")
+        assertTrue(DebridOneFullAccess.tier != null, "custom gradient colours must stay enabled")
     }
 
     @Test
@@ -39,7 +49,6 @@ class ThemeAccessTest {
 
         assertEquals(AppTheme.CUSTOM, themes.first())
         assertEquals(AppTheme.CUSTOM, resolveAppTheme(AppTheme.CUSTOM, CosmeticEntitlements.None))
-        assertEquals(AppTheme.WHITE, resolveAppTheme(null, CosmeticEntitlements.None))
     }
 
     @Test

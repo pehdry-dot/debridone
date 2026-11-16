@@ -2,6 +2,7 @@ package com.nuvio.app.features.profiles
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,9 @@ fun ProfileEditScreen(
         }
     }
     val fallbackColorHex = currentProfile?.avatarColorHex ?: PROFILE_COLORS.first()
+    // DebridOne: on-device accounts have no avatar catalogue, so the colour is chosen directly.
+    val localAccountMode = com.nuvio.app.core.auth.LocalAccounts.isActive
+    var localColorHex by rememberSaveable { mutableStateOf(fallbackColorHex) }
 
     var name by rememberSaveable { mutableStateOf(currentProfile?.name ?: "") }
     var selectedAvatarId by rememberSaveable { mutableStateOf(currentProfile?.avatarId) }
@@ -171,6 +175,22 @@ fun ProfileEditScreen(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    // DebridOne: pick a picture from this computer (desktop, on-device accounts).
+                    LocalAvatarImporter.pickImage?.let { pickImage ->
+                        val importScope = androidx.compose.runtime.rememberCoroutineScope()
+                        androidx.compose.material3.OutlinedButton(
+                            onClick = {
+                                importScope.launch {
+                                    pickImage()?.let { imported ->
+                                        avatarUrl = imported
+                                        selectedAvatarId = null
+                                    }
+                                }
+                            },
+                        ) {
+                            Text("Choose a picture from this computer")
+                        }
+                    }
                 }
             }
         }
@@ -205,7 +225,40 @@ fun ProfileEditScreen(
             }
         }
 
-        item {
+        if (localAccountMode) {
+            item {
+                NuvioSurfaceCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(
+                            text = "Profile colour",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        PROFILE_COLORS.chunked(8).forEach { rowColors ->
+                            androidx.compose.foundation.layout.Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                rowColors.forEach { hex ->
+                                    val selected = hex.equals(localColorHex, ignoreCase = true)
+                                    androidx.compose.foundation.layout.Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(androidx.compose.foundation.shape.CircleShape)
+                                            .background(parseHexColor(hex))
+                                            .border(
+                                                width = 3.dp,
+                                                color = if (selected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                                shape = androidx.compose.foundation.shape.CircleShape,
+                                            )
+                                            .clickable { localColorHex = hex },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else item {
             NuvioSurfaceCard {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text(
@@ -284,7 +337,8 @@ fun ProfileEditScreen(
                 onClick = {
                     isSaving = true
                     scope.launch {
-                        val avatarColorHex = visibleAvatarItem?.bgColor ?: fallbackColorHex
+                        val avatarColorHex = visibleAvatarItem?.bgColor
+                            ?: if (localAccountMode) localColorHex else fallbackColorHex
                         if (isNew) {
                             ProfileRepository.createProfile(
                                 name = name,

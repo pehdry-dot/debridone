@@ -92,7 +92,8 @@ internal fun MemberBrandWordmark(
             modifier = Modifier.height(height),
             contentDescription = contentDescription,
         )
-        val tier = access.tier
+        // DebridOne: there are no supporter tiers, so no tier badge is ever shown.
+        val tier: com.nuvio.app.features.membership.MemberTier? = null
         AnimatedVisibility(
             visible = tier != null,
             enter = fadeIn(tween(360)) +

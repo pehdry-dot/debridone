@@ -68,6 +68,9 @@ fun main(args: Array<String>) {
     installDesktopOpenUriHandler()
     handleDesktopLaunchArgs(args)
     preloadNativePlayerBridgeAsync()
+    // DebridOne: open accounts.db, install the on-device account backend and the application
+    // shell, and start the module engines. Must run before anything reads profiles.
+    com.debridone.app.DebridOneRuntime.start()
     // Load cached profile data synchronously so the profile color is available
     // on the very first Compose frame (matching Android's SharedPreferences behavior).
     ProfileRepository.loadCachedProfiles()
@@ -134,7 +137,7 @@ fun main(args: Array<String>) {
 
         SwingWindow(
             onCloseRequest = closeApplication,
-            title = if (smokePlayerUrl == null) "Nuvio" else "Nuvio Player Smoke",
+            title = if (smokePlayerUrl == null) "DebridOne" else "DebridOne Player Smoke",
             state = windowState,
             icon = painterResource(appIconState.selected.transparentPreviewResource),
             init = ::configureMacosWindowBeforePeer,
@@ -150,8 +153,8 @@ fun main(args: Array<String>) {
                 (window.contentPane as? JComponent)?.isOpaque = true
             }
             LaunchedEffect(window, appIconState.selected) {
-                val backgroundSuffix = "-transparent"
-                val iconPath = "icons/app-icon-${appIconState.selected.key}$backgroundSuffix.png"
+                // DebridOne: one brand icon (upstream offers Nuvio colourways here).
+                val iconPath = "icons/debridone-app-icon.png"
                 Thread.currentThread().contextClassLoader.getResourceAsStream(iconPath)?.use { stream ->
                     ImageIO.read(stream)?.let { image ->
                         window.iconImages = listOf(image)
@@ -232,7 +235,16 @@ fun main(args: Array<String>) {
                     ProvideDesktopWindowInsets(
                         isFullscreen = windowState.placement == WindowPlacement.Fullscreen,
                     ) {
-                        MiddleClickAutoscroll { App() }
+                        // DebridOne: a start-up failure (e.g. accounts.db from a newer build)
+                        // is shown instead of an app that cannot keep anything.
+                        val startupError = com.debridone.app.DebridOneRuntime.startupError
+                        if (startupError == null) {
+                            com.debridone.app.shell.ShellKeyboardShortcuts {
+                                MiddleClickAutoscroll { App() }
+                            }
+                        } else {
+                            com.debridone.app.shell.StartupErrorScreen(startupError)
+                        }
                     }
                 }
             } else {
@@ -289,6 +301,7 @@ private fun installDesktopOpenUriHandler() {
                 ?.toString()
                 ?.trim()
                 ?.takeIf(::isDesktopAppUrl)
+                ?.let(::toUpstreamAppUrl)
                 ?.let(::handleAppUrl)
         }
     }
@@ -298,9 +311,16 @@ private fun handleDesktopLaunchArgs(args: Array<String>) {
     args.asSequence()
         .map(String::trim)
         .filter(::isDesktopAppUrl)
+        .map(::toUpstreamAppUrl)
         .forEach(::handleAppUrl)
 }
 
 private fun isDesktopAppUrl(value: String): Boolean =
-    value.startsWith("nuvio://", ignoreCase = true) ||
+    value.startsWith("debridone://", ignoreCase = true) ||
+        value.startsWith("nuvio://", ignoreCase = true) ||
         value.startsWith("stremio://", ignoreCase = true)
+
+// DebridOne registers the debridone:// scheme. Upstream's deep-link parser understands nuvio://,
+// so incoming links are rewritten to keep that parser untouched.
+private fun toUpstreamAppUrl(value: String): String =
+    if (value.startsWith("debridone://", ignoreCase = true)) "nuvio://" + value.substring("debridone://".length) else value

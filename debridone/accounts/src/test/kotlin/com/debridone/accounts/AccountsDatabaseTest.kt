@@ -245,6 +245,23 @@ class AccountsDatabaseTest {
     }
 
     @Test
+    fun saveProfilesNeverDeletesProfilesMissingFromTheList() {
+        open().use { db ->
+            val account = db.createAccount("sam@example.com", "password1")
+            val one = db.createProfile(account.id, ProfileDraft(null, "One"))
+            val two = db.createProfile(account.id, ProfileDraft(null, "Two"))
+            val fresh = db.reserveProfileId()
+
+            // An incomplete (even empty) list must not remove anything.
+            db.saveProfiles(account.id, emptyList())
+            db.saveProfiles(account.id, listOf(ProfileDraft(two.id, "Two renamed"), ProfileDraft(fresh, "Three")))
+
+            assertEquals(listOf("One", "Two renamed", "Three"), db.listProfiles(account.id).map { it.name })
+            assertEquals(listOf(one.id, two.id, fresh), db.listProfiles(account.id).map { it.id })
+        }
+    }
+
+    @Test
     fun pinLifecycleWithLockout() {
         open().use { db ->
             val account = db.createAccount("sam@example.com", "password1")

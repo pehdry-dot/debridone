@@ -443,6 +443,15 @@ internal fun MainAppContent(
         }
     }
 
+    // DebridOne: the application shell can ask Streaming to open one of its tabs (e.g. Cmd+F
+    // opens Streaming's own search). Streaming still performs the navigation itself.
+    LaunchedEffect(Unit) {
+        AppShellHost.streamingTabRequests.collect { tab ->
+            if (tab == AppScreenTab.Search) searchFocusRequestCount++
+            activateTab(tab)
+        }
+    }
+
     LaunchedEffect(
         liquidGlassNativeTabBarSupported,
         liquidGlassNativeTabBarEnabled,
@@ -1383,6 +1392,9 @@ internal fun MainAppContent(
             ) {
             val verticalBarPadding = LocalVerticalBarPadding.current
             val drawsUnderVerticalBar = currentRoute.drawsUnderVerticalBar(selectedTab)
+            // DebridOne: tell the application shell when Streaming needs the whole window.
+            val shellImmersive = currentRoute?.hidesNavigationBar == true
+            androidx.compose.runtime.SideEffect { AppShellHost.reportStreamingImmersive(shellImmersive) }
             SharedTransitionLayout {
                 CompositionLocalProvider(
                     LocalPosterClickAnchor provides if (posterNavigationEnabled) posterNavigation::prepare else null,

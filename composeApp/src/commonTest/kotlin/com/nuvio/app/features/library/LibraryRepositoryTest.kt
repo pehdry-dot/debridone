@@ -82,7 +82,8 @@ class LibraryRepositoryTest {
         val tabs = libraryTabsWithLocal(listOf(traktTab))
 
         assertEquals(listOf("local", "trakt:watchlist"), tabs.map { it.key })
-        assertEquals("Nuvio Library", tabs.first().title)
+        // DebridOne: user-visible strings are rebranded at build time.
+        assertEquals("DebridOne Library", tabs.first().title)
     }
 
     @Test
