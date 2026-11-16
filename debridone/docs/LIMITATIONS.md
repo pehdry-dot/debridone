@@ -26,10 +26,16 @@ Verification status
 - Music, **not verified on Apple Silicon**: GitHub cancelled the Apple Silicon jobs of these runs
   for lack of runner capacity ("not acquired by Runner"). The code is the same; an Apple Silicon
   build is produced whenever such a runner is available.
-- Music, **not verified against live servers**: the Navidrome/Subsonic and Jellyfin adapters,
-  radio addresses, MusicBrainz, the Cover Art Archive and LRCLIB were tested against local
-  stand-in servers that answer in those services' formats (including wrong passwords and
-  unreachable servers). The build environment could not reach the real services.
+- Music, verified against the real public services (`DEBRIDONE_LIVE_TESTS=1`, run from the build
+  environment): the Navidrome project's demo server (a wrong password is refused; sign-in; 501
+  songs, 50 albums and 465 covers synchronised; a song downloaded, and played both from the
+  download and straight from the server through libmpv), the Jellyfin project's demo server
+  (token sign-in, synchronisation with covers, a song downloaded), MusicBrainz (candidates found
+  and applied; the release matching the album ranked first) and LRCLIB (time-stamped lyrics).
+- Music, tested only against local stand-in servers that answer in the services' own formats: the
+  Cover Art Archive (its downloads redirect to changing archive.org hosts the build environment
+  cannot reach), internet radio addresses, and Subsonic-compatible servers other than Navidrome.
+  The stand-in tests also cover unreachable servers and rejected sign-ins.
 - Music, **only a person at the Mac can confirm**: that the sound is audible, that the media keys
   and the Now Playing widget respond (the code compiles and loads; nothing can press a key in
   CI), that sound follows a change of output device, and how the screens look on macOS.

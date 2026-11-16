@@ -13,6 +13,11 @@
 | `:debridone:modules:music:test` | Music end to end, with real audio files: every supported format plays from start to end through libmpv; pause, seek, volume, mute, next, a whole album, shuffle, repeat; tags and covers are read; scanning (incremental, moved, renamed, deleted, duplicate and unreachable files); search, favourites, history; edits, locks and restore; playlists and M3U; Subsonic and Jellyfin sign-in, sync, streaming and offline copies against local stand-in servers; radio addresses; MusicBrainz, cover and lyrics lookups against a stand-in; restart persistence; profile isolation. Needs libmpv for the playback tests. |
 | `:debridone:architecture-tests:test` | Each module opens its own database; a plugin installed in one module never appears in another; disabling or removing in one module leaves the others alone; metadata providers and appearance are per module (and per profile); a module that cannot start does not stop the others; no cross-module imports; no Books module. |
 
+`DEBRIDONE_LIVE_TESTS=1 ./gradlew :debridone:modules:music:test --tests '*MusicLiveServicesTest*'`
+additionally runs Music's adapters against the real public services (the Navidrome and Jellyfin
+demo servers, MusicBrainz, LRCLIB). They are off by default so that a normal test run never
+depends on someone else's server.
+
 Add `--all` to also run Nuvio's own desktop tests (about 1,900). Two of them fail on unmodified
 upstream Nuvio Desktop as well and are not related to DebridOne:
 `SettingsNavigationTest.bufferOptionsFollowThePlatformAndPlaybackEngine` and

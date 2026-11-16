@@ -36,6 +36,11 @@ tasks.withType<Test>().configureEach {
     // Playback tests need libmpv. Locally they are skipped when it is missing; CI sets
     // DEBRIDONE_REQUIRE_LIBMPV=1 so that a missing library fails instead of silently skipping.
     environment("DEBRIDONE_REQUIRE_LIBMPV", System.getenv("DEBRIDONE_REQUIRE_LIBMPV") ?: "")
+    // DEBRIDONE_LIVE_TESTS=1 also runs the tests that talk to the real public services (the
+    // Navidrome and Jellyfin demo servers, MusicBrainz, LRCLIB). Off by default: a normal test run
+    // must not depend on someone else's server being up.
+    environment("DEBRIDONE_LIVE_TESTS", System.getenv("DEBRIDONE_LIVE_TESTS") ?: "")
+    inputs.property("liveTests", System.getenv("DEBRIDONE_LIVE_TESTS") ?: "")
     // File names with accents are part of the tests; on Linux the JVM only accepts them in a UTF-8
     // locale (macOS always uses UTF-8 for file names).
     if (System.getProperty("os.name").contains("linux", ignoreCase = true)) {

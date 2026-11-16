@@ -62,6 +62,9 @@ class MpvAudioEngine(
             optionalOption("volume-max", "100")
             // Without any sound device, keep time moving silently instead of failing every track.
             optionalOption("audio-fallback-to-null", "yes")
+            // Streams from a music server go through the same proxy as the rest of the system,
+            // when the environment names one.
+            proxyFromEnvironment()?.let { optionalOption("http-proxy", it) }
             if (audioOutput != null) option("ao", audioOutput)
 
             requireOk(api.mpv_initialize(handle), "initialise the audio engine")
@@ -282,6 +285,10 @@ class MpvAudioEngine(
     }
 
     private fun seconds(millis: Long): String = String.format(Locale.ROOT, "%.3f", millis / 1000.0)
+
+    /** The conventional proxy variables, as command-line tools read them. Never logged. */
+    private fun proxyFromEnvironment(): String? = listOf("https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY")
+        .firstNotNullOfOrNull { name -> runCatching { System.getenv(name) }.getOrNull()?.trim()?.takeIf { it.startsWith("http://") || it.startsWith("https://") } }
 
     private companion object {
         const val NODE_SIZE = 16L

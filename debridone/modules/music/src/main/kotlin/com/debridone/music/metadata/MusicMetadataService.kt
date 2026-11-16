@@ -87,11 +87,12 @@ class MusicMetadataService(
 
     fun findRecordings(title: String, artist: String?, album: String?, durationMs: Long, limit: Int = 8): List<RecordingMatch> {
         requireProvider(MUSICBRAINZ, "MusicBrainz")
-        val terms = buildList {
-            add("recording:\"${escape(title)}\"")
-            if (!artist.isNullOrBlank()) add("artist:\"${escape(artist)}\"")
-        }
-        val query = terms.joinToString(" AND ")
+        // Title and artist are required; the album only pushes recordings that are on it to the top.
+        val query = buildList {
+            add("+recording:\"${escape(title)}\"")
+            if (!artist.isNullOrBlank()) add("+artist:\"${escape(artist)}\"")
+            if (!album.isNullOrBlank()) add("release:\"${escape(album)}\"")
+        }.joinToString(" ")
         val url = "${endpoints.musicBrainz}/recording?" + MusicHttp.query(listOf("query" to query, "fmt" to "json", "limit" to "12"))
         val root = cachedJson(MUSICBRAINZ, "recording:$query", url, rateLimited = true) ?: return emptyList()
         val matches = root["recordings"].array().flatMap { recording ->
@@ -271,7 +272,16 @@ class MusicMetadataService(
 
         if (rateLimited) waitForTurn()
         val text = try {
-            MusicHttp.get(url, mapOf("Accept" to "application/json")).text()
+            try {
+                MusicHttp.get(url, mapOf("Accept" to "application/json")).text()
+            } catch (e: HttpStatusException) {
+                // MusicBrainz answers 503 when it is asked too often from one address. Once more,
+                // after a pause, before telling the user it is busy.
+                if (!rateLimited || (e.status != 503 && e.status != 429)) throw e
+                Thread.sleep(BUSY_RETRY_DELAY_MS)
+                waitForTurn()
+                MusicHttp.get(url, mapOf("Accept" to "application/json")).text()
+            }
         } catch (e: HttpStatusException) {
             if (e.status != 404) throw MetadataException(if (e.status == 503 || e.status == 429) "The service is busy; try again in a moment." else "The service answered with an error (${e.status}).", e)
             MISSING
@@ -317,6 +327,7 @@ class MusicMetadataService(
         private const val MISSING = "\u0000missing"
         private const val INSTRUMENTAL_MARK = "\u0000instrumental"
         private const val CACHE_TTL_MS = 30L * 24 * 60 * 60 * 1000
+        private const val BUSY_RETRY_DELAY_MS = 2_000L
 
         private val timeTag = Regex("\\[(\\d{1,3}):(\\d{1,2})(?:[.:](\\d{1,3}))?]")
 

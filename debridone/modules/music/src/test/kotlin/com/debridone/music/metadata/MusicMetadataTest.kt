@@ -57,7 +57,7 @@ class MusicMetadataTest {
         assertEquals(7, best.trackTotal)
         assertEquals(100, best.score)
         assertEquals("rel-live", matches.last().releaseId)
-        assertTrue(servers.metadataRequests.single().contains("recording:\"Second Light\" AND artist:\"Test Artist\""))
+        assertTrue(servers.metadataRequests.single().contains("+recording:\"Second Light\" +artist:\"Test Artist\" release:\"First Album\""), servers.metadataRequests.single())
         assertTrue(music.metadata.findRecordings(PROFILE_A, music.byTitle("Elsewhere").id).isEmpty())
     }
 

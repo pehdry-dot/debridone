@@ -147,4 +147,7 @@ sound device.
 - Drag and drop of folders onto the window; use "Add a folder" or "Add files".
 - Windows. Linux is a development platform only (no Now Playing there).
 
+A music server behind a proxy: the engine uses the proxy named by the usual `https_proxy` /
+`http_proxy` environment variables when one is set.
+
 See [LIMITATIONS.md](LIMITATIONS.md) for what has and has not been verified.
