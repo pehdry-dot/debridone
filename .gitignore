@@ -34,6 +34,8 @@ AGENTS.md
 PERFORMANCE_FINDINGS.md
 scripts/*
 !scripts/sign-ios-device-app.py
+# DebridOne: its scripts are part of the repository (the rule above ignores new files in scripts/).
+!scripts/debridone/
 iosApp/Configuration/DeviceSigning.local.json
 
 # Local MPVKit iOS build environment (sparse APFS image, see MPVKit docs)

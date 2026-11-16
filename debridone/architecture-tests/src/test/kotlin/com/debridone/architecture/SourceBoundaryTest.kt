@@ -144,6 +144,31 @@ class SourceBoundaryTest {
         assertTrue(clashes.isEmpty(), "Paths that differ only by case cannot coexist on macOS: $clashes")
     }
 
+    /**
+     * Upstream's .gitignore ignores new files under `scripts/`. A script that the documentation or
+     * the CI workflow tells people to run must really be in the repository, not just on the
+     * author's disk.
+     */
+    @Test
+    fun referencedScriptsAreTrackedByGit() {
+        val tracked = runCatching {
+            val process = ProcessBuilder("git", "ls-files").directory(root).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            if (process.waitFor() == 0) output.lines().filter { it.isNotBlank() }.toSet() else null
+        }.getOrNull() ?: return // Not a git checkout: nothing to compare against.
+
+        val sources = listOf(File(root, "README.md")) +
+            File(root, "debridone/docs").listFiles { file -> file.extension == "md" }.orEmpty() +
+            File(root, ".github/workflows").listFiles { file -> file.extension == "yml" }.orEmpty()
+        val reference = Regex("""scripts/debridone/[A-Za-z0-9._-]+\.(?:sh|py)""")
+        val referenced = sources.filter { it.isFile }.flatMap { file ->
+            reference.findAll(file.readText()).map { it.value to file.relativeTo(root).path }.toList()
+        }
+        assertTrue(referenced.isNotEmpty(), "expected the docs to reference scripts/debridone")
+        val missing = referenced.filter { (script, _) -> script !in tracked }.map { (script, source) -> "$script (referenced in $source)" }.distinct()
+        assertTrue(missing.isEmpty(), "Scripts referenced but not committed (check .gitignore): $missing")
+    }
+
     private fun kotlinFiles(dir: File): List<File> =
         if (dir.isDirectory) dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() else emptyList()
 
