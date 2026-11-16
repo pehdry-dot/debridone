@@ -3,6 +3,14 @@ package com.debridone.app.music
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.alpha
+import com.debridone.music.metadata.CoverOption
+import com.debridone.music.metadata.LyricsCandidate
+import com.debridone.music.metadata.MbRelease
+import com.debridone.music.metadata.MetadataRefresh
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -146,6 +154,7 @@ internal fun LyricsPanel(track: Track?, positionMs: Long, onSeek: (Long) -> Unit
     }
     var reload by remember { mutableIntStateOf(0) }
     var editing by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
     var state by remember(track?.id) { mutableStateOf<Result<Lyrics?>?>(null) }
     LaunchedEffect(track?.id, reload) {
         state = null
@@ -173,10 +182,22 @@ internal fun LyricsPanel(track: Track?, positionMs: Long, onSeek: (Long) -> Unit
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(if (style == "minimal") 6.dp else 12.dp)) {
                         itemsIndexed(lyrics.synced) { index, line ->
                             val active = index == current
+                            // The line being sung stands out; the others fade with their distance from it.
+                            val distance = if (current < 0) 3 else kotlin.math.abs(index - current)
+                            val emphasis = when {
+                                active -> 1f
+                                distance == 1 -> 0.62f
+                                distance == 2 -> 0.46f
+                                else -> 0.34f
+                            }
                             Text(
                                 line.text.ifBlank { "♪" },
-                                style = MaterialTheme.typography.bodyLarge.copy(fontSize = fontSize, lineHeight = fontSize * 1.3, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal),
-                                color = if (active) tokens.colors.textPrimary else tokens.colors.textMuted,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontSize = if (active) fontSize * 1.16 else fontSize,
+                                    lineHeight = fontSize * 1.36,
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                                ),
+                                color = tokens.colors.textPrimary.copy(alpha = emphasis),
                                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(role = Role.Button, onClickLabel = "Jump to this line") { onSeek(line.timeMs) }.padding(horizontal = 6.dp, vertical = 2.dp),
                             )
                         }
@@ -201,6 +222,16 @@ internal fun LyricsPanel(track: Track?, positionMs: Long, onSeek: (Long) -> Unit
                     },
                     style = small(), color = tokens.colors.textMuted, modifier = Modifier.weight(1f),
                 )
+                MusicButton("Search", { searching = true }, primary = false)
+                if (lyrics != null && lyrics.origin != MusicMetadataService.ORIGIN_MANUAL) {
+                    MusicButton("Look up again", {
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching { music.services.metadata.refreshLyrics(music.profileId, track.id) } }
+                            result.exceptionOrNull()?.let { MusicNav.message = it.message ?: "The lyrics could not be looked up." }
+                            reload++
+                        }
+                    }, primary = false)
+                }
                 MusicButton(if (lyrics == null) "Add lyrics" else "Edit", { editing = true }, primary = false)
                 if (lyrics != null) {
                     MusicButton("Remove", {
@@ -211,6 +242,13 @@ internal fun LyricsPanel(track: Track?, positionMs: Long, onSeek: (Long) -> Unit
                     }, primary = false)
                 }
             }
+        }
+    }
+
+    if (searching && track != null) {
+        LyricsSearchDialog(track, onDismiss = { searching = false }) {
+            searching = false
+            reload++
         }
     }
 
@@ -236,6 +274,189 @@ internal fun LyricsPanel(track: Track?, positionMs: Long, onSeek: (Long) -> Unit
                     reload++
                 }
             }
+        }
+    }
+}
+
+
+/** Searching LRCLIB by hand, when the automatic lookup found nothing or the wrong words. */
+@Composable
+private fun LyricsSearchDialog(track: Track, onDismiss: () -> Unit, onApplied: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val music = LocalMusic.current
+    val scope = rememberCoroutineScope()
+    var query by remember(track.id) { mutableStateOf(listOfNotNull(track.title, track.artist).joinToString(" ")) }
+    var results by remember(track.id) { mutableStateOf<Result<List<LyricsCandidate>>?>(null) }
+    var working by remember { mutableStateOf(false) }
+    val search = {
+        if (!working && query.isNotBlank()) {
+            working = true
+            scope.launch {
+                results = withContext(Dispatchers.IO) { runCatching { music.services.metadata.searchLyricsFor(music.profileId, track.id, query) } }
+                working = false
+            }
+        }
+    }
+    LaunchedEffect(track.id) { search() }
+    MusicDialogFrame("Search lyrics for ${track.title}", onDismiss = onDismiss, width = 640) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            DialogTextField(query, { query = it }, "Song and artist", Modifier.weight(1f), onSubmit = { search() })
+            MusicButton(if (working) "Searching…" else "Search", { search() }, enabled = !working && query.isNotBlank())
+        }
+        val found = results
+        when {
+            found == null -> Text("Searching LRCLIB…", style = small(), color = tokens.colors.textMuted)
+            found.isFailure -> Text(found.exceptionOrNull()?.message ?: "The search failed.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger)
+            found.getOrThrow().isEmpty() -> Text("LRCLIB has nothing for that. Try other words, or type the lyrics yourself with “Add lyrics”.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+            else -> LazyColumn(Modifier.fillMaxWidth().height(320.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                itemsIndexed(found.getOrThrow()) { _, candidate ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(tokens.colors.background).padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(candidate.title, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, maxLines = 1)
+                            Text(
+                                details(
+                                    candidate.artist, candidate.album, candidate.durationSeconds?.let { formatDuration(it * 1000L) },
+                                    when {
+                                        candidate.instrumental -> "instrumental"
+                                        candidate.synced -> "follows the music"
+                                        else -> "plain text"
+                                    },
+                                ),
+                                style = small(), color = tokens.colors.textMuted, maxLines = 1,
+                            )
+                        }
+                        MusicButton("Use", {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { runCatching { music.services.metadata.applyLyrics(music.profileId, track.id, candidate) } }
+                                onApplied()
+                            }
+                        }, primary = false)
+                    }
+                }
+            }
+        }
+        Text("The length of each version is shown: the one closest to your file (${formatDuration(track.durationMs)}) is listed first.", style = small(), color = tokens.colors.textMuted)
+    }
+}
+
+/**
+ * Online details of an album: the MusicBrainz editions it could be, with their covers from the
+ * Cover Art Archive. Applying an edition corrects the album's songs; fields you edited are kept.
+ */
+@Composable
+internal fun AlbumMetadataTools(album: com.debridone.music.library.Album, onDismiss: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val music = LocalMusic.current
+    val scope = rememberCoroutineScope()
+    var releases by remember(album.id) { mutableStateOf<Result<List<MbRelease>>?>(null) }
+    var covers by remember(album.id) { mutableStateOf<Result<List<CoverOption>>?>(null) }
+    var working by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(album.id) {
+        releases = withContext(Dispatchers.IO) { runCatching { music.services.metadata.findReleasesForAlbum(music.profileId, album.id) } }
+        covers = withContext(Dispatchers.IO) { runCatching { music.services.metadata.albumCoverOptions(music.profileId, album.id) } }
+    }
+    MusicDialogFrame("Details of ${album.title} online", onDismiss = { if (working == null) onDismiss() }, width = 680) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Editions on MusicBrainz", style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary, modifier = Modifier.weight(1f))
+            MusicButton("Refresh from the matched edition", {
+                working = "refresh"
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { runCatching { music.services.metadata.refreshAlbum(music.profileId, album.id) } }
+                    working = null
+                    note = result.fold(
+                        { if (it is MetadataRefresh.NeedsMatch) "This album has not been matched yet: choose an edition below." else "The album is up to date with MusicBrainz." },
+                        { it.message ?: "The refresh failed." },
+                    )
+                }
+            }, primary = false, enabled = working == null)
+        }
+        val found = releases
+        when {
+            found == null -> Text("Asking MusicBrainz…", style = small(), color = tokens.colors.textMuted)
+            found.isFailure -> Text(found.exceptionOrNull()?.message ?: "MusicBrainz could not be asked.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger)
+            found.getOrThrow().isEmpty() -> Text("MusicBrainz lists no release with this title and artist.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+            else -> LazyColumn(Modifier.fillMaxWidth().height(190.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                itemsIndexed(found.getOrThrow()) { _, release ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(tokens.colors.background).padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(release.title, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, maxLines = 1)
+                            Text(
+                                details(release.artist, release.date, release.country, release.format, release.trackCount?.let { plural(it, "track") }, release.label, release.status),
+                                style = small(), color = tokens.colors.textMuted, maxLines = 1,
+                            )
+                        }
+                        MusicButton(if (working == release.id) "Applying…" else "Use", {
+                            working = release.id
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) { runCatching { music.services.metadata.applyRelease(music.profileId, album.id, release.id) } }
+                                working = null
+                                result.fold(
+                                    { update ->
+                                        MusicNav.message = "Matched ${update.tracksMatched} of ${update.tracksMatched + update.tracksUnmatched} songs; ${update.fieldsChanged} details corrected." +
+                                            if (update.coverApplied) " A cover was added." else ""
+                                        onDismiss()
+                                        update.albumId?.takeIf { it != album.id }?.let { MusicNav.back(); MusicNav.open(MusicRoute.AlbumPage(it)) }
+                                    },
+                                    { note = it.message ?: "The edition could not be applied." },
+                                )
+                            }
+                        }, primary = false, enabled = working == null)
+                    }
+                }
+            }
+        }
+        Text("Covers in the Cover Art Archive", style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary)
+        val offered = covers
+        when {
+            offered == null -> Text("Asking the Cover Art Archive…", style = small(), color = tokens.colors.textMuted)
+            offered.isFailure -> Text(offered.exceptionOrNull()?.message ?: "The archive could not be asked.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger)
+            offered.getOrThrow().isEmpty() -> Text("The archive has no artwork for this album. You can still choose a picture of your own from the album's menu.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+            else -> androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(offered.getOrThrow().size) { index ->
+                    val option = offered.getOrThrow()[index]
+                    Column(
+                        Modifier.width(132.dp).clip(RoundedCornerShape(12.dp)).clickable(enabled = working == null, role = Role.Button, onClickLabel = "Use this cover") {
+                            working = "cover"
+                            scope.launch {
+                                val applied = withContext(Dispatchers.IO) { runCatching { music.services.metadata.applyAlbumCover(music.profileId, album.id, option) } }
+                                working = null
+                                note = applied.fold({ if (it) "The cover was changed." else "The archive no longer has that image." }, { it.message ?: "The cover could not be fetched." })
+                            }
+                        }.padding(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        CoverPreview(option, Modifier.fillMaxWidth().aspectRatio(1f))
+                        Text(option.label, style = small(), color = tokens.colors.textSecondary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        note?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary) }
+        Text("Applying an edition fills in the fields you have not edited yourself. Edited fields are locked and stay as they are.", style = small(), color = tokens.colors.textMuted)
+    }
+}
+
+@Composable
+private fun CoverPreview(option: CoverOption, modifier: Modifier = Modifier) {
+    val tokens = MaterialTheme.nuvio
+    val music = LocalMusic.current
+    val bitmap by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, option.thumbnailUrl) {
+        val path = withContext(Dispatchers.IO) { runCatching { music.services.metadata.coverPreview(option)?.toString() }.getOrNull() } ?: return@produceState
+        value = ArtworkBitmaps.cached(path, full = false) ?: ArtworkBitmaps.load(path, full = false)
+    }
+    Box(modifier.clip(RoundedCornerShape(10.dp)).background(tokens.colors.surfaceElevated), contentAlignment = Alignment.Center) {
+        val image = bitmap
+        if (image != null) {
+            androidx.compose.foundation.Image(bitmap = image, contentDescription = option.label, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        } else {
+            Icon(Icons.Rounded.Lyrics, contentDescription = null, tint = tokens.colors.textMuted, modifier = Modifier.fillMaxSize(0.3f).alpha(0f))
         }
     }
 }

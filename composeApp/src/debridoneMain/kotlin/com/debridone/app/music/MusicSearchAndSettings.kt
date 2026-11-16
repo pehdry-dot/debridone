@@ -3,6 +3,7 @@ package com.debridone.app.music
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +71,23 @@ import java.util.Date
 
 @Composable
 internal fun MusicSearch() {
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            MusicPageHeading("Search", "Your library: songs, albums, artists, genres and playlists.")
+            SearchField(
+                value = MusicNav.searchText,
+                onValueChange = { MusicNav.searchText = it },
+                modifier = Modifier.fillMaxWidth().widthIn(max = 860.dp),
+                focusRequests = MusicNav.searchFocusRequests,
+                large = true,
+            )
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) { MusicSearchResults() }
+    }
+}
+
+@Composable
+private fun MusicSearchResults() {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val actions = LocalMusicActions.current
@@ -82,7 +100,9 @@ internal fun MusicSearch() {
     val playerState by music.services.player.state.collectAsStateWithLifecycle()
 
     if (text.isBlank()) {
-        MusicEmptyState(Icons.Rounded.Search, "Search your music", "Songs, albums, artists, genres and playlists. Accents and capitals do not matter.")
+        MusicEmptyState(Icons.Rounded.Search, "Search your music", "Accents and capitals do not matter. To look beyond your library, use Discover.") {
+            MusicButton("Open Discover", icon = Icons.Rounded.Explore, primary = false, onClick = { MusicNav.root(MusicRoute.Discover) })
+        }
         return
     }
     val (found, playlists) = results ?: return

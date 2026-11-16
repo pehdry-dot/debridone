@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -150,7 +151,9 @@ internal fun AlbumScreen(albumId: Long) {
         services.library.album(profile, albumId) to services.library.albumTracks(profile, albumId)
     }
     val playerState by music.services.player.state.collectAsStateWithLifecycle()
+    var onlineTools by remember { mutableStateOf(false) }
     val (album, tracks) = loaded ?: return
+    if (onlineTools && album != null) AlbumMetadataTools(album) { onlineTools = false }
     if (album == null) {
         NotFound("This album")
         return
@@ -184,6 +187,7 @@ internal fun AlbumScreen(albumId: Long) {
                     MenuItem("Add to queue", Icons.AutoMirrored.Rounded.QueueMusic) { dismiss(); actions.addToQueue(tracks) }
                     MenuItem("Add to playlist…", Icons.AutoMirrored.Rounded.PlaylistAdd) { dismiss(); MusicNav.dialog = MusicDialog.AddToPlaylist(tracks.map { it.id }) }
                     MenuDivider()
+                    MenuItem("Details and covers online…", Icons.Rounded.Search) { dismiss(); onlineTools = true }
                     MenuItem("Choose a cover…", Icons.Rounded.Image) {
                         dismiss()
                         chooseCustomArtwork(music, actions) { id -> music.services.library.setAlbumArtwork(music.profileId, album.id, id) }

@@ -3,6 +3,20 @@ package com.debridone.app.music
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.material.icons.rounded.Explore
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,8 +100,14 @@ internal enum class LibraryTab(val key: String, val label: String) {
 
 internal sealed interface MusicRoute {
     data object Home : MusicRoute
+
+    /** Searching and browsing the catalogues of the profile's sources. */
+    data object Discover : MusicRoute
     data class Library(val tab: LibraryTab) : MusicRoute
     data object Search : MusicRoute
+
+    /** An album, playlist or artist of a source's catalogue, not (yet) in the library. */
+    data class RemoteCollection(val item: RemoteItem) : MusicRoute
     data class AlbumPage(val id: Long) : MusicRoute
     data class ArtistPage(val id: Long) : MusicRoute
     data class GenrePage(val name: String) : MusicRoute
@@ -142,6 +162,8 @@ internal object MusicNav {
         private set
 
     fun focusSearch() {
+        // The search field lives on the Search and Discover pages.
+        if (current != MusicRoute.Search && current != MusicRoute.Discover) root(MusicRoute.Search)
         searchFocusRequests++
     }
 
@@ -153,6 +175,7 @@ internal object MusicNav {
         profileId = id
         root(MusicRoute.Home)
         searchText = ""
+        DiscoverState.reset()
         playerExpanded = false
         dialog = null
         message = null
@@ -338,6 +361,8 @@ fun MusicScreen() {
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     when (val route = MusicNav.current) {
                         MusicRoute.Home -> MusicHome()
+                        MusicRoute.Discover -> MusicDiscover()
+                        is MusicRoute.RemoteCollection -> RemoteCollectionScreen(route.item)
                         is MusicRoute.Library -> MusicLibrary(route.tab)
                         MusicRoute.Search -> MusicSearch()
                         is MusicRoute.AlbumPage -> AlbumScreen(route.id)
@@ -354,50 +379,115 @@ fun MusicScreen() {
     }
 }
 
+/**
+ * Music's navigation, laid out like Streaming's: one pill centred at the top with Home, Discover,
+ * Search and Library, and a cogwheel for the settings.
+ */
 @Composable
 private fun MusicTopBar() {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val route = MusicNav.current
     val scan by music.services.scanner.progress.collectAsStateWithLifecycle()
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, top = 18.dp, bottom = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        if (MusicNav.stack.size > 1) {
-            MusicIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", MusicNav::back, tint = tokens.colors.textPrimary, background = tokens.colors.surface)
+    val root = MusicNav.stack.first()
+    Box(Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 8.dp)) {
+        Row(Modifier.align(Alignment.CenterStart), verticalAlignment = Alignment.CenterVertically) {
+            if (MusicNav.stack.size > 1) {
+                MusicIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", MusicNav::back, tint = tokens.colors.textPrimary, background = tokens.colors.surface)
+            }
         }
-        Text("Music", style = MaterialTheme.typography.headlineLarge, color = tokens.colors.textPrimary)
-        Spacer(Modifier.width(10.dp))
-        MusicChip("Home", route == MusicRoute.Home) { MusicNav.root(MusicRoute.Home) }
-        MusicChip("Library", route is MusicRoute.Library) {
-            MusicNav.root(MusicRoute.Library(LibraryTab.fromKey(music.services.preferences[MusicPreferences.LIBRARY_TAB])))
+        Row(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .clip(RoundedCornerShape(50))
+                .background(Color(0xFF1C1C1E).copy(alpha = 0.72f))
+                .border(1.dp, Color.White.copy(alpha = 0.06f), RoundedCornerShape(50))
+                .padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            MusicNavItem("Home", Icons.Rounded.Home, root == MusicRoute.Home) { MusicNav.root(MusicRoute.Home) }
+            MusicNavItem("Discover", Icons.Rounded.Explore, root == MusicRoute.Discover) { MusicNav.root(MusicRoute.Discover) }
+            MusicNavItem("Search", Icons.Rounded.Search, root == MusicRoute.Search) { MusicNav.root(MusicRoute.Search) }
+            MusicNavItem("Library", Icons.Rounded.LibraryMusic, root is MusicRoute.Library) {
+                MusicNav.root(MusicRoute.Library(LibraryTab.fromKey(music.services.preferences[MusicPreferences.LIBRARY_TAB])))
+            }
+            MusicNavItem("Settings", Icons.Rounded.Settings, root == MusicRoute.Settings || route == MusicRoute.Settings, iconOnly = true) {
+                MusicNav.root(MusicRoute.Settings)
+            }
         }
-        Spacer(Modifier.weight(1f))
-        if (scan.running) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (scan.running) {
                 CircularProgressIndicator(color = music.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                 Text(
                     if (scan.filesFound > 0) "Scanning ${scan.filesProcessed} of ${scan.filesFound}" else "Scanning…",
                     style = small(), color = tokens.colors.textSecondary,
                 )
             }
+            MusicIconButton(Icons.Rounded.Sync, "Rescan the library", { DebridOneRuntime.modules.music.rescan() }, enabled = !scan.running)
         }
-        SearchField(
-            value = MusicNav.searchText,
-            onValueChange = { text ->
-                MusicNav.searchText = text
-                if (text.isNotBlank() && MusicNav.current != MusicRoute.Search) MusicNav.open(MusicRoute.Search)
-            },
-            modifier = Modifier.width(300.dp),
-            focusRequests = MusicNav.searchFocusRequests,
+    }
+}
+
+/** One item of the navigation pill. [iconOnly] items show their name as a tooltip instead. */
+@Composable
+private fun MusicNavItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, iconOnly: Boolean = false, onClick: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val accent = LocalMusic.current.style.accent
+    val hover = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    var tooltip by remember { mutableStateOf(false) }
+    LaunchedEffect(hovered, iconOnly) {
+        if (iconOnly && hovered) {
+            delay(450)
+            tooltip = true
+        } else {
+            tooltip = false
+        }
+    }
+    val content = if (selected) tokens.colors.textPrimary else Color.White.copy(alpha = 0.72f)
+    Row(
+        modifier = Modifier
+            .height(38.dp)
+            .clip(RoundedCornerShape(50))
+            .background(if (selected) accent.copy(alpha = 0.22f) else if (hovered) Color.White.copy(alpha = 0.06f) else Color.Transparent)
+            .hoverable(hover)
+            .clickable(role = Role.Tab, onClickLabel = label, onClick = onClick)
+            .semantics {
+                contentDescription = label
+                this.selected = selected
+            }
+            .padding(horizontal = if (iconOnly) 11.dp else 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (iconOnly && tooltip) {
+            androidx.compose.ui.window.Popup(
+                alignment = Alignment.BottomCenter,
+                offset = androidx.compose.ui.unit.IntOffset(0, with(LocalDensity.current) { 34.dp.roundToPx() }),
+            ) {
+                Text(
+                    label, style = MaterialTheme.typography.labelMedium, color = tokens.colors.textPrimary,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(tokens.colors.surfacePopover).padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+        Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(18.dp))
+        if (!iconOnly) Text(label, style = MaterialTheme.typography.labelLarge, color = content, maxLines = 1)
+    }
+}
+
+/** The large title at the top of a page, as on Streaming's Search and Library. */
+@Composable
+internal fun MusicPageHeading(title: String, subtitle: String? = null, modifier: Modifier = Modifier) {
+    val tokens = MaterialTheme.nuvio
+    Column(modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineLarge.copy(fontSize = 34.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+            color = tokens.colors.textPrimary,
         )
-        MusicIconButton(Icons.Rounded.Sync, "Rescan the library", { DebridOneRuntime.modules.music.rescan() }, enabled = !scan.running)
-        MusicIconButton(
-            Icons.Rounded.Settings, "Music settings", { MusicNav.open(MusicRoute.Settings) },
-            tint = if (route == MusicRoute.Settings) music.style.accent else tokens.colors.textSecondary,
-        )
+        if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textSecondary)
     }
 }
 
@@ -408,6 +498,9 @@ internal fun SearchField(
     modifier: Modifier = Modifier,
     placeholder: String = "Search your music",
     focusRequests: Int = 0,
+    /** The prominent field at the top of the Search and Discover pages. */
+    large: Boolean = false,
+    onSubmit: (() -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.nuvio
     val focus = remember { FocusRequester() }
@@ -416,22 +509,31 @@ internal fun SearchField(
     }
     Row(
         modifier = modifier
-            .height(38.dp)
+            .height(if (large) 54.dp else 38.dp)
             .clip(RoundedCornerShape(50))
             .background(tokens.colors.surface)
             .border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(50))
-            .padding(horizontal = 12.dp),
+            .onPreviewKeyEvent { event ->
+                if (onSubmit != null && event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.NumPadEnter)) {
+                    onSubmit()
+                    true
+                } else {
+                    false
+                }
+            }
+            .padding(horizontal = if (large) 20.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Icon(Icons.Rounded.Search, contentDescription = null, tint = tokens.colors.textMuted, modifier = Modifier.size(18.dp))
+        val textStyle = if (large) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyMedium
+        Icon(Icons.Rounded.Search, contentDescription = null, tint = tokens.colors.textMuted, modifier = Modifier.size(if (large) 22.dp else 18.dp))
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            if (value.isEmpty()) Text(placeholder, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted, maxLines = 1)
+            if (value.isEmpty()) Text(placeholder, style = textStyle, color = tokens.colors.textMuted, maxLines = 1)
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 singleLine = true,
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = tokens.colors.textPrimary),
+                textStyle = textStyle.copy(color = tokens.colors.textPrimary),
                 cursorBrush = SolidColor(LocalMusic.current.style.accent),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus),
             )

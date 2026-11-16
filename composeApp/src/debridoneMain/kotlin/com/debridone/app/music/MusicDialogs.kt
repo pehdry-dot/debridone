@@ -98,6 +98,8 @@ internal object MusicPickers {
 
     fun choosePlaylistFile(): Path? = chooseFiles("Choose a playlist", "Playlists (M3U, M3U8)", arrayOf("m3u", "m3u8"), multiple = false).firstOrNull()
 
+    fun choosePluginFile(): Path? = chooseFiles("Choose a Music plugin", "Plugin manifests (JSON, ZIP)", arrayOf("json", "zip"), multiple = false).firstOrNull()
+
     fun chooseImage(): Path? = chooseFiles("Choose a picture", "Images", arrayOf("jpg", "jpeg", "png"), multiple = false).firstOrNull()
 
     fun saveFile(title: String, suggestedName: String): Path? {
