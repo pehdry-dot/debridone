@@ -37,6 +37,7 @@ import com.debridone.app.music.MusicProvider
 import com.debridone.app.music.MusicScreen
 import com.debridone.app.music.pauseMusicForVideo
 import com.debridone.app.music.rememberMusicHasQueue
+import com.debridone.app.music.videoEndedForMusic
 import com.debridone.module.ModuleId
 import com.nuvio.app.AppShellHost
 import com.nuvio.app.core.ui.LocalScreenActive
@@ -90,7 +91,7 @@ fun DebridOneShell(
     // Streaming takes the whole window and pauses the music.
     val miniPlayerVisible = rememberMusicHasQueue() && sidebarVisible
     LaunchedEffect(immersive) {
-        if (immersive) pauseMusicForVideo()
+        if (immersive) pauseMusicForVideo() else videoEndedForMusic()
     }
 
     // Streaming stays alive once opened so its navigation and playback state survive visits to

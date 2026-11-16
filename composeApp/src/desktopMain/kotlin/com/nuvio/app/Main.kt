@@ -55,6 +55,8 @@ private const val MacosDarkAquaAppearance = "NSAppearanceNameDarkAqua"
 
 @OptIn(ExperimentalComposeUiApi::class)
 fun main(args: Array<String>) {
+    // DebridOne: `--music-self-test <folder>` checks Music without opening a window, then exits.
+    if (com.debridone.app.music.MusicSelfTest.runIfRequested(args)) return
     // On Linux, initialize GTK BEFORE AWT/Compose/Skia to prevent GdkDisplayManager
     // type registration conflict (Skiko partially loads GDK without full GTK init).
     if (System.getProperty("os.name", "").lowercase().contains("linux")) {

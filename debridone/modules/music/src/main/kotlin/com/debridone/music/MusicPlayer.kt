@@ -156,6 +156,9 @@ class MusicPlayer internal constructor(
 
     fun audioDevices(): List<AudioDevice> = engine?.audioDevices().orEmpty()
 
+    /** What the engine reports about its current output; empty before anything was played. */
+    fun diagnostics(): Map<String, String> = runCatching { engine?.diagnostics() }.getOrNull().orEmpty()
+
     /** Selects the output device (`auto` follows the system). Remembered for when the engine starts. */
     fun setAudioDevice(id: String) {
         audioDevice = id.ifBlank { "auto" }

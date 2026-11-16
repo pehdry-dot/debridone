@@ -145,6 +145,15 @@ class MpvAudioEngine(
         api.mpv_set_property_string(handle, "audio-device", id.ifBlank { "auto" })
     }
 
+    override fun diagnostics(): Map<String, String> {
+        if (closed.get()) return emptyMap()
+        val result = LinkedHashMap<String, String>()
+        for ((label, name) in listOf("Output driver" to "current-ao", "Output device" to "audio-device", "Sample rate" to "audio-params/samplerate", "Channels" to "audio-params/hr-channels", "Codec" to "audio-codec-name")) {
+            readString(name)?.takeIf { it.isNotBlank() }?.let { result[label] = it }
+        }
+        return result
+    }
+
     /** Reads a raw mpv property. For diagnostics and tests. */
     internal fun property(name: String): String? = if (closed.get()) null else readString(name)
 
@@ -263,7 +272,7 @@ class MpvAudioEngine(
         val values = list.getPointer(8) ?: return 0
         val keys = list.getPointer(16) ?: return 0
         for (index in 0 until count) {
-            val key = keys.getPointer(index.toLong() * Native.POINTER_SIZE)?.getString(0) ?: continue
+            val key = keys.getPointer(index.toLong() * Native.POINTER_SIZE)?.getString(0, "UTF-8") ?: continue
             if (key == "playlist_entry_id") {
                 val value = values.share(index * NODE_SIZE)
                 if (value.getInt(8) == Mpv.FORMAT_INT64) return value.getLong(0)

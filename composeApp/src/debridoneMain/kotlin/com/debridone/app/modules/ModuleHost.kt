@@ -1,6 +1,7 @@
 package com.debridone.app.modules
 
 import com.debridone.app.music.MusicAudio
+import com.debridone.app.music.MusicSystemIntegration
 import com.debridone.gaming.GamingModule
 import com.debridone.manga.MangaModule
 import com.debridone.module.EntertainmentModule
@@ -43,6 +44,7 @@ class ModuleHost(paths: AppPaths, secrets: SecretStore) {
 
     /** Starts every engine independently; returns immediately. */
     fun start() {
+        MusicSystemIntegration.attach(music, scope)
         engines.forEach { engine ->
             scope.launch {
                 engine.start()
@@ -64,6 +66,7 @@ class ModuleHost(paths: AppPaths, secrets: SecretStore) {
     }
 
     fun close() {
+        MusicSystemIntegration.shutdown()
         engines.forEach { runCatching { it.close() } }
     }
 }

@@ -89,6 +89,20 @@ class MpvAudioEngineTest {
     }
 
     @Test
+    fun playsAFileWhoseNameHasAccentsAndSymbols() {
+        val directory = java.nio.file.Files.createTempDirectory("debridone-música")
+        val file = java.nio.file.Files.copy(Fixtures.flac, directory.resolve("Canção nº 9 — «São João» ✓.flac"))
+        try {
+            val token = engine.load(file.toString())
+            awaitStarted(token)
+            awaitTrue(describe = { "the accented file to finish; events: ${events.takeLast(6)}" }) { ended(token) != null }
+            assertEquals(TrackEndReason.FINISHED, ended(token)!!.reason)
+        } finally {
+            directory.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun aMissingFileEndsWithAnError() {
         val token = engine.load(Fixtures.root.resolve("does-not-exist.mp3").toString())
         awaitTrue(describe = { "error for a missing file; events: $events" }) { ended(token) != null }

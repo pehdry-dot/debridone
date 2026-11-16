@@ -62,4 +62,7 @@ interface MusicPlaybackEngine : AutoCloseable {
 
     /** `auto` follows the system default output. */
     fun setAudioDevice(id: String)
+
+    /** Facts about the running engine for troubleshooting (output driver, device, sample format). */
+    fun diagnostics(): Map<String, String> = emptyMap()
 }

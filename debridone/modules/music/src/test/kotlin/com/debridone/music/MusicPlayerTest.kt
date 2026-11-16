@@ -45,6 +45,9 @@ class MusicPlayerTest {
         return player.state.value
     }
 
+    /** Waits until the scripted engine has been asked to load [count] tracks in total. */
+    private fun awaitEngineLoads(count: Int = 1) = awaitTrue(describe = { "the engine to be given $count load(s), got ${fake.loads.size}" }) { fake.loads.size >= count }
+
     @Test
     fun importPlayRestartWithRealAudio() {
         requireLibmpv()
@@ -99,6 +102,7 @@ class MusicPlayerTest {
         val album = music.album()
         music.player.play(album, startIndex = 2)
         music.await("load") { it.current?.title == "Third Wave" }
+        awaitEngineLoads()
         fake.start()
         fake.position(1_300)
         music.player.setShuffle(true)
@@ -132,6 +136,7 @@ class MusicPlayerTest {
         val album = music.album()
         music.player.play(album, startIndex = 3)
         music.await("load") { it.current?.title == "Fourth Wall" }
+        awaitEngineLoads()
         fake.start()
         fake.position(900)
         music.await("position") { it.positionMs == 900L }
@@ -153,6 +158,7 @@ class MusicPlayerTest {
 
         music.player.play(music.album(PROFILE_A), startIndex = 1)
         music.await("profile A playing") { it.current?.title == "Second Light" }
+        awaitEngineLoads()
         fake.start()
         listOf(0L, 500, 1_000, 1_500).forEach { fake.position(it) }
         music.await("position") { it.positionMs == 1_500L }

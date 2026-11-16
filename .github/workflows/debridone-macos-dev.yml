@@ -1,6 +1,7 @@
 name: DebridOne macOS dev build
 
-# Builds UNSIGNED development DMGs for Apple Silicon and Intel and smoke-tests the app bundle.
+# Builds UNSIGNED development DMGs for Apple Silicon and Intel, smoke-tests the app bundle and
+# runs the Music self-test (real playback of every supported format) inside it.
 # Nothing here signs or notarizes; see debridone/docs/BUILD.md for release signing.
 
 on:
@@ -29,11 +30,18 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
+      # The Music playback tests drive the real libmpv (silent output). With the variable below a
+      # missing library fails the run instead of quietly skipping those tests.
+      - name: Install libmpv for the Music playback tests
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libmpv2
       - name: Run DebridOne tests
+        env:
+          DEBRIDONE_REQUIRE_LIBMPV: "1"
         run: >
           ./gradlew
           :debridone:platform:test
           :debridone:accounts:test
+          :debridone:modules:music:test
           :debridone:architecture-tests:test
           --no-configuration-cache
 
@@ -113,6 +121,38 @@ jobs:
           done
           kill "${pid}" || true
           echo "Smoke test passed: the app started and created its databases."
+
+      # Imports the test audio files into a temporary library and plays one file of every format
+      # from start to end through the libmpv inside the bundle, then restarts the Music engine and
+      # checks that everything is still there. Silent output, so it does not depend on the runner
+      # having a sound device. A format that does not play fails the build.
+      - name: Music self-test in the packaged app
+        env:
+          DEBRIDONE_MUSIC_AO: "null"
+        run: |
+          app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
+          ls -l "${app}/Contents/app/resources/native/macos/" | grep -E "debridone_music_bridge|libmpv" || true
+          "${app}/Contents/MacOS/DebridOne" --music-self-test "${GITHUB_WORKSPACE}/debridone/modules/music/src/test/resources/audio-fixtures" 2>&1 | tee "${RUNNER_TEMP}/music-self-test.log"
+          {
+            echo "### Music self-test (${MACOS_ARCH}, silent output)"
+            echo '```'
+            sed -n '/^DebridOne Music self-test/,$p' "${RUNNER_TEMP}/music-self-test.log"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # The same test through the runner's real audio device, to see which output macOS gives the
+      # engine. Informational: hosted runners are not guaranteed to have a sound device.
+      - name: Music self-test with the default audio device (informational)
+        continue-on-error: true
+        run: |
+          app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
+          "${app}/Contents/MacOS/DebridOne" --music-self-test "${GITHUB_WORKSPACE}/debridone/modules/music/src/test/resources/audio-fixtures" 2>&1 | tee "${RUNNER_TEMP}/music-self-test-device.log"
+          {
+            echo "### Music self-test (${MACOS_ARCH}, default audio device, informational)"
+            echo '```'
+            sed -n '/^DebridOne Music self-test/,$p' "${RUNNER_TEMP}/music-self-test-device.log"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Report signature status
         run: |

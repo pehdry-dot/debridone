@@ -691,6 +691,53 @@ val buildMacosPlayerBridge = tasks.register<Exec>("buildMacosPlayerBridge") {
     commandLine(macosPlayerBridgeCommand)
 }
 
+// ---- DebridOne Music bridge (macOS) ----
+// A small Objective-C library of DebridOne's own: it links the bundled libmpv with an @loader_path
+// search path (so Music can load libmpv without Streaming's player bridge) and connects Music to
+// macOS Now Playing and the media keys. Built and packaged next to the other native libraries.
+val macosMusicBridgeSource = layout.projectDirectory.file("src/debridoneMain/native/macos/debridone_music_bridge.m")
+val macosMusicBridgeOutput = layout.buildDirectory.file("native/macos/$macosPlayerBridgeArch/libdebridone_music_bridge.dylib")
+val macosMusicBridgeSourceFile = macosMusicBridgeSource.asFile
+val macosMusicBridgeOutputFile = macosMusicBridgeOutput.get().asFile
+val macosMusicBridgeCommand = if (missingMacosPlayerBridgeInputs.isNotEmpty()) {
+    listOf("/bin/sh", "-c", "printf '%s\\n' '$missingMacosPlayerBridgeShellMessage' >&2; exit 1")
+} else {
+    listOf(
+        "/bin/sh",
+        "-c",
+        """
+        set -eu
+        SDKROOT="${'$'}(xcrun --sdk macosx --show-sdk-path)"
+        exec xcrun clang \
+          -dynamiclib \
+          -fobjc-arc \
+          -fvisibility=hidden \
+          -arch ${shellQuote(macosPlayerBridgeArch)} \
+          -isysroot "${'$'}{SDKROOT}" \
+          -mmacosx-version-min=12.0 \
+          ${shellQuote(macosMusicBridgeSourceFile.absolutePath)} \
+          -o ${shellQuote(macosMusicBridgeOutputFile.absolutePath)} \
+          -I${shellQuote(macosLibmpvHeaders.asFile.absolutePath)} \
+          -framework Foundation \
+          -framework AppKit \
+          -framework MediaPlayer \
+          -install_name @rpath/libdebridone_music_bridge.dylib \
+          -Wl,-rpath,@loader_path \
+          ${shellQuote(bundledMacosLibmpvDylib.absolutePath)}
+        """.trimIndent(),
+    )
+}
+val buildMacosMusicBridge = tasks.register<Exec>("buildMacosMusicBridge") {
+    notCompatibleWithConfigurationCache("Builds a host-local Music bridge against the bundled macOS libmpv runtime.")
+    enabled = isMacHost
+    inputs.file(macosMusicBridgeSource)
+    inputs.file(bundledMacosLibmpvDylib)
+    inputs.dir(macosLibmpvHeaders)
+    outputs.file(macosMusicBridgeOutput)
+    doFirst { macosMusicBridgeOutputFile.parentFile.mkdirs() }
+    commandLine(macosMusicBridgeCommand)
+}
+
 // ---- Linux player bridge (system libmpv, X11 "wid" embedding) ----
 // Compiles a single JNI .so against the system libmpv + JDK JNI headers.
 // Requires a C++ toolchain, pkg-config, and libmpv development files on the
@@ -961,8 +1008,10 @@ val prepareMacosPlayerRuntime = tasks.register<Sync>("prepareMacosPlayerRuntime"
 
 val prepareMacosPlayerAppResources = tasks.register<Sync>("prepareMacosPlayerAppResources") {
     enabled = isMacHost
-    dependsOn(buildMacosPlayerBridge, prepareMacosPlayerRuntime)
+    dependsOn(buildMacosPlayerBridge, buildMacosMusicBridge, prepareMacosPlayerRuntime)
     from(macosPlayerBridgeOutput)
+    // DebridOne: Music's own bridge, next to libmpv so its @loader_path search path resolves.
+    from(macosMusicBridgeOutput)
     from(macosPlayerRuntimeOutput) {
         include("*.dylib")
     }

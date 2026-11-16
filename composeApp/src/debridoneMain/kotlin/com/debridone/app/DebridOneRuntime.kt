@@ -94,6 +94,8 @@ object DebridOneRuntime {
             val host = ModuleHost(paths, secrets)
             moduleHost = host
             host.start()
+            // Quitting the app saves each section's state (Music: queue and position) and stops playback.
+            Runtime.getRuntime().addShutdownHook(Thread({ runCatching { host.close() } }, "debridone-shutdown"))
 
             AppShellHost.shell = { streaming, onSwitchProfile -> DebridOneShell(streaming, onSwitchProfile) }
             observeActiveProfile(host)

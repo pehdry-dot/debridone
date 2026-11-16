@@ -105,6 +105,9 @@ internal object MpvLibrary {
     @Volatile
     private var loaded: MpvApi? = null
 
+    /** mpv takes file names and option values as UTF-8, whatever the JVM's default charset is. */
+    private val options = mapOf(Library.OPTION_STRING_ENCODING to "UTF-8")
+
     @Synchronized
     fun load(runtime: MusicNativeRuntime): MpvApi {
         loaded?.let { return it }
@@ -121,7 +124,7 @@ internal object MpvLibrary {
                 if (!Files.isRegularFile(runtime.libmpv)) {
                     throw MusicNativeException("libmpv is missing: ${runtime.libmpv}")
                 }
-                Native.load(runtime.libmpv.toAbsolutePath().toString(), MpvApi::class.java)
+                Native.load(runtime.libmpv.toAbsolutePath().toString(), MpvApi::class.java, options)
             } else {
                 loadSystemLibrary()
             }
@@ -141,7 +144,7 @@ internal object MpvLibrary {
         var failure: UnsatisfiedLinkError? = null
         for (name in listOf("mpv", "libmpv.so.2", "libmpv.2.dylib")) {
             try {
-                return Native.load(name, MpvApi::class.java)
+                return Native.load(name, MpvApi::class.java, options)
             } catch (e: UnsatisfiedLinkError) {
                 failure = e
             }

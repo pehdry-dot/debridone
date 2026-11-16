@@ -36,6 +36,11 @@ tasks.withType<Test>().configureEach {
     // Playback tests need libmpv. Locally they are skipped when it is missing; CI sets
     // DEBRIDONE_REQUIRE_LIBMPV=1 so that a missing library fails instead of silently skipping.
     environment("DEBRIDONE_REQUIRE_LIBMPV", System.getenv("DEBRIDONE_REQUIRE_LIBMPV") ?: "")
+    // File names with accents are part of the tests; on Linux the JVM only accepts them in a UTF-8
+    // locale (macOS always uses UTF-8 for file names).
+    if (System.getProperty("os.name").contains("linux", ignoreCase = true)) {
+        environment("LC_ALL", "C.UTF-8")
+    }
     // Each test class gets its own JVM so mpv instances never outlive their test.
     forkEvery = 1
     testLogging { events("failed", "skipped") }

@@ -83,9 +83,15 @@ fun rememberMusicHasQueue(): Boolean {
     return state.queue.isNotEmpty()
 }
 
-/** Pauses music; the shell calls this when Streaming starts a video. */
+/** The shell calls this when Streaming starts a video: music pauses and lets go of the media keys. */
 fun pauseMusicForVideo() {
     com.debridone.app.DebridOneRuntime.modules.music.services.value?.player?.pause()
+    MusicSystemIntegration.onVideoStarted()
+}
+
+/** The video is over; Music takes the media keys back if it still has a queue. It stays paused. */
+fun videoEndedForMusic() {
+    MusicSystemIntegration.onVideoEnded()
 }
 
 /** Keyboard and media-key actions, usable from anywhere in the app. They do nothing without a queue. */
