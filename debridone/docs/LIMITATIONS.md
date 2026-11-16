@@ -5,13 +5,14 @@ Verification status
   remembered sign-in after a restart, creating a second profile, a different theme and different
   Music appearance per profile surviving a full restart, the selected section being restored,
   the four Plugins tabs, and the Cmd/Ctrl+1-4, comma and F shortcuts.
-- **Not verified:** the macOS `.app`/`.dmg`. No Mac build has succeeded yet. The first CI run
-  failed before compiling: the Gradle root project was named "DebridOne" next to a `:debridone`
-  project, which generated two files whose names differ only by letter case. macOS treats those as
-  one file. That is fixed and guarded by a test; what the next Mac build reveals is still open.
+- Verified on GitHub's macOS runners (Apple Silicon and Intel): the app compiles and packages
+  into a `.dmg`, and the packaged app starts, stays running and creates `accounts.db` and the
+  three module databases. The macOS Keychain store passes its test there too.
+- **Not verified:** anything that needs a person in front of a Mac: the windows and screens of
+  the packaged app, sign-in and profiles there, video playback, and opening a downloaded build
+  through Gatekeeper.
 - **Not verified:** installing a Streaming addon and playing video in this fork. The build
   environment could not reach addon hosts. Nuvio's own code paths for these are unchanged.
-- **Not verified:** the macOS Keychain store. Its test only runs on macOS.
 - Nothing is signed or notarized.
 
 Modules

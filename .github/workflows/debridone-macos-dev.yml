@@ -130,8 +130,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: DebridOne-macOS-${{ matrix.arch }}-dev
-          path: |
-            composeApp/build/compose/binaries/main-release/dmg/*.dmg
-            composeApp/build/compose/release-dmgs/*.dmg
+          # The build writes the same DMG twice; upload only the final, architecture-named copy.
+          path: composeApp/build/compose/release-dmgs/*.dmg
           if-no-files-found: error
           retention-days: 14

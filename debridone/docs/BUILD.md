@@ -63,8 +63,8 @@ commit to `nuvio-rebuild` yourself. The "Run workflow" button only appears once 
 is on the default branch, so it becomes available after `nuvio-rebuild` is made the default branch.
 
 The Keychain test runs in its own job, so a failure there is visible but does not hold back the
-DMG. No Mac build has passed yet; see `LIMITATIONS.md`. Installing a build is described in
-`INSTALL.md`.
+DMG. Installing a build is described in `INSTALL.md`; what a passing run does and does not prove
+is in `LIMITATIONS.md`.
 
 ## Signing and notarization
 

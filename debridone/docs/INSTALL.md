@@ -42,12 +42,15 @@ Open the repository's Actions tab, pick the latest successful "DebridOne macOS d
 download the artifact for your Mac (`arm64` for Apple Silicon, `x86_64` for Intel). You need to be
 signed in to GitHub. Unzip it, open the `.dmg` and drag DebridOne to Applications.
 
-macOS blocks a downloaded app that is not notarized. The first time, right-click the app and
-choose Open, or remove the download flag:
+macOS blocks a downloaded app that is not notarized, and may describe it as damaged. To allow it,
+remove the download flag once after copying the app to Applications:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/DebridOne.app
 ```
+
+Alternatively, try to open the app, then go to System Settings › Privacy & Security and choose
+"Open Anyway". (Right-click › Open no longer bypasses this on recent macOS versions.)
 
 ## If you already have an app called DebridOne
 
