@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlinJvm)
+    alias(libs.plugins.kotlinxSerialization)
 }
 
 kotlin {
@@ -19,9 +20,23 @@ java {
 
 dependencies {
     api(projects.debridone.moduleApi)
+    // Playback goes through libmpv (the build the app already bundles) via JNA.
+    implementation(libs.jna)
+    // Embedded tags and artwork: ID3, Vorbis comments, MP4 atoms, FLAC, WAV.
+    implementation(libs.jaudiotagger)
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.kotlin.test)
     testImplementation(libs.kotlin.testJunit)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+}
+
+tasks.withType<Test>().configureEach {
+    // Playback tests need libmpv. Locally they are skipped when it is missing; CI sets
+    // DEBRIDONE_REQUIRE_LIBMPV=1 so that a missing library fails instead of silently skipping.
+    environment("DEBRIDONE_REQUIRE_LIBMPV", System.getenv("DEBRIDONE_REQUIRE_LIBMPV") ?: "")
+    // Each test class gets its own JVM so mpv instances never outlive their test.
+    forkEvery = 1
+    testLogging { events("failed", "skipped") }
 }
