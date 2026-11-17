@@ -53,6 +53,8 @@ data class LoadedPackage(
     val error: String?,
     /** For a legacy package whose source Tiyo also provides: the package whose copy is used instead. */
     val shadowedBy: String? = null,
+    /** Switched off by the person: installed, but none of its code is loaded. */
+    val disabled: Boolean = false,
 )
 
 data class HostPluginState(
@@ -114,6 +116,8 @@ class MangaExtensions(
     private val host: ExtensionHost,
     /** The stored settings of a source for whoever is using the app now, applied after every (re)load. */
     private val storedSettings: suspend (SourceDescriptor) -> JsonObject? = { null },
+    /** Names of installed packages the person has switched off. They are not loaded. */
+    private val disabledPackages: () -> Set<String> = { emptySet() },
 ) {
     private val loadLock = Mutex()
 
@@ -153,7 +157,8 @@ class MangaExtensions(
     }
 
     private suspend fun load(generation: Int): HostPluginState {
-        val answer = host.call("plugins.load", timeoutMs = 60_000) as JsonObject
+        val request = buildJsonObject { put("disabled", buildJsonArray { disabledPackages().forEach { add(JsonPrimitive(it)) } }) }
+        val answer = host.call("plugins.load", request, timeoutMs = 60_000) as JsonObject
         val state = parseState(answer)
         loadedGeneration = generation
         _state.value = state
@@ -271,6 +276,7 @@ class MangaExtensions(
                 sourceCount = (pkg["sourceCount"] as? JsonPrimitive)?.intOrNull ?: 0,
                 error = pkg.text("error"),
                 shadowedBy = pkg.text("shadowedBy"),
+                disabled = (pkg["disabled"] as? JsonPrimitive)?.booleanOrNull ?: false,
             )
         }
         val sources = (answer["extensions"] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }.map { ext ->

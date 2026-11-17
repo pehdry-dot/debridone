@@ -171,7 +171,7 @@ class ExtensionHostTest {
     @Test
     fun storedSettingsAreAppliedAgainAfterARestart(): Unit = runBlocking {
         val stored = buildJsonObject { put("Token", "from-the-keychain") }
-        val withSettings = MangaExtensions(host) { source -> stored.takeIf { source.id == FakeTiyo.SOURCE_ID } }
+        val withSettings = MangaExtensions(host, storedSettings = { source -> stored.takeIf { source.id == FakeTiyo.SOURCE_ID } })
         assertEquals("from-the-keychain", withSettings.settings(FakeTiyo.SOURCE_ID)["Token"]!!.jsonPrimitive.content)
         runCatching { host.call("test.crash", timeoutMs = 5_000) }
         repeat(40) { if (host.state.value is HostState.Running) delay(50) }

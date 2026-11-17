@@ -202,12 +202,16 @@ const REQUIRED_FUNCTIONS = [
   'getFilterOptions',
 ];
 
-function loadPlugins() {
+function loadPlugins(disabled = []) {
   unloadAll();
   packages = listPackages();
   const errors = [];
+  // A package the person has switched off is not loaded at all: none of its code runs.
+  for (const pkg of packages) {
+    if (disabled.includes(pkg.name)) pkg.disabled = true;
+  }
 
-  const tiyoPackage = packages.find((pkg) => pkg.kind === 'tiyo');
+  const tiyoPackage = packages.find((pkg) => pkg.kind === 'tiyo' && !pkg.disabled);
   if (tiyoPackage) {
     try {
       const packageDir = path.join(pluginsDir, TIYO_PACKAGE);
@@ -246,7 +250,7 @@ function loadPlugins() {
     }
   }
 
-  for (const pkg of packages.filter((candidate) => candidate.kind === 'legacy')) {
+  for (const pkg of packages.filter((candidate) => candidate.kind === 'legacy' && !candidate.disabled)) {
     try {
       const entry = loadLegacyExtension({ aki, pluginsDir, packageName: pkg.name, requireFn: require, tiyoDir: path.join(pluginsDir, TIYO_PACKAGE) });
       legacy.set(entry.metadata.id, { ...entry, origin: pkg.name, packageName: pkg.name, usesBrowserWindow: null });
@@ -331,8 +335,8 @@ const methods = {
     return listPackages();
   },
 
-  async 'plugins.load'() {
-    return loadPlugins();
+  async 'plugins.load'({ disabled }) {
+    return loadPlugins(Array.isArray(disabled) ? disabled.map(String) : []);
   },
 
   async 'plugins.unload'() {

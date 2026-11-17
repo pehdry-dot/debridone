@@ -61,6 +61,9 @@ class ModuleIsolationTest {
     private fun gaming() = GamingModule(storage(ModuleId.GAMING)).also { opened += it }
     private fun manga() = MangaModule(storage(ModuleId.MANGA)).also { opened += it }
 
+    /** Manga lists its built-in local-files source in its registry; these tests are about what is added on top. */
+    private fun MangaModule.added() = plugins.installed.value.filterNot { it.builtIn }
+
     /** What an earlier version saved for Games is left exactly as it is while the others run. */
     @Test
     fun savedGamesDataIsNotTouchedByTheRunningSections() = runBlocking {
@@ -97,7 +100,7 @@ class ModuleIsolationTest {
             "Music lists its own source kinds",
         )
         assertEquals(emptyList(), gaming.plugins.installed.value, "Music's sources must not show up in Games")
-        assertEquals(emptyList(), manga.plugins.installed.value, "Music's sources must not show up in Manga")
+        assertEquals(emptyList(), manga.added(), "Music's sources must not show up in Manga")
         // A Music source id cannot be switched or removed through another module's registry.
         assertIs<PluginActionResult.Failure>(gaming.plugins.setEnabled("subsonic", false))
         assertIs<PluginActionResult.Failure>(manga.plugins.remove("jellyfin"))
@@ -130,10 +133,10 @@ class ModuleIsolationTest {
         music.registerPlugin(PluginDescriptor("navidrome-home", "Home Navidrome", PluginKind.LIBRARY_INTEGRATION, origin = "https://music.example/manifest.json"))
         assertEquals(listOf("navidrome-home"), music.added().map { it.id })
         assertEquals(emptyList(), gaming.plugins.installed.value)
-        assertEquals(emptyList(), manga.plugins.installed.value)
+        assertEquals(emptyList(), manga.added())
 
         manga.registerPlugin(PluginDescriptor("tiyo", "Tiyo", PluginKind.SOURCE, version = "1.0.3", origin = "npm:@tiyo/core"))
-        assertEquals(listOf("tiyo"), manga.plugins.installed.value.map { it.id })
+        assertEquals(listOf("tiyo"), manga.added().map { it.id })
         assertEquals(listOf("navidrome-home"), music.added().map { it.id })
         assertEquals(emptyList(), gaming.plugins.installed.value)
     }
@@ -161,7 +164,7 @@ class ModuleIsolationTest {
         assertFailsWith<IllegalArgumentException> {
             manga.registerPlugin(PluginDescriptor("lyrics", "Lyrics provider", PluginKind.TEXT_TRACKS))
         }
-        assertEquals(emptyList(), manga.plugins.installed.value)
+        assertEquals(emptyList(), manga.added())
     }
 
     @Test

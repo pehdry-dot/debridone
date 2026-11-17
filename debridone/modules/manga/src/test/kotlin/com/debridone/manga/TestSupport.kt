@@ -176,6 +176,24 @@ class StandInRegistry : AutoCloseable {
         documents[path] = json
     }
 
+    private val published = LinkedHashMap<String, LinkedHashMap<String, String>>()
+
+    /** Publishes a version the way the real registry lists one: archive, checksum and a package document. */
+    fun publish(name: String, version: String, bytes: ByteArray, dependencies: Map<String, String> = emptyMap()) {
+        val tarball = archive(name, version, bytes)
+        val deps = dependencies.entries.joinToString(",") { "\"${it.key}\":\"${it.value}\"" }
+        published.getOrPut(name) { LinkedHashMap() }[version] =
+            "{\"name\":\"$name\",\"version\":\"$version\",\"dependencies\":{$deps},\"dist\":{\"tarball\":\"$tarball\",\"integrity\":\"${sha512Integrity(bytes)}\"}}"
+        val versions = published.getValue(name)
+        val latest = versions.keys.last()
+        document(
+            "/" + name.replace("/", "%2F"),
+            "{\"name\":\"$name\",\"description\":\"stand-in package\",\"dist-tags\":{\"latest\":\"$latest\"}," +
+                "\"versions\":{${versions.entries.joinToString(",") { "\"${it.key}\":${it.value}" }}}," +
+                "\"time\":{${versions.keys.joinToString(",") { "\"$it\":\"2024-05-05T00:00:00.000Z\"" }}}}",
+        )
+    }
+
     override fun close() = server.stop(0)
 }
 
@@ -313,9 +331,13 @@ object FakeTiyo {
     const val SOURCE_ID = "11111111-2222-3333-4444-555555555555"
     const val BROKEN_ID = "99999999-2222-3333-4444-555555555555"
 
+    /** The pages of every chapter of a series whose id starts with "book": real images, so they can be read. */
+    val pages: List<ByteArray> = (1..4).map { pageImage("book p$it", 200, 300) }
+
     private val index = """
         'use strict';
         const fs = require('fs');
+        const PAGES = [${pages.joinToString(",") { "'" + Base64.getEncoder().encodeToString(it) + "'" }}];
         class Good {
           constructor(webviewFn) { this.webviewFn = webviewFn; this.settings = { Token: '' }; }
           getSeries(id) {
@@ -329,10 +351,19 @@ object FakeTiyo {
               authors: ['A'], artists: ['B'], tags: ['Action'], status: 'Ongoing', originalLanguageKey: 'KOREAN', numberUnread: 0, remoteCoverUrl: '' });
           }
           getChapters(id) { return Promise.resolve([1, 2, 3].map(n => ({ sourceId: id + '-c' + n, title: 'Chapter ' + n, chapterNumber: String(n), volumeNumber: '', languageKey: 'ENGLISH', groupName: 'G', time: 1700000000000 + n, read: false }))); }
-          getPageRequesterData(seriesId, chapterId) { return Promise.resolve({ server: 'https://pages.invalid', hash: chapterId, numPages: 2, pageFilenames: ['1.png', '2.png'] }); }
-          getPageUrls(data) { return data.pageFilenames.map(f => data.server + '/' + data.hash + '/' + f); }
-          getImage(series, url) { return Promise.resolve(url.endsWith('2.png') ? new Uint8Array([1, 2, 3, 4]).buffer : url); }
-          getSearch(text, page) { return Promise.resolve({ seriesList: [{ sourceId: 'found-' + text + '-' + page, title: 'Found ' + text }], hasMore: page < 2 }); }
+          getPageRequesterData(seriesId, chapterId) {
+            if (seriesId.startsWith('book')) return Promise.resolve({ server: 'page:', hash: '', numPages: PAGES.length, pageFilenames: PAGES.map((_, i) => String(i)) });
+            return Promise.resolve({ server: 'https://pages.invalid', hash: chapterId, numPages: 2, pageFilenames: ['1.png', '2.png'] });
+          }
+          getPageUrls(data) { return data.server === 'page:' ? data.pageFilenames.map(f => 'page:' + f) : data.pageFilenames.map(f => data.server + '/' + data.hash + '/' + f); }
+          getImage(series, url) {
+            if (url.startsWith('page:')) return Promise.resolve(Buffer.from(PAGES[Number(url.slice(5))], 'base64'));
+            return Promise.resolve(url.endsWith('2.png') ? new Uint8Array([1, 2, 3, 4]).buffer : url);
+          }
+          getSearch(text, page) {
+            if (text === 'book') return Promise.resolve({ seriesList: [{ extensionId: '$SOURCE_ID', sourceId: 'book-1', title: 'A Book', tags: ['Webtoon'], originalLanguageKey: 'KOREAN', remoteCoverUrl: 'page:0' }], hasMore: false });
+            return Promise.resolve({ seriesList: [{ sourceId: 'found-' + text + '-' + page, title: 'Found ' + text }], hasMore: page < 2 });
+          }
           getDirectory(page) { return this.getSearch('', page); }
           getSettingTypes() { return { Token: 'STRING' }; }
           getSettings() { return this.settings; }
@@ -368,5 +399,17 @@ object FakeTiyo {
         Files.createDirectories(target.resolve("src"))
         Files.writeString(target.resolve("package.json"), """{"name":"@tiyo/core","version":"$version","main":"./src/index.js"}""")
         Files.writeString(target.resolve("src/index.js"), index)
+    }
+}
+
+/** Writes a ZIP/CBZ archive with the given entries, in the given order. */
+fun writeZip(file: Path, entries: List<Pair<String, ByteArray>>) {
+    Files.createDirectories(file.parent)
+    java.util.zip.ZipOutputStream(Files.newOutputStream(file)).use { zip ->
+        for ((name, bytes) in entries) {
+            zip.putNextEntry(java.util.zip.ZipEntry(name))
+            zip.write(bytes)
+            zip.closeEntry()
+        }
     }
 }

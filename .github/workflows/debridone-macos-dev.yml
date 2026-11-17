@@ -43,14 +43,20 @@ jobs:
       # missing library fails the run instead of quietly skipping those tests.
       - name: Install libmpv for the Music playback tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libmpv2
+      # The Manga tests start the real extension host on the pinned Node.js build and load the real
+      # Tiyo package (downloaded from the package registry by DebridOne's own installer).
+      - name: Fetch the Node.js runtime for the Manga extension host
+        run: ./scripts/debridone/fetch-node-runtime.sh linux-x64
       - name: Run DebridOne tests
         env:
           DEBRIDONE_REQUIRE_LIBMPV: "1"
+          DEBRIDONE_REQUIRE_NODE: "1"
         run: >
           ./gradlew
           :debridone:platform:test
           :debridone:accounts:test
           :debridone:modules:music:test
+          :debridone:modules:manga:test
           :debridone:architecture-tests:test
           --no-configuration-cache
 
