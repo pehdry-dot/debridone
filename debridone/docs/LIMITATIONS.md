@@ -84,14 +84,15 @@ Verification status
   chapters; the continuous webtoon mode; the settings panel; Discover on MangaDex with its own
   filters; adding to the library; an AniList match applied, a title edited, and the edit kept
   after refreshing from the source and from AniList; downloading a chapter from the demo server
-  and reading it offline; the Downloads, Settings and Plugins › Manga pages.
+  and reading it offline; the Downloads, Settings and Plugins › Manga pages; a second profile
+  starting with an empty Manga library (and the shared extension package) while the first
+  profile's library is unchanged on return.
 - Manga, **not verified**: any Tiyo source other than Komga and (up to page lists) MangaDex —
   they show "Not tested" in the app until you test them; MangaDex page images (their hosts were
   out of reach of the build environment); MyAnimeList and reading-list tracking against the real
   services (no client ID or account was available; they are tested against stand-ins that answer
   in the services' formats); legacy `@houdoku/extension-*` packages other than
-  `@houdoku/extension-komga` 1.3.1; the reader's feel on a Mac trackpad; two profiles side by side
-  in the running app (profile separation is covered by tests).
+  `@houdoku/extension-komga` 1.3.1; the reader's feel on a Mac trackpad.
 - Music, **only a person at the Mac can confirm**: that the sound is audible, that the media keys
   and the Now Playing widget respond (the code compiles and loads; nothing can press a key in
   CI), that sound follows a change of output device, and how the screens look on macOS.
