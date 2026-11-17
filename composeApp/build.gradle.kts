@@ -1043,9 +1043,43 @@ tasks.withType<Jar>().configureEach {
     }
 }
 
+// ---- DebridOne: Manga's extension host ----
+// Houdoku's extensions are JavaScript, so the app carries a Node.js runtime and DebridOne's host
+// script for them. Both go into the bundle's resources (Contents/app/resources/manga-host): the
+// packaged app uses this copy only and never a Node.js found on the computer.
+// The runtime is the pinned official build fetched and checksummed by
+// scripts/debridone/fetch-node-runtime.sh; the host's packages come from its lockfile.
+val mangaHostNodePlatform = if (macosPlayerBridgeArch == "arm64") "darwin-arm64" else "darwin-x64"
+val mangaModuleBuildDir = project(":debridone:modules:manga").layout.buildDirectory
+val mangaBundledNodeRuntime = mangaModuleBuildDir.dir("node-runtime/$mangaHostNodePlatform")
+val prepareMangaHostAppResources = tasks.register<Sync>("prepareMangaHostAppResources") {
+    enabled = isMacHost
+    dependsOn(":debridone:modules:manga:prepareMangaHost")
+    doFirst {
+        val node = mangaBundledNodeRuntime.get().file("bin/node").asFile
+        check(node.isFile) {
+            "The Node.js runtime for Manga's extension host is missing (${node.absolutePath}). " +
+                "Run ./scripts/debridone/fetch-node-runtime.sh $mangaHostNodePlatform first."
+        }
+    }
+    from(mangaBundledNodeRuntime.map { it.dir("bin") }) {
+        include("node")
+        filePermissions { unix("rwxr-xr-x") }
+    }
+    from(mangaBundledNodeRuntime) {
+        include("LICENSE")
+        rename { "NODE-LICENSE.txt" }
+    }
+    from(mangaModuleBuildDir.dir("manga-host")) {
+        into("host")
+    }
+    into(macosPlayerAppResourcesRoot.map { it.dir("macos/manga-host") })
+}
+
 tasks.matching { it.name == "prepareAppResources" }.configureEach {
     if (isMacHost) {
         dependsOn(prepareMacosPlayerAppResources)
+        dependsOn(prepareMangaHostAppResources)
     }
 }
 

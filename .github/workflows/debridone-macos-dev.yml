@@ -104,6 +104,11 @@ jobs:
       - name: Fetch the macOS libmpv runtime
         run: ./scripts/debridone/fetch-macos-runtime.sh "${MACOS_ARCH}"
 
+      # Manga's extensions are JavaScript: the app carries the pinned official Node.js build for
+      # this architecture (checked against its published SHA-256) and never uses the runner's own.
+      - name: Fetch the Node.js runtime for the Manga extension host
+        run: ./scripts/debridone/fetch-node-runtime.sh "${MACOS_ARCH}"
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -146,6 +151,25 @@ jobs:
           fi
           kill "${pid}" || true
           echo "Smoke test passed: the app started and created its databases."
+
+      # Inside the packaged app: reads a CBZ with no extension, starts the extension host on the
+      # Node.js bundled in the app, installs Houdoku's real extension package (Tiyo) from the
+      # package registry through the app's own verified installer, and reads a chapter through one
+      # of Tiyo's sources against a stand-in server, including a restart and resume.
+      - name: Manga self-test in the packaged app
+        run: |
+          app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
+          ls -l "${app}/Contents/app/resources/manga-host/" || { echo "The extension host is not in the app bundle." >&2; exit 1; }
+          "${app}/Contents/app/resources/manga-host/node" --version
+          codesign -dv "${app}/Contents/app/resources/manga-host/node" 2>&1 | sed 's/^/  /' || true
+          "${app}/Contents/MacOS/DebridOne" --manga-self-test 2>&1 | tee "${RUNNER_TEMP}/manga-self-test.log"
+          {
+            echo "### Manga self-test (${MACOS_ARCH})"
+            echo '```'
+            sed -n '/^DebridOne Manga self-test/,$p' "${RUNNER_TEMP}/manga-self-test.log"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          grep -q "MANGA SELF-TEST PASSED" "${RUNNER_TEMP}/manga-self-test.log"
 
       # Imports the test audio files into a temporary library and plays one file of every format
       # from start to end through the libmpv inside the bundle, then restarts the Music engine and

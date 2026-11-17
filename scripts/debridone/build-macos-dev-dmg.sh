@@ -21,6 +21,10 @@ esac
 # without Git LFS installed; every file is checked against its recorded SHA-256.
 ./scripts/debridone/fetch-macos-runtime.sh "${arch}"
 
+# The Node.js runtime for Manga's extension host: the pinned official build, checked against its
+# published SHA-256 and unpacked under the build folder. Nothing is installed on this Mac.
+./scripts/debridone/fetch-node-runtime.sh "${arch}"
+
 if ! xcrun --find clang++ >/dev/null 2>&1; then
   echo "Xcode command-line tools are required. Install them with: xcode-select --install" >&2
   exit 1
