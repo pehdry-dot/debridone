@@ -55,12 +55,8 @@ class MangaPreferences internal constructor(private val store: () -> ProfileSett
         const val CHAPTER_LANGUAGES = "chapter_languages"
         const val LIBRARY_SORT = "library_sort"
         const val LIBRARY_SORT_DESCENDING = "library_sort_descending"
-        const val LIBRARY_SHELF = "library_shelf"
         const val DISCOVER_SOURCE = "discover_source"
-        const val DISCOVER_TYPE = "discover_type"
         const val CHAPTERS_DESCENDING = "chapters_descending"
-        const val REFRESH_ON_START = "refresh_on_start"
-        const val HOME_HIDDEN_SECTIONS = "home_hidden_sections"
     }
 }
 
