@@ -1083,6 +1083,27 @@ tasks.matching { it.name == "prepareAppResources" }.configureEach {
     }
 }
 
+// Compose Desktop copies app resources into the bundle without their permissions, which leaves the
+// Node.js binary of Manga's extension host unable to start ("Permission denied"). Mark it as a
+// program again in the app image; the DMG is made from that image and keeps the bit.
+listOf("createDistributable" to "main", "createReleaseDistributable" to "main-release").forEach { (taskName, distribution) ->
+    val appImageDir = layout.buildDirectory.dir("compose/binaries/$distribution/app")
+    val onMac = isMacHost
+    tasks.matching { it.name == taskName }.configureEach {
+        doLast {
+            if (!onMac) return@doLast
+            val apps = appImageDir.get().asFile.listFiles { file -> file.isDirectory && file.name.endsWith(".app") }.orEmpty()
+            check(apps.isNotEmpty()) { "No app bundle in ${appImageDir.get().asFile.absolutePath}" }
+            apps.forEach { app ->
+                val node = app.resolve("Contents/app/resources/manga-host/node")
+                check(node.isFile) { "The Manga extension host is missing from the app bundle (${node.absolutePath})." }
+                check(node.setExecutable(true, false) && node.canExecute()) { "Could not make ${node.absolutePath} executable." }
+                logger.lifecycle("Manga extension host runtime marked executable: ${node.absolutePath}")
+            }
+        }
+    }
+}
+
 if (isWindowsHost) {
     val desktopNativePlayerTasks = setOf(
         "run",

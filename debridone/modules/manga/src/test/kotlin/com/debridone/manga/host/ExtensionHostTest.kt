@@ -260,4 +260,27 @@ class ExtensionHostTest {
         val half = assertFailsWith<HostException> { MangaHostRuntime.locate(property = { null }, environment = { name -> if (name == MangaHostRuntime.NODE_ENV) "/usr/bin/node" else null }) }
         assertEquals("NO_RUNTIME", half.code)
     }
+
+    @Test
+    fun aBundledRuntimeThatLostItsPermissionsIsRepaired() {
+        // The layout of a packaged app's resources, with the program copied without its permissions.
+        val resources = Files.createTempDirectory("debridone-bundled-runtime")
+        try {
+            val bundle = resources.resolve("manga-host")
+            Files.createDirectories(bundle.resolve("host/src"))
+            Files.createDirectories(bundle.resolve("host/node_modules/aki-plugin-manager"))
+            Files.writeString(bundle.resolve("host/src/host.js"), "// host")
+            val node = bundle.resolve("node")
+            Files.writeString(node, "#!/bin/sh\n")
+            node.toFile().setExecutable(false, false)
+            assertTrue(!Files.isExecutable(node))
+
+            val runtime = MangaHostRuntime.locate(property = { name -> if (name == "compose.application.resources.dir") resources.toString() else null }, environment = { null })
+            assertEquals("bundled", runtime.origin)
+            assertEquals(node, runtime.node)
+            assertTrue(Files.isExecutable(node), "the bundled program is made executable again")
+        } finally {
+            resources.toFile().deleteRecursively()
+        }
+    }
 }

@@ -171,6 +171,22 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
           grep -q "MANGA SELF-TEST PASSED" "${RUNNER_TEMP}/manga-self-test.log"
 
+      # The file people download: the Node.js inside the DMG's copy of the app must still be a
+      # program (packaging once dropped that), and must start from the read-only disk image.
+      - name: Check the extension runtime inside the DMG
+        run: |
+          dmg="$(find composeApp/build/compose/release-dmgs -maxdepth 1 -name '*.dmg' | head -n 1)"
+          test -f "${dmg}" || { echo "No DMG was produced." >&2; exit 1; }
+          mount="$(mktemp -d)"
+          hdiutil attach "${dmg}" -nobrowse -readonly -mountpoint "${mount}" > /dev/null
+          trap 'hdiutil detach "${mount}" > /dev/null || true' EXIT
+          app="$(find "${mount}" -maxdepth 1 -name '*.app' | head -n 1)"
+          node="${app}/Contents/app/resources/manga-host/node"
+          ls -l "${node}"
+          test -x "${node}" || { echo "The Node.js runtime inside the DMG is not executable." >&2; exit 1; }
+          "${node}" --version
+          test -f "${app}/Contents/app/resources/manga-host/host/src/host.js" || { echo "The extension host is missing from the DMG." >&2; exit 1; }
+
       # Imports the test audio files into a temporary library and plays one file of every format
       # from start to end through the libmpv inside the bundle, then restarts the Music engine and
       # checks that everything is still there. Silent output, so it does not depend on the runner

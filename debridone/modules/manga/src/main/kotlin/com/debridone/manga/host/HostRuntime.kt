@@ -76,6 +76,19 @@ object MangaHostRuntime {
         if (!Files.isDirectory(runtime.hostDir.resolve("node_modules").resolve("aki-plugin-manager"))) {
             throw HostException("NO_RUNTIME", "The extension host in ${runtime.hostDir} has not been prepared (its packages are missing).")
         }
+        // A copy that lost its permissions on the way (some packagers and archive tools drop them)
+        // is repaired where the folder allows it; otherwise say what is wrong instead of failing
+        // later with an unexplained "permission denied".
+        if (!isWindows() && !Files.isExecutable(runtime.node)) {
+            val repaired = runCatching { runtime.node.toFile().setExecutable(true, false) }.getOrDefault(false)
+            if (!repaired || !Files.isExecutable(runtime.node)) {
+                throw HostException(
+                    "NO_RUNTIME",
+                    "The extension runtime in this copy of DebridOne is not marked as a program and could not be repaired " +
+                        "(${runtime.node}). Copy DebridOne to the Applications folder and open it from there.",
+                )
+            }
+        }
         return runtime
     }
 
