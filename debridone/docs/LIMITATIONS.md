@@ -87,6 +87,21 @@ Verification status
   and reading it offline; the Downloads, Settings and Plugins › Manga pages; a second profile
   starting with an empty Manga library (and the shared extension package) while the first
   profile's library is unchanged on return.
+- Manga, verified inside the packaged macOS app on GitHub's runners for commit `d599f80f5`
+  (run 44199207274), on **Apple Silicon** (`macos-26`, arm64) and on **Intel** (`macos-15-intel`):
+  the DMG is built with the Node.js runtime and the extension host inside; the app starts and
+  stays running; `--manga-self-test` passes: a CBZ is read and resumed after a restart with no
+  extension involved; the extension host starts on the Node.js inside the app, with file access
+  restricted to its own folders; DebridOne's installer downloads Tiyo 1.0.3 from the npm registry
+  (79 archives, each matching its pinned checksum); it registers 44 sources on trial and after
+  installing; Tiyo's Komga source searches, opens a series, lists chapters and serves pages
+  against a stand-in server; a locked edit survives a refresh; the series resumes on the right
+  page after a restart; the host did not crash. The runtime also starts from the mounted DMG.
+  (The first packaged build failed this test because packaging had dropped the runtime's
+  executable permission; that is what the test is for, and it is fixed.)
+- Manga, verified in the app on Linux as well: switching the extension package off removes
+  Manga's sources and leaves Music and Streaming as they were; Manga's accent colour and cover
+  size change Manga only.
 - Manga, **not verified**: any Tiyo source other than Komga and (up to page lists) MangaDex —
   they show "Not tested" in the app until you test them; MangaDex page images (their hosts were
   out of reach of the build environment); MyAnimeList and reading-list tracking against the real
