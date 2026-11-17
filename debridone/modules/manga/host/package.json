@@ -1,0 +1,15 @@
+{
+  "name": "debridone-manga-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DebridOne's Manga extension host: loads the unmodified Tiyo package (the extension library of Houdoku) with aki-plugin-manager and serves it to the app over stdin/stdout.",
+  "license": "GPL-3.0-or-later",
+  "main": "src/host.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "aki-plugin-manager": "1.3.3",
+    "semver": "7.7.2"
+  }
+}
