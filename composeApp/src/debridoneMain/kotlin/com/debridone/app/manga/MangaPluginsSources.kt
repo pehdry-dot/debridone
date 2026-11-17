@@ -79,6 +79,7 @@ internal fun SourcesTab() {
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
     val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
+    val registry by manga.module.plugins.installed.collectAsStateWithLifecycle()
     val sources by rememberMangaQuery(hostState, initial = null as List<SourceEntry>?) { services, profile -> services.sources.list(profile) }
     var filter by remember { mutableStateOf("") }
     var language by remember { mutableStateOf<String?>(null) }
@@ -142,8 +143,21 @@ internal fun SourcesTab() {
         }
         if (sources != null && all.isEmpty()) {
             item {
-                MangaEmptyState(Icons.Rounded.Extension, "No sources", "Sources come with an extension package. Install Tiyo to get Houdoku's sources.") {
-                    MangaButton("Browse", { MangaPluginsState.tab = MangaPluginsTab.BROWSE }, icon = Icons.Rounded.Extension)
+                // Say which of the three it is: nothing installed, installed but switched off, or installed and not loading.
+                val added = registry.filterNot { it.builtIn }
+                val off = added.filterNot { it.enabled }
+                when {
+                    off.isNotEmpty() -> MangaEmptyState(
+                        Icons.Rounded.Extension, "No sources",
+                        "${off.joinToString(", ") { it.name }} is installed but switched off. Switch it on to get its sources back.",
+                    ) { MangaButton("Installed", { MangaPluginsState.tab = MangaPluginsTab.INSTALLED }, icon = Icons.Rounded.Extension) }
+                    added.isNotEmpty() -> MangaEmptyState(
+                        Icons.Rounded.Extension, "No sources",
+                        "The installed package registered no sources. Installed shows what went wrong.",
+                    ) { MangaButton("Installed", { MangaPluginsState.tab = MangaPluginsTab.INSTALLED }, icon = Icons.Rounded.Extension) }
+                    else -> MangaEmptyState(Icons.Rounded.Extension, "No sources", "Sources come with an extension package. Install Tiyo to get Houdoku's sources.") {
+                        MangaButton("Browse", { MangaPluginsState.tab = MangaPluginsTab.BROWSE }, icon = Icons.Rounded.Extension)
+                    }
                 }
             }
         }

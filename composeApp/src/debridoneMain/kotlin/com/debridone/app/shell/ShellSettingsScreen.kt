@@ -477,7 +477,7 @@ private fun ModuleAppearanceEditor(moduleId: ModuleId) {
 
     ShellCard(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { SectionTitle("Preview", "Sample tiles only. $name content appears here once its engine is built.") }
+            Column(Modifier.weight(1f)) { SectionTitle("Preview", "Sample tiles showing the accent colour and card size. Open $name to see every option applied.") }
             TextButton(onClick = { scope.launch { store.resetToDefaults() } }) { Text("Reset $name") }
         }
         AppearancePreview(appearance)
