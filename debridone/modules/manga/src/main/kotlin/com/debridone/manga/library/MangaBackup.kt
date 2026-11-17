@@ -78,7 +78,8 @@ data class RestoreSummary(val series: Int, val chapters: Int, val collections: I
  * there: a series already present keeps its row and gains whatever the backup knows.
  */
 class MangaBackup(private val repository: MangaRepository, private val clock: () -> Long = System::currentTimeMillis) {
-    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = false }
+    // Defaults are written out too: the file must say what it is ("format") and be readable without this code.
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
     fun export(profileId: Long, target: Path): Int {
         val collectionNames = repository.collections(profileId).associate { it.id to it.name }

@@ -312,7 +312,8 @@ class MangaDexSource(private val endpoints: MetadataEndpoints) : MetadataSource 
 class MyAnimeListSource(private val endpoints: MetadataEndpoints, private val clientId: () -> String?) : MetadataSource {
     override val id = "myanimelist"
     override val name = "MyAnimeList"
-    private val fields = "id,title,alternative_titles,synopsis,main_picture,genres,status,media_type,num_chapters,start_date,authors{first_name,last_name}"
+    // Encoded: the braces of the nested field list are not allowed bare in an address.
+    private val fields = MangaHttp.encode("id,title,alternative_titles,synopsis,main_picture,genres,status,media_type,num_chapters,start_date,authors{first_name,last_name}")
 
     private fun headers(): Map<String, String> {
         val id = clientId()?.trim()?.takeIf { it.isNotEmpty() }

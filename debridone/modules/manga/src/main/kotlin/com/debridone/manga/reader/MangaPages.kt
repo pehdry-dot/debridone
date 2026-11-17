@@ -172,7 +172,15 @@ class MangaPages(
      * site needs its login or headers) or an address, which is then fetched here.
      */
     private suspend fun fetchImage(series: Series, url: String): ByteArray {
-        if (series.extensionId in plainImageSources) return direct(url)
+        if (series.extensionId in plainImageSources && isWebAddress(url)) {
+            try {
+                return direct(url)
+            } catch (failure: PageException) {
+                // The shortcut did not hold for this address (the source may hand out some images itself):
+                // ask the source after all, and stop assuming.
+                plainImageSources -= series.extensionId
+            }
+        }
         val raw = series.sourceRaw?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() } ?: JsonObject(emptyMap())
         return when (val image = extensions.image(series.extensionId, raw, url)) {
             is ImageRef.Url -> {
@@ -187,8 +195,10 @@ class MangaPages(
         }
     }
 
+    private fun isWebAddress(url: String): Boolean = url.startsWith("http://") || url.startsWith("https://")
+
     private suspend fun direct(url: String): ByteArray {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) throw PageException("The source returned an address that cannot be opened.", false)
+        if (!isWebAddress(url)) throw PageException("The source returned an address that cannot be opened.", false)
         return directFetches.withPermit {
             try {
                 checked(MangaHttp.get(url, maxBytes = MAX_IMAGE_BYTES).body)
