@@ -70,6 +70,8 @@ class MangaRepository(
         sourceName: String,
         details: SeriesDetails,
         sourceRaw: String? = null,
+        /** For an existing row: only add what it lacks, because a higher-priority provider supplies its details. */
+        onlyFillEmpty: Boolean = false,
     ): Series {
         val now = clock()
         val existing = seriesBySource(profileId, extensionId, sourceId)
@@ -93,7 +95,7 @@ class MangaRepository(
                     sourceRaw, sourceName.ifBlank { existing.sourceName }, existing.id,
                 )
             }
-            applyDetails(existing.id, details, notify = false)
+            applyDetails(existing.id, details, notify = false, onlyFillEmpty = onlyFillEmpty)
             existing.id
         }
         changed()
@@ -104,9 +106,28 @@ class MangaRepository(
      * Applies details from a source or a metadata provider. Fields the user has locked are left
      * alone, and so is anything the details say nothing about. Returns the fields that changed.
      */
-    fun applyDetails(seriesId: Long, details: SeriesDetails, notify: Boolean = true, overwriteWithEmpty: Boolean = false): Set<String> {
+    fun applyDetails(
+        seriesId: Long,
+        details: SeriesDetails,
+        notify: Boolean = true,
+        overwriteWithEmpty: Boolean = false,
+        /** Only fill in what the series does not have yet (used when a higher-priority provider supplies the rest). */
+        onlyFillEmpty: Boolean = false,
+    ): Set<String> {
         val current = series(seriesId) ?: return emptySet()
-        val locked = current.lockedFields
+        val filled: Set<String> = if (!onlyFillEmpty) emptySet() else buildSet {
+            if (current.title.isNotBlank() && current.title != current.sourceId) add(SeriesField.TITLE)
+            if (current.altTitles.isNotEmpty()) add(SeriesField.ALT_TITLES)
+            if (current.description.isNotBlank()) add(SeriesField.DESCRIPTION)
+            if (current.authors.isNotEmpty()) add(SeriesField.AUTHORS)
+            if (current.artists.isNotEmpty()) add(SeriesField.ARTISTS)
+            if (current.tags.isNotEmpty()) add(SeriesField.TAGS)
+            if (current.status != null) add(SeriesField.STATUS)
+            if (current.originalLanguage != null) add(SeriesField.LANGUAGE)
+            if (current.coverUrl.isNotBlank()) add(SeriesField.COVER)
+            add(SeriesField.MEDIA_TYPE)
+        }
+        val locked = current.lockedFields + filled
         val changedFields = LinkedHashSet<String>()
         val sets = ArrayList<String>()
         val args = ArrayList<Any?>()
@@ -134,7 +155,7 @@ class MangaRepository(
         offered(details.status)?.takeIf { it.isNotEmpty() }?.let { set(SeriesField.STATUS, "status", it, it != current.status) }
         offered(details.originalLanguage)?.takeIf { it.isNotEmpty() }?.let { set(SeriesField.LANGUAGE, "original_language", it, it != current.originalLanguage) }
         offered(details.coverUrl)?.takeIf { it.isNotEmpty() }?.let { set(SeriesField.COVER, "cover_url", it, it != current.coverUrl) }
-        details.bannerUrl?.takeIf { it.isNotBlank() && it != current.bannerUrl }?.let { sets += "banner_url = ?"; args += it }
+        details.bannerUrl?.takeIf { it.isNotBlank() && it != current.bannerUrl && !(onlyFillEmpty && current.bannerUrl != null) }?.let { sets += "banner_url = ?"; args += it }
         val offeredTags = details.tags?.takeIf { it.isNotEmpty() }
         val type = details.mediaType
             ?: if (details.originalLanguage != null || offeredTags != null) {
@@ -439,6 +460,15 @@ class MangaRepository(
         changed()
     }
 
+    /** Puts a chapter back at a page without recording it as reading now (restoring a backup). */
+    fun restorePosition(chapterId: Long, page: Int, scrollOffset: Float, pageCount: Int) {
+        database.execute(
+            "UPDATE manga_chapters SET last_page = ?, scroll_offset = ?, page_count = CASE WHEN ? > 0 THEN ? ELSE page_count END WHERE id = ?",
+            page.coerceAtLeast(0), scrollOffset.coerceIn(0f, 1f).toDouble(), pageCount, pageCount, chapterId,
+        )
+        changed()
+    }
+
     fun setPageCount(chapterId: Long, pageCount: Int) {
         database.execute("UPDATE manga_chapters SET page_count = ? WHERE id = ? AND page_count <> ?", pageCount, chapterId, pageCount)
     }
@@ -460,6 +490,41 @@ class MangaRepository(
     }
 
     fun setAllRead(seriesId: Long, read: Boolean) = setRead(chapters(seriesId).map { it.id }, read)
+
+    /**
+     * When the reader moves to another edition of a work (another source): gives the new edition the
+     * same place in the library (status, favourite, collections) and, on request, marks as read
+     * there the chapter numbers that were read in the old one. The old edition is not changed, so
+     * nothing that was recorded for it is lost.
+     */
+    fun carryOver(fromSeriesId: Long, toSeriesId: Long, copyReadChapters: Boolean): Int {
+        val from = series(fromSeriesId) ?: return 0
+        val now = clock()
+        var marked = 0
+        database.transaction {
+            if (from.inLibrary) {
+                execute(
+                    "UPDATE manga_series SET in_library = 1, added_at = COALESCE(added_at, ?), library_status = COALESCE(?, library_status, ?), favorite = MAX(favorite, ?) WHERE id = ?",
+                    now, from.libraryStatus?.key, LibraryStatus.PLAN.key, if (from.favorite) 1 else 0, toSeriesId,
+                )
+                execute(
+                    "INSERT OR IGNORE INTO manga_collection_items (collection_id, series_id, added_at) SELECT collection_id, ?, ? FROM manga_collection_items WHERE series_id = ?",
+                    toSeriesId, now, fromSeriesId,
+                )
+            }
+            if (copyReadChapters) {
+                val readNumbers = query("SELECT DISTINCT chapter_sort FROM manga_chapters WHERE series_id = ? AND read = 1 AND chapter_sort IS NOT NULL", fromSeriesId) { it.getDouble(1) }
+                for (number in readNumbers) {
+                    marked += execute(
+                        "UPDATE manga_chapters SET read = 1, read_at = COALESCE(read_at, ?) WHERE series_id = ? AND chapter_sort = ? AND read = 0",
+                        now, toSeriesId, number,
+                    )
+                }
+            }
+        }
+        changed()
+        return marked
+    }
 
     // ---- history and bookmarks ------------------------------------------------------------------
 

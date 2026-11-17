@@ -17,6 +17,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.debridone.app.streaming.StreamingDownloadsTab
+import com.debridone.app.manga.MangaDownloads
+import com.debridone.app.manga.MangaProvider
 import com.debridone.module.ModuleId
 
 /** Downloads, one tab per section. Each tab shows only that section's own downloads. */
@@ -40,10 +42,13 @@ internal fun DownloadsScreen() {
                     // Playback belongs to Streaming, so opening a download continues there.
                     onOpenInStreaming = { ShellState.select(ShellSection.STREAMING) },
                 )
-                else -> ShellPage(
-                    title = "${tab.displayName} downloads",
-                    subtitle = "${tab.displayName} has no download manager yet. It arrives together with the ${tab.displayName} engine.",
+                // Manga's saved chapters, from Manga's own download queue.
+                ModuleId.MANGA -> MangaProvider { MangaDownloads(embedded = true) }
+                ModuleId.MUSIC -> ShellPage(
+                    title = "Music downloads",
+                    subtitle = "Songs saved from your music servers are listed in Music, under Library › Available offline.",
                 ) {}
+                else -> Unit
             }
         }
     }

@@ -73,6 +73,15 @@ object ShellState {
     private val _reduceMotion = MutableStateFlow(false)
     val reduceMotion: StateFlow<Boolean> = _reduceMotion.asStateFlow()
 
+    private val _mangaImmersive = MutableStateFlow(false)
+
+    /** True while Manga's reader is open: it takes the whole window, as Streaming's player does. */
+    val mangaImmersive: StateFlow<Boolean> = _mangaImmersive.asStateFlow()
+
+    fun setMangaImmersive(immersive: Boolean) {
+        _mangaImmersive.value = immersive
+    }
+
     fun select(section: ShellSection) {
         _section.value = section
         DebridOneRuntime.setShellSetting(KEY_SECTION, section.key)

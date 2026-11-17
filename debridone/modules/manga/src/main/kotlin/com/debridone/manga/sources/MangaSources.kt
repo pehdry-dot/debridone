@@ -81,6 +81,11 @@ class MangaSources(
     private val repository: MangaRepository,
     private val secrets: ScopedSecretStore,
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * False for a series whose details come from a metadata provider that ranks above its source:
+     * the source then only fills in what is missing instead of replacing those details.
+     */
+    private val sourceLeads: (seriesId: Long) -> Boolean = { true },
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -192,7 +197,11 @@ class MangaSources(
     /** Gives a series found in a source a row for this profile (outside the library until it is added). */
     fun remember(profileId: Long, remote: RemoteSeries): Series {
         val name = find(remote.extensionId)?.name.orEmpty()
-        return repository.ensureSeries(profileId, SeriesOrigin.EXTENSION, remote.extensionId, remote.sourceId, name, details(remote), remote.raw.toString())
+        val known = repository.seriesBySource(profileId, remote.extensionId, remote.sourceId)
+        return repository.ensureSeries(
+            profileId, SeriesOrigin.EXTENSION, remote.extensionId, remote.sourceId, name, details(remote), remote.raw.toString(),
+            onlyFillEmpty = known != null && !sourceLeads(known.id),
+        )
     }
 
     /**
@@ -204,10 +213,19 @@ class MangaSources(
         if (series.isLocal) return 0
         val remote = extensions.series(series.extensionId, series.sourceId)
         if (remote != null) {
-            repository.ensureSeries(series.profileId, SeriesOrigin.EXTENSION, series.extensionId, series.sourceId, find(series.extensionId)?.name ?: series.sourceName, details(remote), remote.raw.toString())
+            repository.ensureSeries(
+                series.profileId, SeriesOrigin.EXTENSION, series.extensionId, series.sourceId, find(series.extensionId)?.name ?: series.sourceName,
+                details(remote), remote.raw.toString(), onlyFillEmpty = !sourceLeads(seriesId),
+            )
         }
         val chapters = extensions.chapters(series.extensionId, series.sourceId)
         return repository.syncChapters(seriesId, chapters.map(::draft))
+    }
+
+    /** The details a series' source gives for it right now. */
+    suspend fun sourceDetails(series: Series): SeriesDetails? {
+        if (series.isLocal || find(series.extensionId) == null) return null
+        return extensions.series(series.extensionId, series.sourceId)?.let(::details)
     }
 
     private fun details(remote: RemoteSeries): SeriesDetails = SeriesDetails(

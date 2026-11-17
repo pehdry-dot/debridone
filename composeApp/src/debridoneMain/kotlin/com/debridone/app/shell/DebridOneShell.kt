@@ -34,6 +34,7 @@ import com.debridone.app.music.MusicFullPlayer
 import com.debridone.app.music.MusicMiniPlayer
 import com.debridone.app.music.MusicMiniPlayerHeight
 import com.debridone.app.music.MusicProvider
+import com.debridone.app.manga.MangaScreen
 import com.debridone.app.music.MusicScreen
 import com.debridone.app.music.pauseMusicForVideo
 import com.debridone.app.music.rememberMusicHasQueue
@@ -67,8 +68,10 @@ fun DebridOneShell(
         if (activeProfileId != null) ShellState.restore()
     }
 
-    // Streaming needs the whole window while it plays video.
-    val sidebarVisible = !(section == ShellSection.STREAMING && immersive)
+    val mangaImmersive by ShellState.mangaImmersive.collectAsStateWithLifecycle()
+
+    // Streaming needs the whole window while it plays video, and Manga while its reader is open.
+    val sidebarVisible = !(section == ShellSection.STREAMING && immersive) && !(section == ShellSection.MANGA && mangaImmersive)
     val hoverSource = remember { MutableInteractionSource() }
     val hovered by hoverSource.collectIsHoveredAsState()
     val expanded = when (sidebarStyle) {
@@ -108,7 +111,7 @@ fun DebridOneShell(
                 ShellSection.STREAMING -> Unit
                 ShellSection.HOME -> HomeDashboard()
                 ShellSection.MUSIC -> MusicScreen()
-                ShellSection.MANGA -> ModuleScreen(ModuleId.MANGA)
+                ShellSection.MANGA -> MangaScreen()
                 ShellSection.PLUGINS -> PluginsScreen()
                 ShellSection.DOWNLOADS -> DownloadsScreen()
                 ShellSection.SETTINGS -> ShellSettingsScreen(onSwitchProfile = onSwitchProfile)

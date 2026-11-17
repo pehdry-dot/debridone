@@ -1,14 +1,18 @@
 package com.debridone.manga
 
+import com.debridone.manga.download.MangaDownloads
 import com.debridone.manga.host.ExtensionHost
 import com.debridone.manga.host.HostException
 import com.debridone.manga.host.HostLaunch
 import com.debridone.manga.host.HostRuntime
 import com.debridone.manga.host.MangaExtensions
 import com.debridone.manga.host.MangaHostRuntime
+import com.debridone.manga.library.MangaBackup
 import com.debridone.manga.library.MangaRepository
 import com.debridone.manga.library.MangaSchema
 import com.debridone.manga.local.LocalLibrary
+import com.debridone.manga.metadata.MangaMetadata
+import com.debridone.manga.metadata.MetadataEndpoints
 import com.debridone.manga.plugins.MangaPlugins
 import com.debridone.manga.plugins.PackageKind
 import com.debridone.manga.plugins.PluginInstaller
@@ -53,6 +57,9 @@ class MangaServices internal constructor(
     val sources: MangaSources,
     val pages: MangaPages,
     val local: LocalLibrary,
+    val downloads: MangaDownloads,
+    val metadata: MangaMetadata,
+    val backup: MangaBackup,
     val preferences: MangaPreferences,
     val appSettings: MangaAppSettings,
     /** Where extension packages are installed (shared by all profiles). */
@@ -77,6 +84,8 @@ class MangaModule(
     private val runtimeLocator: () -> HostRuntime = { MangaHostRuntime.locate() },
     /** Package registry address; tests use a local stand-in. */
     private val registry: String = PluginInstaller.DEFAULT_REGISTRY,
+    /** Where the metadata services are reached; tests use local stand-ins. */
+    private val metadataEndpoints: MetadataEndpoints = MetadataEndpoints(),
 ) : SqliteBackedModule(ModuleId.MANGA, storage, clock) {
 
     private val _services = MutableStateFlow<MangaServices?>(null)
@@ -114,18 +123,30 @@ class MangaModule(
             storedSettings = { descriptor -> _activeProfile.value?.let { profile -> sources.storedSettings(profile, descriptor.id) } },
             disabledPackages = { plugins.installed.value.filter { !it.enabled && !it.builtIn }.map { it.id }.toSet() },
         ).also { it.timeoutMs = appSettings.timeoutSeconds * 1000L }
-        sources = MangaSources(extensions, repository, storage.secrets, clock)
+        lateinit var metadata: MangaMetadata
+        sources = MangaSources(extensions, repository, storage.secrets, clock, sourceLeads = { seriesId -> metadata.extensionLeads(seriesId) })
+        metadata = MangaMetadata(
+            repository, storage.secrets,
+            providerEnabled = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.enabled == true },
+            providerPriority = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.priority ?: Int.MAX_VALUE },
+            extensionDetails = { series -> sources.sourceDetails(series) },
+            endpoints = metadataEndpoints, clock = clock,
+        )
         val installer = PluginInstaller(pluginsDir, storage.dataDir.resolve("plugin-staging"), registry)
         runCatching { installer.cleanUp() }
         val local = LocalLibrary(repository)
+        val pages = MangaPages(repository, extensions, local, storage.cacheDir, storage.dataDir.resolve("covers"), clock)
         val services = MangaServices(
             repository = repository,
             host = host,
             extensions = extensions,
             plugins = MangaPlugins(installer, extensions, host) { staging -> launch(staging, "trial") },
             sources = sources,
-            pages = MangaPages(repository, extensions, local, storage.cacheDir, storage.dataDir.resolve("covers"), clock),
+            pages = pages,
             local = local,
+            downloads = MangaDownloads(repository, pages, storage.dataDir.resolve("downloads"), moduleScope) { appSettings.parallelDownloads },
+            metadata = metadata,
+            backup = MangaBackup(repository, clock),
             preferences = preferences,
             appSettings = appSettings,
             pluginsDir = pluginsDir,
@@ -151,6 +172,8 @@ class MangaModule(
         moduleScope.launch(Dispatchers.IO) {
             runCatching { services.pages.trimCache(appSettings.cacheMegabytes * 1024L * 1024L) }
             if (installer.installed().any { it.kind != null }) runCatching { extensions.ensureLoaded() }
+            // Downloads that were under way when the app last closed carry on.
+            runCatching { services.downloads.resume() }
         }
     }
 
@@ -173,6 +196,7 @@ class MangaModule(
     override fun onProfileDeleted(profileId: Long) {
         val services = _services.value ?: return
         services.extensions.state.value?.sources?.forEach { services.sources.clearSettings(profileId, it.id) }
+        services.metadata.deleteProfile(profileId)
         val downloadDirs = services.repository.deleteProfile(profileId)
         downloadDirs.forEach { dir -> runCatching { PluginInstaller.deleteRecursively(Path.of(dir)) } }
         runCatching { PluginInstaller.deleteRecursively(services.downloadsDir.resolve(profileId.toString())) }
@@ -295,9 +319,9 @@ class MangaModule(
     override val defaultMetadataProviders = listOf(
         MetadataProvider("manual", "Manual edits", "Details you set yourself. Locked fields are never overwritten.", enabled = true, priority = -10, implemented = true),
         MetadataProvider("extension", "Extension metadata", "Details supplied by the source the series comes from.", enabled = true, priority = 0, implemented = true),
-        MetadataProvider("anilist", "AniList", "Titles, synopsis, genres, status, authors, covers and banners.", enabled = true, priority = 10, implemented = false),
-        MetadataProvider("mangadex", "MangaDex", "Titles, synopsis, tags, status, authors and covers.", enabled = true, priority = 20, implemented = false),
-        MetadataProvider("myanimelist", "MyAnimeList", "Uses the official API. Needs your own client ID.", enabled = false, priority = 30, implemented = false, requiresCredentials = true),
+        MetadataProvider("anilist", "AniList", "Titles, synopsis, genres, status, authors, covers and banners. Optional reading-list tracking with your own account.", enabled = true, priority = 10, implemented = true),
+        MetadataProvider("mangadex", "MangaDex", "Titles, synopsis, tags, status, authors and covers.", enabled = true, priority = 20, implemented = true),
+        MetadataProvider("myanimelist", "MyAnimeList", "The official API. Needs your own API client ID; tracking needs you to sign in.", enabled = false, priority = 30, implemented = true, requiresCredentials = true),
     )
 
     override val appearanceOptions: List<AppearanceOption> = listOf(

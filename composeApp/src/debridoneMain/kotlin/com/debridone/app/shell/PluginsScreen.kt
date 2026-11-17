@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.DebridOneRuntime
+import com.debridone.app.manga.MangaPluginsTab
 import com.debridone.app.music.MusicSourcesTab
 import com.debridone.app.streaming.StreamingPluginsTab
 import com.debridone.module.AvailablePlugin
@@ -66,6 +67,8 @@ internal fun PluginsScreen() {
                 ModuleId.STREAMING -> StreamingPluginsTab()
                 // Music manages its sources as connections, with its own screen and its own storage.
                 ModuleId.MUSIC -> MusicSourcesTab()
+                // Manga's extensions are Houdoku's, run in Manga's own extension host.
+                ModuleId.MANGA -> MangaPluginsTab()
                 else -> {
                     val module = DebridOneRuntime.modules.module(tab)
                     if (module != null) ModulePluginsTab(module)
