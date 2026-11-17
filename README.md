@@ -9,21 +9,20 @@ software under the GPL-3.0. There are no subscriptions, tiers or paywalls.
 
 ## Status
 
-This is the foundation milestone.
-
 | Section | State |
 |---|---|
 | Streaming | Working. It is Nuvio Desktop, running on DebridOne's on-device accounts. |
 | Music | Working: local library, player, playlists, Discover with Audius and your Navidrome/OpenSubsonic or Jellyfin server, radio streams, importable plugins, MusicBrainz, Cover Art Archive and LRCLIB. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md) and [MUSIC_PLUGINS.md](debridone/docs/MUSIC_PLUGINS.md). |
 | Games | Not part of the app for now. Its module is kept dormant in the repository; saved data is left untouched. |
-| Manga | In development: same foundation; no reader or extension host yet. |
+| Manga | Working: a reader for manga and manhwa (paged and continuous webtoon modes), search and discovery through Houdoku's unmodified Tiyo extensions, local CBZ/ZIP/folders, library, downloads, AniList / MangaDex / MyAnimeList metadata. See [debridone/docs/MANGA.md](debridone/docs/MANGA.md) and [MANGA_PLUGINS.md](debridone/docs/MANGA_PLUGINS.md). |
 
 Also in place: on-device accounts with multiple profiles that survive restarts, crash-safe storage
 with automatic backups and recovery, a Plugins screen with one tab per section with isolated registries, per-section
 appearance settings, and keyboard shortcuts.
 
-The macOS app bundle has not been built or tested yet; so far the app has been run from source on
-Linux. See [Known limitations](debridone/docs/LIMITATIONS.md) before relying on anything.
+Development builds for Apple Silicon and Intel Macs are made by GitHub Actions; they are unsigned
+and not notarized. What has and has not been verified is in
+[Known limitations](debridone/docs/LIMITATIONS.md) — read it before relying on anything.
 
 DebridOne ships with no addons, sources or extensions. What you install is your choice.
 
@@ -50,6 +49,8 @@ Run the tests:
 - [Installing on a Mac](debridone/docs/INSTALL.md)
 - [Building](debridone/docs/BUILD.md)
 - [Testing](debridone/docs/TESTING.md)
+- [Music](debridone/docs/MUSIC.md) and [Music plugins](debridone/docs/MUSIC_PLUGINS.md)
+- [Manga](debridone/docs/MANGA.md) and [Manga extensions (Houdoku / Tiyo compatibility)](debridone/docs/MANGA_PLUGINS.md)
 - [Architecture](debridone/docs/ARCHITECTURE.md)
 - [Upstream projects and how to merge them](debridone/docs/UPSTREAM.md)
 - [Known limitations](debridone/docs/LIMITATIONS.md)

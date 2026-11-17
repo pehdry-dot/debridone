@@ -67,6 +67,31 @@ Verification status
   Cover Art Archive (its downloads redirect to changing archive.org hosts the build environment
   cannot reach), internet radio addresses, and Subsonic-compatible servers other than Navidrome.
   The stand-in tests also cover unreachable servers and rejected sign-ins.
+- Manga, verified by tests that run on Linux and in CI (the real extension host on the pinned
+  Node.js, the real `@tiyo/core` 1.0.3 downloaded by DebridOne's installer, a stand-in Komga
+  server): the package loads and registers its 44 sources; settings, browse, search, series,
+  chapters, page lists and images through Tiyo's Komga source; reading progress and resume after
+  a restart; profile isolation; the installer refusing wrong names, wrong versions, bad checksums,
+  links and path tricks; the helper's file, process and environment restrictions; crash and
+  time-out recovery; CBZ, ZIP and folder reading with no extension runtime present; the library,
+  bookmarks, collections, source change with carried-over progress; downloads including resume
+  and retry; metadata edit, lock and refresh; backup and restore.
+- Manga, verified by running the app from source on Linux (virtual display), against the real
+  services: installing Tiyo 1.0.3 from the npm registry through Plugins › Manga › Browse with its
+  review dialog; the 44 sources listed as "Not tested"; setting up and testing Komga against
+  Komga's public demo server; searching all sources; a series page; reading with the keyboard;
+  quitting, restarting and resuming on the same page from Home; importing a CBZ and a folder of
+  chapters; the continuous webtoon mode; the settings panel; Discover on MangaDex with its own
+  filters; adding to the library; an AniList match applied, a title edited, and the edit kept
+  after refreshing from the source and from AniList; downloading a chapter from the demo server
+  and reading it offline; the Downloads, Settings and Plugins › Manga pages.
+- Manga, **not verified**: any Tiyo source other than Komga and (up to page lists) MangaDex —
+  they show "Not tested" in the app until you test them; MangaDex page images (their hosts were
+  out of reach of the build environment); MyAnimeList and reading-list tracking against the real
+  services (no client ID or account was available; they are tested against stand-ins that answer
+  in the services' formats); legacy `@houdoku/extension-*` packages other than
+  `@houdoku/extension-komga` 1.3.1; the reader's feel on a Mac trackpad; two profiles side by side
+  in the running app (profile separation is covered by tests).
 - Music, **only a person at the Mac can confirm**: that the sound is audible, that the media keys
   and the Now Playing widget respond (the code compiles and loads; nothing can press a key in
   CI), that sound follows a change of output device, and how the screens look on macOS.
@@ -78,9 +103,9 @@ Verification status
 - Nothing is signed or notarized.
 
 Modules
-- Manga has storage, a registry, metadata settings and appearance only (Games is not part of the
-  app for now; its module is dormant and its saved data is left untouched). It cannot
-  launch or read anything yet, and their plugin import is disabled.
+- Manga is working; what it does not include is listed in `MANGA.md`, `MANGA_PLUGINS.md` and
+  under "Manga" below. (Games is not part of the app for now; its module is dormant and its saved
+  data is left untouched.)
 - Music is working; what it does not include is listed in `MUSIC.md` and under "Music" below.
 - Streaming is Nuvio Desktop, which upstream labels alpha software.
 
@@ -98,8 +123,9 @@ Streaming integrations
 - Discord presence, crash reporting and the in-app updater are disabled.
 
 Shell
-- Cmd+F opens search in Streaming and in Music; Manga has no search yet.
-- The Downloads section shows Streaming downloads; opening one continues in Streaming.
+- Cmd+F opens search in Streaming and in Music; in Manga, use Search in its navigation.
+- The Downloads section has a tab per section: Streaming downloads continue in Streaming, Music's
+  are under Music › Library › Available offline, Manga's are listed and managed there.
 - macOS menu-bar items for the modules and notifications are not implemented. Media keys and
   Now Playing are implemented for Music (and by Nuvio for video).
 
@@ -114,11 +140,28 @@ Music
   supported (see `MUSIC.md`).
 - Switching a source off marks its songs unavailable rather than hiding them.
 
+Manga
+- Sources come only from Houdoku's extension packages. Tiyo was last released in May 2024; some
+  of its sources no longer work because their sites changed. Only what was tested is called
+  verified (`MANGA_PLUGINS.md`).
+- Ten Tiyo sources expect Houdoku's hidden browser window. DebridOne fetches their pages without
+  running page scripts, so they work only where the site answers a plain request; a browser check
+  is reported, not bypassed.
+- Extension code is isolated in a helper process with Node's permission model (no access to your
+  files or DebridOne's data, no other programs). That is not a full system sandbox: an extension
+  can still reach any web server.
+- CBR, RAR and 7z archives are not opened. Pinch-to-zoom is not available (Cmd + scroll and keys
+  are).
+- The app is about 50 MB larger because it carries Node.js for the extension host.
+- The bundled Node.js is the official, publisher-signed build inside an unsigned app; whether
+  macOS asks about it separately on a downloaded copy has not been checked on a personal Mac.
+- MyAnimeList needs your own API client ID (its API has no anonymous access).
+- Refreshing a series takes each field from the first provider in your priority list that offers
+  one, so details applied from AniList can be replaced by the source's own on the next refresh
+  unless AniList is placed above "Extension metadata" or the field is locked.
+
 Upstream compatibility notes for later phases
 - Hydra's main process depends on Electron, a Rust native addon and Hydra's hosted API, and its
   libtorrent bridge is prebuilt only for Windows and Linux. It will be ported selectively.
-- Tiyo's client expects an Electron `BrowserWindow`; it will run in a bundled Node.js process with
-  a small stand-in. `@tiyo/core` was last published in May 2024, so some bundled sources may no
-  longer work. Compatibility will be claimed per extension, only after testing.
 - `eclipsemusic.app` could not be reached from the build environment and no public source or SDK
   was found, so Music is original work and Eclipse addon compatibility is not claimed.

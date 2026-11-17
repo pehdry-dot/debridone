@@ -61,14 +61,14 @@ Music (see `MUSIC.md`; these are the points only a person at the Mac can confirm
 9. Plugins › Music: add your Navidrome/Subsonic or Jellyfin server; its songs appear and play.
 
 Plugins isolation
-1. Plugins has three tabs: Streaming, Music, Manga. Plugins › Music shows Music's integrations; Manga shows its own (empty) list and its own metadata providers.
-2. Disable a Streaming addon: nothing changes in the other three tabs.
+1. Plugins has three tabs: Streaming, Music, Manga. Plugins › Music shows Music's integrations; Manga shows its own packages, sources and metadata providers.
+2. Disable a Streaming addon: nothing changes in the other tabs.
+3. Install Tiyo in Plugins › Manga: it is listed under Manga only. Switch it off: Manga's sources disappear; Streaming and Music are unchanged.
 
 Storage
 1. Settings › Storage & backups shows the folders. "Back up accounts now" writes a snapshot.
 
-Not testable yet (their engines are not built): game launching, manga reading, installing
-Manga plugins.
+Not part of the app: game launching (the Games module is dormant).
 
 ## Play Next (Streaming player)
 
@@ -97,3 +97,51 @@ By hand, with an add-on installed:
 6. Restart: the sources, plugins, provider switches and their last health are as they were.
 
 Live checks against the real services: `DEBRIDONE_LIVE_TESTS=1 ./gradlew :debridone:modules:music:test --tests "*MusicLiveServicesTest"`.
+
+## Manga
+
+Automated: `./gradlew :debridone:modules:manga:test` (needs the pinned Node.js once:
+`./scripts/debridone/fetch-node-runtime.sh linux-x64`, or `darwin-arm64` / `darwin-x64`). The tests
+start the real extension host, let DebridOne's installer download the real `@tiyo/core` 1.0.3 from
+the npm registry, and read through Tiyo's Komga source against a stand-in server. With
+`DEBRIDONE_REQUIRE_NODE=1` a missing runtime fails the run instead of skipping those tests.
+
+Live checks (MangaDex's official test title, Komga's public demo server, AniList):
+`DEBRIDONE_LIVE_TESTS=1 ./gradlew :debridone:modules:manga:test --tests "*LiveSourcesTest" --tests "*LegacyExtensionTest"`.
+
+Inside the packaged app: `DebridOne.app/Contents/MacOS/DebridOne --manga-self-test` reads a CBZ
+with no extension, starts the host on the bundled Node.js, installs Tiyo, reads a chapter through
+it against a stand-in server, restarts and resumes, and ends with `MANGA SELF-TEST PASSED`
+(`--offline` skips the parts that need the npm registry). CI runs it for every build.
+
+By hand — online source (use a server or site you are allowed to read from; Komga's demo server
+at `https://demo.komga.org`, user `demo@komga.org`, password `komga-demo`, has public-domain
+comics):
+
+1. Manga shows Home, Discover, Search, Library, Downloads and a cogwheel, and no "in development"
+   card. With nothing installed, Home offers "Add Source" and "Add files".
+2. Plugins › Manga › Browse: Tiyo is listed with its versions; Install 1.0.3; read the review;
+   confirm. Installed shows it as Running and Verified; Sources lists 44 sources, "Not tested".
+3. Sources › Komga › settings: enter the server and login; Test: the five steps pass.
+4. Manga › Search: type a title; results are grouped by source, failures are named per source.
+5. Open a series: cover, details, chapters. Start Reading: pages appear.
+6. Turn pages with the arrow keys; press `M` for the modes, `S` for the settings, `F` for full
+   screen; Esc leaves the reader.
+7. Quit with Cmd+Q, reopen: Home › Continue Reading has the series; it opens on the same page.
+8. Download a chapter (chapter menu), watch Downloads, open it from there with the network off.
+
+By hand — local files:
+
+1. Library › Add › Comic archives: choose a CBZ. It opens as a series; the cover is its first page.
+2. Read, change mode and fit, set a bookmark (`B`), quit, reopen: progress and bookmark are kept.
+3. Library › Add › A folder: a folder of chapter archives or image folders becomes one series.
+4. "Shelve as Manhwa" on a series: it opens as a continuous strip (the Manhwa preset).
+
+By hand — metadata:
+
+1. On a series: ⋯ › Find details online › AniList: pick a match; the details and cover change.
+2. Edit Metadata: change the title; Save. The title field now shows a closed padlock.
+3. ⋯ › Refresh from the source, and Find details online › Refresh from linked: the title stays.
+
+By hand — profiles: a second profile has an empty Manga library, its own sources switched on and
+its own reading settings; the first profile's are untouched when you switch back.

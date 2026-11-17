@@ -9,10 +9,20 @@ Games is dormant: its module stays in the repository, is not linked into the app
 | Streaming | Nuvio Desktop itself (`:composeApp`) | Working: Nuvio's features, running on on-device accounts |
 | Music | Original code (`:debridone:modules:music`), audio through libmpv | Working: library, player, playlists, sources, metadata. See [MUSIC.md](MUSIC.md) |
 | Games | Dormant. `:debridone:modules:gaming` is kept but not part of the application | Not in the app |
-| Manga | Houdoku-style reader with unmodified Tiyo extensions (`:debridone:modules:manga`) | Foundation only |
+| Manga | Original reader, library and metadata code (`:debridone:modules:manga`); sources are Houdoku's unmodified Tiyo extensions, run in a separate Node.js helper process | Working: sources, search, reader, library, local files, downloads, metadata. See [MANGA.md](MANGA.md) and [MANGA_PLUGINS.md](MANGA_PLUGINS.md) |
 
-"Foundation only" means the module has its own database and registries but no engine or content
-screens yet. The app says so wherever such a module appears.
+### Manga's extension host
+
+```
+Manga screens → Manga services (Kotlin) → ExtensionHost → Node.js helper → aki-plugin-manager → @tiyo/core
+```
+
+Third-party extension code never runs inside the app. `ExtensionHost` starts one helper process
+(`debridone/modules/manga/host/`, on the Node.js bundled with the app), talks to it in JSON lines
+over its standard input and output (no network port), limits every call in time, and restarts the
+helper if it dies. The helper runs under Node's permission model: it may read its own folder and
+the plugin folder, write one scratch folder, and nothing else. Reading local files, the library,
+the reader, downloads and metadata are Kotlin and work without the helper.
 
 ## Layout
 
@@ -68,6 +78,8 @@ macOS locations (`AppPaths`):
   modules/music/music.db
   modules/gaming/gaming.db
   modules/manga/manga.db
+  modules/manga/plugins/         extension packages the user installed (Houdoku's layout)
+  modules/manga/downloads/       chapters saved for offline reading
   backups/<database>/            rolling snapshots; backups/<database>/corrupt/ keeps damaged files
 ~/Library/Caches/DebridOne/<module>/
 ```

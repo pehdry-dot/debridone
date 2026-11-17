@@ -31,18 +31,31 @@ Nuvio Media.
 - Source: https://github.com/xgi/houdoku
 - Licence: MIT
 - Copyright: xgi and the Houdoku contributors
-- Use in DebridOne: design and behaviour reference for the Manga module. No Houdoku source code is
-  included yet.
+- Use in DebridOne: reference for the Manga module (how extensions are installed and loaded, the
+  reader's behaviour, how chapter and volume numbers are read from file names). No Houdoku source
+  file is included; Manga's code is DebridOne's own.
 
-## Tiyo
+## Tiyo and the legacy Houdoku extensions
 
-- Source: https://github.com/xgi/tiyo (npm: `@tiyo/core`, `@tiyo/common`)
+- Source: https://github.com/xgi/tiyo (npm: `@tiyo/core`, `@tiyo/common`) and
+  https://github.com/xgi/houdoku-extensions (npm: `@houdoku/extension-*`, `houdoku-extension-lib`)
 - Licence: MIT
-- Copyright: xgi and the Tiyo contributors
-- Use in DebridOne: the Manga module is designed to run the unmodified `@tiyo/core` package, which
-  the user installs. It is not bundled.
+- Copyright: xgi and the Tiyo / Houdoku contributors
+- Use in DebridOne: Manga runs these packages unmodified. They are **not bundled**: the user
+  installs them from the npm registry, and each installed package keeps its own licence files in
+  DebridOne's Manga plugin folder. A list of the archives that make up `@tiyo/core` 1.0.3 (names,
+  versions, download addresses and checksums — no code) is included in
+  `debridone/modules/manga/src/main/resources/manga/plans/`.
 
-### MIT License (Hydra Launcher, Houdoku, Tiyo)
+## Aki Plugin Manager
+
+- Source: https://github.com/xgi/aki-plugin-manager (npm: `aki-plugin-manager` 1.3.3)
+- Licence: MIT
+- Copyright: xgi
+- Use in DebridOne: bundled, unmodified, inside Manga's extension host to list, load and unload
+  extension packages exactly as Houdoku does.
+
+### MIT License (Hydra Launcher, Houdoku, Tiyo, Aki Plugin Manager)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -76,6 +89,34 @@ assets or protocol implementation is included.
 Music plays audio through the libmpv and FFmpeg libraries that Nuvio Desktop already bundles for
 video (their licences are among Nuvio's attributions, see "Nuvio Desktop" above); DebridOne adds no
 other decoder.
+
+## Bundled with Manga's extension host
+
+The macOS app contains, under `Contents/app/resources/manga-host/`:
+
+| Component | Licence | Use |
+|---|---|---|
+| Node.js 22.23.4, official build from nodejs.org, unmodified | MIT, with the licences of the components it includes (V8, libuv, OpenSSL, ICU and others) — the complete text ships next to it as `NODE-LICENSE.txt` | Runs extension code in a separate process |
+| `aki-plugin-manager` 1.3.3 | MIT | Loads extension packages (see above) |
+| `semver` 7.7.2 | ISC | Resolving a package's dependency versions before download |
+| Dependencies of the two: `tar` 6.2.1, `minipass` 3.3.6 and 5.0.0, `fs-minipass` 2.1.0, `chownr` 2.0.0, `yallist` 4.0.0, `glob` 7.2.3, `minimatch` 3.1.5, `inflight` 1.0.6, `once` 1.4.0, `wrappy` 1.0.2, `inherits` 2.0.4, `fs.realpath` 1.0.0, `rimraf` 3.0.2 | ISC | |
+| `minizlib` 2.1.2, `mkdirp` 1.0.4, `balanced-match` 1.0.2, `brace-expansion` 1.1.22, `concat-map` 0.0.1, `path-is-absolute` 1.0.1 | MIT | |
+
+Each of these packages is included with its own licence file (`manga-host/host/node_modules/<name>/`).
+Their exact versions are fixed by `debridone/modules/manga/host/package-lock.json`.
+
+## Online services used by Manga
+
+Manga contacts these only when you use the feature, and sends no account or device identifier of
+DebridOne's:
+
+| Service | Used for | Terms |
+|---|---|---|
+| npm registry (`registry.npmjs.org`) | Listing and downloading extension packages you choose to install | npm's terms of use |
+| AniList (`graphql.anilist.co`) | The trending rows on Manga's Home, looking up details you ask for, and — only with an account you connect — updating your reading list | AniList API terms |
+| MangaDex (`api.mangadex.org`) | Looking up details you ask for | MangaDex API terms; covers are hot-linked as its API intends |
+| MyAnimeList (`api.myanimelist.net`) | Looking up details and updating your list, only with your own API client ID and sign-in | MyAnimeList API licence |
+| The sites of the sources you enable | Whatever the extension you installed requests | Each site's own terms |
 
 ## Online services used by Music
 

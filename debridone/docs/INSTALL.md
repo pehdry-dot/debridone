@@ -23,8 +23,8 @@ cd debridone
 ./scripts/debridone/build-macos-dev-dmg.sh
 ```
 
-The script downloads the bundled video runtime (checking every file against its recorded
-SHA-256), builds for your Mac's processor and prints where the `.dmg` and the `.app` are. The
+The script downloads the bundled video runtime and the Node.js runtime for Manga's extensions
+(checking every file against its recorded SHA-256), builds for your Mac's processor and prints where the `.dmg` and the `.app` are. The
 first build downloads the build dependencies and takes a while.
 
 To keep the JDK and Gradle's caches out of your home folder, point the script at them:
