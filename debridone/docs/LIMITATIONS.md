@@ -23,9 +23,14 @@ Verification status
   is imported with tags and covers; one file of each of the nine formats plays from start to end,
   both with silent output and through CoreAudio (the runner's real audio output); pause, seek and
   resume work; library, play counts, covers and queue survive a restart of the Music engine.
-- Music, **not verified on Apple Silicon**: GitHub cancelled the Apple Silicon jobs of these runs
-  for lack of runner capacity ("not acquired by Runner"). The code is the same; an Apple Silicon
-  build is produced whenever such a runner is available.
+- Music and the app as a whole, verified inside the packaged macOS app on GitHub's **Apple
+  Silicon** runner (`macos-26`, arm64) for commit `9c0d84277`: the arm64 DMG is built; the app
+  starts, stays running and creates the Music and Manga databases and nothing for Games; the music
+  bridge loads and reaches the bundled libmpv; one file of each of the nine formats plays from
+  start to end with silent output and through CoreAudio; pause, seek and resume work; library,
+  play counts, covers and queue survive a restart of the Music engine. The `macos-15` Apple
+  Silicon job of the same run was cancelled by GitHub for lack of a machine, as on the days
+  before; the build is the same.
 - Play Next, verified by tests only (615 tests of the player, streams, details and watching
   packages on Linux): the cause of the failure is reproduced by a test that failed before the fix;
   the button and the pop-up are driven through the command the native controls send; similarity
