@@ -113,6 +113,32 @@ class ModuleIsolationTest {
     }
 
     @Test
+    fun mangaExtensionsAndMetadataExistOnlyInManga() = runBlocking {
+        val music = music().apply { start() }
+        val manga = manga().apply { start() }
+        // Manga's metadata providers are its own: Music offers none of them and Manga none of Music's.
+        val mangaProviders = manga.metadataProviders.providers.value.map { it.id }.toSet()
+        assertTrue(mangaProviders.containsAll(setOf("anilist", "mangadex", "myanimelist", "extension")))
+        val musicProviders = music.metadataProviders.providers.value.map { it.id }.toSet()
+        assertTrue((mangaProviders - "manual").none { it in musicProviders }, "Manga's metadata providers must not be offered by Music")
+        // Houdoku's extension package means nothing to Music: its importer refuses the name and records nothing.
+        val musicBefore = music.plugins.installed.value
+        assertIs<PluginActionResult.Failure>(music.plugins.importFromLocation("@tiyo/core"))
+        assertIs<PluginActionResult.Failure>(music.plugins.importFromLocation("npm:@tiyo/core@1.0.3"))
+        assertEquals(musicBefore, music.plugins.installed.value)
+        // And Manga accepts Houdoku's packages only: a plugin manifest address (Music's format) or
+        // an arbitrary package name is refused, with nothing left behind.
+        assertIs<PluginActionResult.Failure>(manga.plugins.importFromLocation("https://example.com/music-plugin.json"))
+        assertIs<PluginActionResult.Failure>(manga.plugins.importFromLocation("left-pad"))
+        assertIs<PluginActionResult.Failure>(manga.plugins.importFromLocation("@tiyo/not-core"))
+        assertEquals(emptyList(), manga.added(), "a refused package must not leave a record behind")
+        // Extension packages are kept under Manga's own folder and nowhere else.
+        assertTrue(Files.isDirectory(paths.moduleDataDir("manga")))
+        assertFalse(Files.exists(paths.moduleDataDir("music").resolve("plugins").resolve("@tiyo")))
+        assertFalse(Files.exists(paths.dataRoot.resolve("plugins")))
+    }
+
+    @Test
     fun everyModuleOpensItsOwnDatabaseFile() = runBlocking {
         val modules = listOf(music(), gaming(), manga())
         modules.forEach { it.start() }

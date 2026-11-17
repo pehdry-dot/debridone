@@ -141,8 +141,40 @@ class MangaDownloadsTest {
         assertTrue(Files.readAllBytes(folder.resolve("0003.png")).contentEquals(FakeTiyo.pages[2]))
     }
 
+    private suspend fun flaky(query: String): Chapter {
+        val hit = services.sources.search(alice, query, listOf(FakeTiyo.SOURCE_ID)).single().series.single()
+        val series = services.sources.remember(alice, hit)
+        services.sources.refresh(series.id)
+        return services.repository.chapters(series.id).first()
+    }
+
+    @Test
+    fun aPageWhoseConnectionDropsIsAskedForAgainInsteadOfFailingTheChapter(): Unit = runBlocking {
+        services.downloads.retryDelayMs = 20
+        val chapter = flaky("flaky")
+        services.downloads.enqueue(listOf(chapter.id))
+        val done = await(chapter.id, DownloadState.DONE, DownloadState.FAILED)
+        assertEquals(DownloadState.DONE, done.downloadState, "one dropped connection must not fail the chapter: ${done.downloadError}")
+        assertEquals(FakeTiyo.pages.size, done.downloadPages)
+        val open = services.pages.open(chapter.id)
+        assertEquals("downloaded", open.origin)
+        assertTrue(services.pages.page(open, 1).contentEquals(FakeTiyo.pages[1]), "the page that failed at first was saved correctly")
+    }
+
+    @Test
+    fun aPageThatKeepsFailingFailsTheChapterAndKeepsThePagesBeforeIt(): Unit = runBlocking {
+        services.downloads.retryDelayMs = 20
+        val chapter = flaky("flaky-always")
+        services.downloads.enqueue(listOf(chapter.id))
+        val failed = await(chapter.id, DownloadState.DONE, DownloadState.FAILED)
+        assertEquals(DownloadState.FAILED, failed.downloadState)
+        assertNotNull(failed.downloadError)
+        assertEquals(FakeTiyo.pages.size - 1, failed.downloadPages, "the pages before the failing one are kept for the next attempt")
+    }
+
     @Test
     fun aDownloadThatFailsSaysWhyAndCanBeRetried(): Unit = runBlocking {
+        services.downloads.retryDelayMs = 20
         // This series' pages are addresses on a host that does not exist.
         val unreachable = services.sources.remember(alice, services.sources.search(alice, "nowhere", listOf(FakeTiyo.SOURCE_ID)).single().series.single())
         services.repository.syncChapters(unreachable.id, listOf(com.debridone.manga.library.ChapterDraft("x", "Only", "1", "", "ENGLISH", "", 0)))

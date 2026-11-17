@@ -164,7 +164,8 @@ internal fun SeriesScreen(seriesId: Long) {
             } else {
                 SeriesCover(series, Modifier.fillMaxSize().blur(48.dp).alpha(0.42f), shape = RoundedCornerShape(0.dp))
             }
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, manga.style.background))))
+            // Darkened, so that titles and labels stay readable over a bright cover.
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(manga.style.background.copy(alpha = 0.45f), manga.style.background))))
         }
 
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 18.dp, bottom = 56.dp)) {
@@ -333,7 +334,10 @@ private fun SeriesActions(series: Series, summary: SeriesSummary, resume: Chapte
         val started = summary.readCount > 0 || (resume?.lastPage ?: 0) > 0
         val label = when {
             resume == null && summary.chapterCount > 0 && summary.readCount == summary.chapterCount -> "Read again"
-            started && resume != null -> "Continue · ${resume.displayName.take(26)}" + if (resume.lastPage > 0) " · p. ${resume.lastPage + 1}" else ""
+            // Short, so it never ends mid-word: the chapter number, or the start of its title when it has none.
+            started && resume != null -> "Continue · " +
+                (if (resume.chapterNumber.isNotBlank()) "Ch. ${resume.chapterNumber}" else resume.title.take(22).trim().ifBlank { "Chapter" }) +
+                if (resume.lastPage > 0) " · p. ${resume.lastPage + 1}" else ""
             else -> "Start Reading"
         }
         MangaButton(label, {

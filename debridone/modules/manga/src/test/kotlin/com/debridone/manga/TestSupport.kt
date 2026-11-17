@@ -353,14 +353,28 @@ object FakeTiyo {
           getChapters(id) { return Promise.resolve([1, 2, 3].map(n => ({ sourceId: id + '-c' + n, title: 'Chapter ' + n, chapterNumber: String(n), volumeNumber: '', languageKey: 'ENGLISH', groupName: 'G', time: 1700000000000 + n, read: false }))); }
           getPageRequesterData(seriesId, chapterId) {
             if (seriesId.startsWith('book')) return Promise.resolve({ server: 'page:', hash: '', numPages: PAGES.length, pageFilenames: PAGES.map((_, i) => String(i)) });
+            if (seriesId.startsWith('flaky')) return Promise.resolve({ server: 'flaky:', hash: '', numPages: PAGES.length, pageFilenames: PAGES.map((_, i) => String(i)) });
             return Promise.resolve({ server: 'https://pages.invalid', hash: chapterId, numPages: 2, pageFilenames: ['1.png', '2.png'] });
           }
-          getPageUrls(data) { return data.server === 'page:' ? data.pageFilenames.map(f => 'page:' + f) : data.pageFilenames.map(f => data.server + '/' + data.hash + '/' + f); }
+          getPageUrls(data) {
+            if (data.server === 'page:' || data.server === 'flaky:') return data.pageFilenames.map(f => data.server + f);
+            return data.pageFilenames.map(f => data.server + '/' + data.hash + '/' + f);
+          }
           getImage(series, url) {
             if (url.startsWith('page:')) return Promise.resolve(Buffer.from(PAGES[Number(url.slice(5))], 'base64'));
+            if (url.startsWith('flaky:')) {
+              // The second page drops its connection the first time it is asked for; the last one always does.
+              const n = Number(url.slice(6));
+              this.asked = this.asked || {};
+              this.asked[url] = (this.asked[url] || 0) + 1;
+              const always = series && series.sourceId === 'flaky-always' && n === PAGES.length - 1;
+              if (always || (n === 1 && this.asked[url] === 1)) { const e = new Error('socket hang up'); e.code = 'ECONNRESET'; return Promise.reject(e); }
+              return Promise.resolve(Buffer.from(PAGES[n], 'base64'));
+            }
             return Promise.resolve(url.endsWith('2.png') ? new Uint8Array([1, 2, 3, 4]).buffer : url);
           }
           getSearch(text, page) {
+            if (text === 'flaky' || text === 'flaky-always') return Promise.resolve({ seriesList: [{ extensionId: '$SOURCE_ID', sourceId: text === 'flaky' ? 'flaky-1' : 'flaky-always', title: 'A Flaky Book', remoteCoverUrl: '' }], hasMore: false });
             if (text === 'book') return Promise.resolve({ seriesList: [{ extensionId: '$SOURCE_ID', sourceId: 'book-1', title: 'A Book', tags: ['Webtoon'], originalLanguageKey: 'KOREAN', remoteCoverUrl: 'page:0' }], hasMore: false });
             return Promise.resolve({ seriesList: [{ sourceId: 'found-' + text + '-' + page, title: 'Found ' + text }], hasMore: page < 2 });
           }

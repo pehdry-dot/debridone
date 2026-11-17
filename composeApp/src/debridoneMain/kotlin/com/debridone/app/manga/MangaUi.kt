@@ -69,6 +69,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -648,6 +649,62 @@ internal fun MangaMenuItem(text: String, icon: ImageVector? = null, danger: Bool
 @Composable
 internal fun MangaMenuDivider() {
     HorizontalDivider(color = MaterialTheme.nuvio.colors.borderSubtle, modifier = Modifier.padding(vertical = 4.dp))
+}
+
+/**
+ * A thin horizontal slider, as in Music's player. [onValueChange] follows the pointer, also on a
+ * plain click on the track. [value] and the reported values are between 0 and 1.
+ */
+@Composable
+internal fun MangaSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    description: String,
+    enabled: Boolean = true,
+    /** Fill from the right end, for right-to-left reading. */
+    reversed: Boolean = false,
+    active: Color = LocalManga.current.style.accent,
+    inactive: Color = Color.White.copy(alpha = 0.24f),
+) {
+    val change by androidx.compose.runtime.rememberUpdatedState(onValueChange)
+    val fraction = value.coerceIn(0f, 1f)
+    Box(
+        modifier = modifier
+            .height(24.dp)
+            .semantics { contentDescription = description }
+            .then(
+                if (!enabled) Modifier else Modifier.pointerInput(reversed) {
+                    fun report(x: Float) {
+                        val raw = (x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        change(if (reversed) 1f - raw else raw)
+                    }
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pointer = event.changes.firstOrNull() ?: continue
+                            if (pointer.pressed) {
+                                report(pointer.position.x)
+                                pointer.consume()
+                            }
+                        }
+                    }
+                },
+            ),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50)).background(inactive))
+        Box(
+            Modifier.align(if (reversed) Alignment.CenterEnd else Alignment.CenterStart)
+                .fillMaxWidth(fraction.coerceAtLeast(0.0001f)).height(4.dp).clip(RoundedCornerShape(50)).background(if (enabled) active else inactive),
+        )
+        // The thumb, placed by the same fraction.
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val travel = maxWidth - 14.dp
+            val offset = travel * (if (reversed) 1f - fraction else fraction)
+            if (enabled) Box(Modifier.padding(start = offset).size(14.dp).clip(CircleShape).background(active))
+        }
+    }
 }
 
 /** A small label over a cover or next to a title: "Manhwa", "Completed", "12 new". */

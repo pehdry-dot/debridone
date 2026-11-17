@@ -4,10 +4,12 @@ import com.debridone.manga.library.Chapter
 import com.debridone.manga.library.DownloadState
 import com.debridone.manga.library.MangaRepository
 import com.debridone.manga.reader.MangaPages
+import com.debridone.manga.reader.OpenChapter
 import com.debridone.manga.reader.PageException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +38,10 @@ class MangaDownloads(
     private val scope: CoroutineScope,
     private val parallel: () -> Int = { 1 },
 ) {
+    /** Pause before a page is asked for again; doubled for the third attempt. */
+    @Volatile
+    var retryDelayMs: Long = 1_500
+
     private val guard = Mutex()
     private val running = HashMap<Long, Job>()
     private val _active = MutableStateFlow<Set<Long>>(emptySet())
@@ -117,7 +123,7 @@ class MangaDownloads(
             for (index in 0 until open.pageCount) {
                 val prefix = "%04d.".format(index + 1)
                 if (existing.none { it.startsWith(prefix) }) {
-                    val bytes = pages.page(open, index)
+                    val bytes = pageWithRetries(open, index)
                     val extension = MangaPages.imageExtension(bytes) ?: "img"
                     val partial = dir.resolve("$prefix$extension.part")
                     Files.write(partial, bytes)
@@ -138,6 +144,25 @@ class MangaDownloads(
         }
     }
 
+    /**
+     * One page, asked for again when the failure looks temporary (a dropped connection, a source
+     * that did not answer in time, a busy server). A chapter of fifty pages should not fail because
+     * one request stalled; a failure that would repeat (a missing page, a login that is refused)
+     * is not retried.
+     */
+    private suspend fun pageWithRetries(open: OpenChapter, index: Int): ByteArray {
+        var attempt = 1
+        while (true) {
+            try {
+                return pages.page(open, index)
+            } catch (failure: PageException) {
+                if (!failure.temporary || attempt >= PAGE_ATTEMPTS) throw failure
+                delay(retryDelayMs * attempt)
+                attempt++
+            }
+        }
+    }
+
     private fun directory(chapter: Chapter): Path {
         val profile = repository.series(chapter.seriesId)?.profileId ?: 0
         return downloadsDir.resolve(profile.toString()).resolve(chapter.seriesId.toString()).resolve(chapter.id.toString())
@@ -152,5 +177,10 @@ class MangaDownloads(
     private fun deleteTree(path: Path) {
         if (!Files.exists(path)) return
         Files.walk(path).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { runCatching { Files.deleteIfExists(it) } } }
+    }
+
+    private companion object {
+        /** How often one page is asked for before the chapter is reported as failed. */
+        const val PAGE_ATTEMPTS = 3
     }
 }

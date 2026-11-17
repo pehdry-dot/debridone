@@ -27,6 +27,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +69,8 @@ internal fun SeriesCard(
     /** Shown under the title instead of status and source (for example "Ch. 12 · page 7"). */
     caption: String? = null,
     selected: Boolean? = null,
+    /** For cards whose click resumes reading: the hover action leads to the series page instead. */
+    detailsAction: Boolean = false,
     onClick: () -> Unit = { MangaNav.open(MangaRoute.SeriesPage(summary.series.id)) },
 ) {
     val series = summary.series
@@ -85,8 +88,14 @@ internal fun SeriesCard(
         onClick = onClick,
         cover = { SeriesCover(series, Modifier.fillMaxSize()) },
         hoverActions = {
-            HoverAction(Icons.Rounded.PlayArrow, if (summary.readCount > 0) "Continue reading ${series.title}" else "Start reading ${series.title}", primary = true) {
-                actions.continueReading(series)
+            // Three at most: a fourth does not fit the smallest card. Where the click already
+            // resumes reading, the first action leads to the series page instead.
+            if (detailsAction) {
+                HoverAction(Icons.Rounded.Info, "Series page of ${series.title}", primary = true) { MangaNav.open(MangaRoute.SeriesPage(series.id)) }
+            } else {
+                HoverAction(Icons.Rounded.PlayArrow, if (summary.readCount > 0) "Continue reading ${series.title}" else "Start reading ${series.title}", primary = true) {
+                    actions.continueReading(series)
+                }
             }
             HoverAction(if (series.favorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (series.favorite) "Remove from favourites" else "Add to favourites") {
                 actions.toggleFavorite(series)

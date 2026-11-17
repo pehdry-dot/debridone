@@ -79,7 +79,9 @@ fun MangaDownloads(embedded: Boolean = false) {
     val actions = LocalMangaActions.current
     val downloads by rememberMangaQuery(initial = null as List<Pair<Series, Chapter>>?) { services, profile -> services.repository.downloads(profile) }
     val revision by manga.services.repository.revision.collectAsState()
-    val size by produceState(0L, revision / 20) { value = withContext(Dispatchers.IO) { manga.services.downloads.size() } }
+    // Measured now and then while pages arrive, and again whenever a chapter starts, finishes or is deleted.
+    val states = downloads.orEmpty().map { it.second.id to it.second.downloadState }
+    val size by produceState(0L, revision / 20, states) { value = withContext(Dispatchers.IO) { manga.services.downloads.size() } }
     val all = downloads.orEmpty()
     val failed = all.filter { it.second.downloadState == DownloadState.FAILED }
     val waiting = all.filter { it.second.downloadState == DownloadState.QUEUED || it.second.downloadState == DownloadState.RUNNING }

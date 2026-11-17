@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -45,8 +44,6 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -280,7 +277,11 @@ internal fun MangaReader(chapterId: Long, startPage: Int? = null) {
             session.close()
         }
     }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    // Keys go to the reader. Focus is taken back whenever a panel or menu closes and after every
+    // click, because the control that was clicked may be gone a moment later, taking focus with it.
+    LaunchedEffect(panel, chapterMenu, lastActivity, session.open) {
+        if (!panel && !chapterMenu) runCatching { focus.requestFocus() }
+    }
 
     val series = session.series
     // A series can carry its own reading settings; otherwise its shelf's preset applies.
@@ -874,16 +875,13 @@ private fun ReaderBottomBar(
         MangaIconButton(Icons.Rounded.SkipPrevious, "Previous chapter", onPreviousChapter, tint = Color.White, enabled = session.previous != null)
         Text("${session.current + 1}", style = MaterialTheme.typography.labelLarge, color = Color.White, modifier = Modifier.width(34.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
         // In right-to-left reading the slider runs the way the pages do.
-        val position = if (count <= 1) 0f else session.current.toFloat() / (count - 1)
-        Slider(
-            value = if (reversed) 1f - position else position,
-            onValueChange = { value ->
-                val fraction = if (reversed) 1f - value else value
-                onPage((fraction * (count - 1)).toInt().coerceIn(0, (count - 1).coerceAtLeast(0)))
-            },
+        MangaSlider(
+            value = if (count <= 1) 0f else session.current.toFloat() / (count - 1),
+            onValueChange = { fraction -> onPage((fraction * (count - 1) + 0.5f).toInt().coerceIn(0, (count - 1).coerceAtLeast(0))) },
+            description = "Page ${session.current + 1} of $count",
             enabled = count > 1,
-            colors = SliderDefaults.colors(thumbColor = manga.style.accent, activeTrackColor = if (reversed) Color.White.copy(alpha = 0.3f) else manga.style.accent, inactiveTrackColor = if (reversed) manga.style.accent else Color.White.copy(alpha = 0.3f)),
-            modifier = Modifier.weight(1f).semantics { contentDescription = "Page ${session.current + 1} of $count" },
+            reversed = reversed,
+            modifier = Modifier.weight(1f),
         )
         Text("$count", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.72f), modifier = Modifier.width(34.dp))
         MangaIconButton(Icons.Rounded.SkipNext, "Next chapter", onNextChapter, tint = Color.White, enabled = session.next != null)
@@ -979,11 +977,13 @@ private fun SettingSlider(title: String, value: String, current: Int, range: Int
             Text(title, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f))
             Text(value, style = small(), color = tokens.colors.textMuted)
         }
-        Slider(
-            value = current.toFloat(), onValueChange = { onChange(it.toInt()) }, valueRange = range.first.toFloat()..range.last.toFloat(),
-            colors = SliderDefaults.colors(thumbColor = accent, activeTrackColor = accent, inactiveTrackColor = tokens.colors.borderDefault),
-            modifier = Modifier.height(28.dp).semantics { contentDescription = "$title: $value" },
+        val span = (range.last - range.first).coerceAtLeast(1)
+        MangaSlider(
+            value = (current - range.first).toFloat() / span,
+            onValueChange = { onChange(range.first + (it * span + 0.5f).toInt()) },
+            description = "$title: $value",
+            active = accent, inactive = tokens.colors.borderDefault,
+            modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(2.dp))
     }
 }

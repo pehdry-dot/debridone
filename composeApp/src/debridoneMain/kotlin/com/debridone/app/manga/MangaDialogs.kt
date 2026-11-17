@@ -222,6 +222,12 @@ internal fun MangaDialogButtons(confirm: String, onDismiss: () -> Unit, enabled:
     }
 }
 
+/** For dialogs whose changes apply as they are made: a single button that closes. */
+@Composable
+internal fun MangaDialogDone(onDismiss: () -> Unit, label: String = "Done") {
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End) { MangaButton(label, onDismiss) }
+}
+
 @Composable
 internal fun MangaTextField(
     value: String,
@@ -530,7 +536,7 @@ private fun MatchMetadataDialog(seriesId: Long, onDismiss: () -> Unit) {
                 else -> results.orEmpty().forEach { match -> MatchRow(match, linked = links.any { it.provider == match.provider && it.remoteId == match.remoteId }, enabled = !busy) { use(match) } }
             }
         }
-        MangaDialogButtons("Done", onDismiss, cancel = "Close", onConfirm = onDismiss)
+        MangaDialogDone(onDismiss)
     }
 }
 
@@ -732,7 +738,7 @@ private fun ChangeSourceDialog(seriesId: Long, onDismiss: () -> Unit) {
                 Text("Could not be asked: " + failed.joinToString(", ") { it.source.name }, style = small(), color = tokens.colors.textMuted, modifier = Modifier.padding(top = 6.dp))
             }
         }
-        MangaDialogButtons("Close", onDismiss, cancel = "Cancel", onConfirm = onDismiss)
+        MangaDialogDone(onDismiss, "Close")
     }
 }
 
@@ -782,7 +788,7 @@ private fun CollectionsDialog(seriesIds: List<Long>, onDismiss: () -> Unit) {
             MangaTextField(name, { name = it }, "New collection", Modifier.weight(1f), onSubmit = ::create)
             MangaButton("Create", ::create, primary = false, enabled = name.isNotBlank())
         }
-        MangaDialogButtons("Done", onDismiss, cancel = "Close", onConfirm = onDismiss)
+        MangaDialogDone(onDismiss)
     }
 }
 

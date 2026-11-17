@@ -146,11 +146,16 @@ internal fun MangaDiscover() {
     val source = offered.firstOrNull { it.id == DiscoverState.sourceId }
     var filtersOpen by remember { mutableStateOf(false) }
 
-    // Pick a source: the one used last time, else the first preferred one.
+    // Pick a source: the one used last time, else a preferred one, else one whose last test passed
+    // on this computer, else the first of the list.
     LaunchedEffect(offered.map { it.id }, DiscoverState.sourceId) {
         if (offered.isNotEmpty() && offered.none { it.id == DiscoverState.sourceId }) {
             val remembered = manga.services.preferences[MangaPreferences.DISCOVER_SOURCE]
-            DiscoverState.sourceId = (offered.firstOrNull { it.id == remembered } ?: offered.first()).id
+            val pick = offered.firstOrNull { it.id == remembered }
+                ?: offered.filter { it.preferredRank != null }.minByOrNull { it.preferredRank ?: Int.MAX_VALUE }
+                ?: offered.firstOrNull { it.health?.ok == true }
+                ?: offered.first()
+            DiscoverState.sourceId = pick.id
             DiscoverState.clearResults()
             DiscoverState.requested++
         }

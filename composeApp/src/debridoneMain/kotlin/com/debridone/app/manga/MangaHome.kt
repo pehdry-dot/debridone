@@ -111,7 +111,7 @@ internal fun MangaHome() {
                 // Short enough for a card: "Ch. 12 · page 7".
                 val chapter = if (entry.chapter.chapterNumber.isNotBlank()) "Ch. ${entry.chapter.chapterNumber}" else entry.chapter.title.take(18).ifBlank { "Chapter" }
                 val page = if (entry.chapter.lastPage > 0) " · page ${entry.chapter.lastPage + 1}" else ""
-                SeriesCard(entry.summary, modifier, caption = chapter + page) { actions.read(entry.chapter.id) }
+                SeriesCard(entry.summary, modifier, caption = chapter + page, detailsAction = true) { actions.read(entry.chapter.id) }
             }
         }
         item { CoverShelf("Recently Updated", data.updated, caption = "Series you are reading with unread chapters", key = { it.series.id }) { summary, modifier -> SeriesCard(summary, modifier) } }
