@@ -87,8 +87,9 @@ Verification status
   and reading it offline; the Downloads, Settings and Plugins › Manga pages; a second profile
   starting with an empty Manga library (and the shared extension package) while the first
   profile's library is unchanged on return.
-- Manga, verified inside the packaged macOS app on GitHub's runners for commit `d599f80f5`
-  (run 44199207274), on **Apple Silicon** (`macos-26`, arm64) and on **Intel** (`macos-15-intel`):
+- Manga, verified inside the packaged macOS app on GitHub's runners for commit `303c152ec`
+  (run 44203345039; and before it `d599f80f5`), on **Apple Silicon** (`macos-15` and `macos-26`,
+  arm64) and on **Intel** (`macos-15-intel`):
   the DMG is built with the Node.js runtime and the extension host inside; the app starts and
   stays running; `--manga-self-test` passes: a CBZ is read and resumed after a restart with no
   extension involved; the extension host starts on the Node.js inside the app, with file access
