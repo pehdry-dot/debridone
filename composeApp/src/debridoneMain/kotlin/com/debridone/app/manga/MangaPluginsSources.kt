@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Explore
@@ -37,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,50 +56,43 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.shell.Notice
 import com.debridone.app.shell.PillTone
 import com.debridone.app.shell.StatusPill
-import com.debridone.manga.MangaAppSettings
 import com.debridone.manga.MangaPreferences
-import com.debridone.manga.host.HostState
 import com.debridone.manga.sources.SourceEntry
+import com.debridone.manga.suwayomi.SwPreference
+import com.debridone.manga.suwayomi.SwPreferenceChange
 import com.debridone.module.MetadataProvider
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.put
 
 // ---------------------------------------------------------------------------- Sources
 
-/** The sources the installed packages bring, for this profile: on or off, preferred, set up, and whether they work here. */
+/** The sources of the installed extensions, for this profile: on or off, preferred, configured, and whether they work here. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SourcesTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
-    val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
-    val registry by manga.module.plugins.installed.collectAsStateWithLifecycle()
-    val sources by rememberMangaQuery(hostState, initial = null as List<SourceEntry>?) { services, profile -> services.sources.list(profile) }
+    val actions = LocalMangaActions.current
+    val sources by rememberMangaQuery(initial = null as List<SourceEntry>?) { services, profile -> services.sources.list(profile) }
     var filter by remember { mutableStateOf("") }
     var language by remember { mutableStateOf<String?>(null) }
     var only by remember { mutableStateOf("all") }
-    var configuring by remember { mutableStateOf<SourceEntry?>(null) }
     var testing by remember { mutableStateOf(setOf<String>()) }
     var details by remember { mutableStateOf<String?>(null) }
     val all = sources.orEmpty()
-    val languages = all.mapNotNull { it.descriptor.language }.distinct().sorted()
+    val languages = all.map { it.language }.filter { it.isNotBlank() }.distinct().sortedBy(::languageName)
     val needle = filter.trim().lowercase()
     val listed = all.filter { source ->
-        (needle.isEmpty() || source.name.lowercase().contains(needle) || source.descriptor.url.lowercase().contains(needle)) &&
-            (language == null || source.descriptor.language == language) &&
+        (needle.isEmpty() || source.name.lowercase().contains(needle) || source.homeUrl.orEmpty().lowercase().contains(needle)) &&
+            (language == null || source.language == language) &&
             when (only) {
                 "on" -> source.enabled
                 "working" -> source.health?.ok == true
                 "failing" -> source.health?.ok == false
-                "setup" -> source.needsSetup
+                "configurable" -> source.configurable
                 else -> true
             }
     }
@@ -117,48 +112,36 @@ internal fun SourcesTab() {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sources", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
                 Text(
-                    "${plural(all.size, "source")} from the installed packages, ${all.count { it.enabled }} switched on for this profile. " +
+                    "${plural(all.count { !it.isLocal }, "source")} from the installed extensions, ${all.count { it.enabled && !it.isLocal }} switched on for this profile, and your own files. " +
                         "\"Working\" and \"Failing\" are results of tests run on this computer, with their date — nothing is called working that has not been tried.",
                     style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
                 )
                 if (all.isNotEmpty()) {
                     MangaSearchField(filter, { filter = it }, Modifier.widthIn(max = 420.dp).fillMaxWidth(), placeholder = "Find a source")
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("all" to "All", "on" to "Switched on", "working" to "Working", "failing" to "Failing", "setup" to "Needs setting up").forEach { (key, label) ->
+                        listOf("all" to "All", "on" to "Switched on", "working" to "Working", "failing" to "Failing", "configurable" to "With settings").forEach { (key, label) ->
                             MangaChip(label, only == key) { only = key }
                         }
                         LanguagePicker(languages, language) { language = it }
                         MangaButton(
                             if (testing.isEmpty()) "Test the ones shown (${listed.count { it.enabled }})" else "Testing… ${testing.size} left",
-                            { test(listed.filter { it.enabled && !it.needsSetup }.map { it.id }) },
+                            { test(listed.filter { it.enabled }.map { it.id }) },
                             primary = false, icon = Icons.Rounded.PlayArrow, enabled = testing.isEmpty() && listed.any { it.enabled },
                         )
                     }
                     Text(
-                        "A test browses, searches, opens one series, lists its chapters and asks for one chapter's pages. It downloads no page images.",
+                        "A test lists and searches the source, opens one series and its chapters, and loads the first page of one chapter. Nothing is added to your library.",
                         style = small(), color = tokens.colors.textMuted,
                     )
                 }
             }
         }
-        if (sources != null && all.isEmpty()) {
+        if (sources != null && all.none { !it.isLocal }) {
             item {
-                // Say which of the three it is: nothing installed, installed but switched off, or installed and not loading.
-                val added = registry.filterNot { it.builtIn }
-                val off = added.filterNot { it.enabled }
-                when {
-                    off.isNotEmpty() -> MangaEmptyState(
-                        Icons.Rounded.Extension, "No sources",
-                        "${off.joinToString(", ") { it.name }} is installed but switched off. Switch it on to get its sources back.",
-                    ) { MangaButton("Installed", { MangaPluginsState.tab = MangaPluginsTab.INSTALLED }, icon = Icons.Rounded.Extension) }
-                    added.isNotEmpty() -> MangaEmptyState(
-                        Icons.Rounded.Extension, "No sources",
-                        "The installed package registered no sources. Installed shows what went wrong.",
-                    ) { MangaButton("Installed", { MangaPluginsState.tab = MangaPluginsTab.INSTALLED }, icon = Icons.Rounded.Extension) }
-                    else -> MangaEmptyState(Icons.Rounded.Extension, "No sources", "Sources come with an extension package. Install Tiyo to get Houdoku's sources.") {
-                        MangaButton("Browse", { MangaPluginsState.tab = MangaPluginsTab.BROWSE }, icon = Icons.Rounded.Extension)
-                    }
-                }
+                MangaEmptyState(
+                    Icons.Rounded.Extension, "No online sources",
+                    "Sources come with extensions. Add an extension store, then install the extensions you want; each brings one or more sources.",
+                ) { MangaButton("Extensions", { MangaPluginsState.tab = MangaPluginsTab.EXTENSIONS }, icon = Icons.Rounded.Extension) }
             }
         }
         items(listed, key = { it.id }) { source ->
@@ -167,24 +150,24 @@ internal fun SourcesTab() {
                 testing = source.id in testing,
                 expanded = details == source.id,
                 onDetails = { details = if (details == source.id) null else source.id },
-                onConfigure = { configuring = source },
+                onConfigure = { MangaPluginsState.configuring = source.id },
                 onTest = { test(listOf(source.id)) },
+                onToggle = { actions.io { manga.services.sources.setEnabled(manga.profileId, source.id, !source.enabled) } },
                 onPrefer = {
                     val next = if (source.id in preferred) preferred - source.id else preferred + source.id
-                    manga.services.sources.setPreferred(manga.profileId, next)
+                    actions.io { manga.services.sources.setPreferred(manga.profileId, next) }
                 },
                 onMove = { delta ->
                     val index = preferred.indexOf(source.id)
                     val target = index + delta
                     if (index >= 0 && target in preferred.indices) {
                         val next = preferred.toMutableList().apply { add(target, removeAt(index)) }
-                        manga.services.sources.setPreferred(manga.profileId, next)
+                        actions.io { manga.services.sources.setPreferred(manga.profileId, next) }
                     }
                 },
             )
         }
     }
-    configuring?.let { source -> SourceSettingsDialog(source) { configuring = null } }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -196,6 +179,7 @@ private fun SourceRow(
     onDetails: () -> Unit,
     onConfigure: () -> Unit,
     onTest: () -> Unit,
+    onToggle: () -> Unit,
     onPrefer: () -> Unit,
     onMove: (Int) -> Unit,
 ) {
@@ -208,51 +192,51 @@ private fun SourceRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val rank = source.preferredRank
-            MangaIconButton(
-                if (rank != null) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                if (rank != null) "Preferred source ${rank + 1}: click to stop preferring it" else "Prefer this source: it is searched and listed first",
-                onPrefer, size = 30.dp, tint = if (rank != null) manga.style.accent else tokens.colors.textMuted,
-            )
+            if (!source.isLocal) {
+                MangaIconButton(
+                    if (rank != null) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                    if (rank != null) "Preferred source ${rank + 1}: click to stop preferring it" else "Prefer this source: it is searched and listed first",
+                    onPrefer, size = 30.dp, tint = if (rank != null) manga.style.accent else tokens.colors.textMuted,
+                )
+            }
+            ServerIcon(source.iconUrl, Modifier.size(34.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(source.name, style = MaterialTheme.typography.titleSmall, color = if (source.enabled) tokens.colors.textPrimary else tokens.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    listOf(languageName(source.descriptor.language), source.descriptor.url.removePrefix("https://").removePrefix("http://").trimEnd('/'), source.descriptor.origin).filter { it.isNotBlank() }.joinToString("  ·  "),
+                    if (source.isLocal) "Archives and folders of this computer, read through the manga server's Local source"
+                    else listOf(languageName(source.language), source.homeUrl.orEmpty().removePrefix("https://").removePrefix("http://").trimEnd('/')).filter { it.isNotBlank() }.joinToString("  ·  "),
                     style = small(), color = tokens.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (source.needsSetup) StatusPill("Needs setting up", PillTone.WARNING)
-            if (source.descriptor.usesBrowserWindow == true) StatusPill("Browser window", PillTone.WARNING)
+            if (source.contentWarning == "NSFW") StatusPill("18+", PillTone.WARNING)
             when {
                 testing -> CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                 health == null -> StatusPill("Not tested")
                 health.ok -> StatusPill("Working · ${formatDate(health.testedAt)}", PillTone.SUCCESS)
                 else -> StatusPill("Failing · ${formatDate(health.testedAt)}", PillTone.DANGER)
             }
-            MangaChip(if (source.enabled) "On" else "Off", source.enabled) { manga.services.sources.setEnabled(manga.profileId, source.id, !source.enabled) }
+            if (!source.isLocal) MangaChip(if (source.enabled) "On" else "Off", source.enabled, onClick = onToggle)
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (source.descriptor.settingTypes.isNotEmpty()) MangaButton("Configure", onConfigure, primary = source.needsSetup, icon = Icons.Rounded.Tune)
+            if (source.configurable) MangaButton("Configure", onConfigure, primary = false, icon = Icons.Rounded.Tune)
             MangaButton("Test", onTest, primary = false, icon = Icons.Rounded.PlayArrow, enabled = !testing && source.enabled)
-            MangaButton("Browse", {
-                DiscoverState.open(source.id, "")
-                manga.services.preferences.set(MangaPreferences.DISCOVER_SOURCE, source.id)
-                MangaNav.root(MangaRoute.Discover)
-                com.debridone.app.shell.ShellState.select(com.debridone.app.shell.ShellSection.MANGA)
-            }, primary = false, icon = Icons.Rounded.Explore, enabled = source.enabled)
-            if (source.descriptor.url.startsWith("http")) MangaButton("Its site", { openInBrowser(source.descriptor.url) }, primary = false, icon = Icons.Rounded.OpenInNew)
+            if (!source.isLocal) {
+                MangaButton("Browse", {
+                    DiscoverState.open(source.id, "")
+                    manga.services.preferences.set(MangaPreferences.DISCOVER_SOURCE, source.id)
+                    MangaNav.root(MangaRoute.Discover)
+                    com.debridone.app.shell.ShellState.select(com.debridone.app.shell.ShellSection.MANGA)
+                }, primary = false, icon = Icons.Rounded.Explore, enabled = source.enabled)
+            } else {
+                manga.services.local.folder()?.let { folder -> MangaButton("Show its folder", { revealInFileManager(folder) }, primary = false, icon = Icons.Rounded.FolderOpen) }
+            }
+            source.homeUrl?.takeIf { it.startsWith("http") }?.let { site -> MangaButton("Its site", { openInBrowser(site) }, primary = false, icon = Icons.Rounded.OpenInNew) }
             if (health != null) MangaButton(if (expanded) "Hide the last test" else "Last test", onDetails, primary = false)
             if (source.preferredRank != null) {
                 MangaIconButton(Icons.Rounded.ArrowUpward, "Move up among the preferred sources", { onMove(-1) }, size = 34.dp)
                 MangaIconButton(Icons.Rounded.ArrowDownward, "Move down among the preferred sources", { onMove(1) }, size = 34.dp)
             }
         }
-        if (source.descriptor.usesBrowserWindow == true) {
-            Text(
-                "In Houdoku this source loads its pages in a hidden browser window. DebridOne loads them without running their scripts, so it works only while the site answers plain requests.",
-                style = small(), color = tokens.colors.textMuted,
-            )
-        }
-        if (source.descriptor.problems.isNotEmpty()) Text("This source ${source.descriptor.problems.joinToString("; ")}.", style = small(), color = tokens.colors.warning)
         if (expanded && health != null) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(tokens.colors.background).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 health.steps.forEach { step ->
@@ -268,74 +252,135 @@ private fun SourceRow(
     }
 }
 
-private fun isSecretSetting(name: String): Boolean = Regex("pass|token|secret|key", RegexOption.IGNORE_CASE).containsMatchIn(name)
+// ---------------------------------------------------------------------------- a source's own settings
 
-/** A source's own settings, exactly the ones it declares. They are stored for this profile in the system's credential store. */
+private fun isSecretSetting(name: String): Boolean = Regex("pass|token|secret|api.?key", RegexOption.IGNORE_CASE).containsMatchIn(name)
+
+/** The settings a source's extension defines, opened in a dialog. */
 @Composable
-private fun SourceSettingsDialog(source: SourceEntry, onDismiss: () -> Unit) {
+internal fun SourceSettingsDialog(sourceId: String, onDismiss: () -> Unit) {
+    val manga = LocalManga.current
+    val source = remember(sourceId) { manga.services.sources.find(sourceId) }
+    MangaDialogFrame("Configure ${source?.name ?: "source"}", onDismiss, width = 600) {
+        Column(Modifier.weight(1f, fill = false).heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SourcePreferencesEditor(sourceId)
+        }
+        MangaDialogDone(onDismiss)
+    }
+}
+
+/**
+ * The settings of one source, exactly as its extension defines them: switches, text fields, single
+ * and multiple choices. A change is sent to the manga server as it is made and what comes back is
+ * shown, because one setting can change another. Nothing is invented: a source without settings
+ * says so.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun SourcePreferencesEditor(sourceId: String) {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
-    val current = remember(source.id) { manga.services.sources.currentSettings(manga.profileId, source.descriptor) }
-    val texts = remember(source.id) {
-        mutableStateOf(source.descriptor.settingTypes.filterValues { it == "STRING" || it == "NUMBER" }.mapValues { (key, _) -> (current[key] as? JsonPrimitive)?.contentOrNull.orEmpty() })
-    }
-    val flags = remember(source.id) {
-        mutableStateOf(source.descriptor.settingTypes.filterValues { it == "BOOLEAN" }.mapValues { (key, _) -> (current[key] as? JsonPrimitive)?.booleanOrNull ?: false })
-    }
-    var problem by remember { mutableStateOf<String?>(null) }
-    var saving by remember { mutableStateOf(false) }
-    val unsupported = source.descriptor.settingTypes.filterValues { it != "STRING" && it != "NUMBER" && it != "BOOLEAN" }
+    var preferences by remember(sourceId) { mutableStateOf<List<SwPreference>?>(null) }
+    var problem by remember(sourceId) { mutableStateOf<String?>(null) }
+    var saving by remember(sourceId) { mutableStateOf<Int?>(null) }
+    var saved by remember(sourceId) { mutableStateOf<Int?>(null) }
 
-    MangaDialogFrame("Set up ${source.name}", onDismiss, width = 520) {
-        Text(
-            "These are the settings this source asks for. They are kept for this profile in the system's credential store, not in the library database, and are given only to this source.",
-            style = small(), color = tokens.colors.textMuted,
-        )
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            source.descriptor.settingTypes.forEach { (name, type) ->
-                when (type) {
-                    "STRING", "NUMBER" -> MangaTextField(
-                        texts.value[name].orEmpty(), { texts.value = texts.value + (name to it) }, name, secret = isSecretSetting(name),
-                        hint = if (type == "NUMBER") "A number" else null,
-                    )
-                    "BOOLEAN" -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(name, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, modifier = Modifier.weight(1f))
-                        MangaChip(if (flags.value[name] == true) "On" else "Off", flags.value[name] == true) { flags.value = flags.value + (name to !(flags.value[name] ?: false)) }
-                    }
-                    else -> Unit
-                }
-            }
-            if (unsupported.isNotEmpty()) {
-                Text("Not editable here (list settings): ${unsupported.keys.joinToString(", ")}. They keep the source's defaults.", style = small(), color = tokens.colors.textMuted)
-            }
-            problem?.let { Notice(it, PillTone.DANGER) }
+    LaunchedEffect(sourceId) {
+        try {
+            preferences = withContext(Dispatchers.IO) { manga.services.sources.preferences(sourceId) }
+        } catch (failure: Exception) {
+            problem = failure.message ?: "The source's settings could not be read."
         }
-        MangaDialogButtons(if (saving) "Saving…" else "Save", onDismiss, enabled = !saving) {
-            val values = buildJsonObject {
-                source.descriptor.settingTypes.forEach { (name, type) ->
-                    when (type) {
-                        "STRING" -> put(name, texts.value[name].orEmpty().trim())
-                        "NUMBER" -> texts.value[name]?.trim()?.toDoubleOrNull()?.let { put(name, it) }
-                        "BOOLEAN" -> put(name, flags.value[name] ?: false)
-                    }
-                }
-            }
-            saving = true
-            scope.launch(Dispatchers.IO) {
-                try {
-                    manga.services.sources.saveSettings(manga.profileId, source.descriptor, values)
-                    MangaNav.message = "${source.name} is set up. Use Test to check that it answers."
-                    withContext(Dispatchers.Main) { onDismiss() }
-                } catch (failure: Exception) {
-                    problem = failure.message ?: "The settings could not be saved."
-                } finally {
-                    saving = false
-                }
+    }
+    fun send(change: SwPreferenceChange) {
+        saving = change.position
+        problem = null
+        scope.launch(Dispatchers.IO) {
+            try {
+                preferences = manga.services.sources.setPreference(sourceId, change)
+                saved = change.position
+            } catch (failure: Exception) {
+                problem = failure.message ?: "The setting could not be saved."
+            } finally {
+                saving = null
             }
         }
+    }
+
+    problem?.let { Notice(it, PillTone.DANGER) }
+    val list = preferences
+    when {
+        list == null && problem == null -> CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+        list != null && list.none { it.visible } -> Text("This source has no settings.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+        list != null -> list.filter { it.visible }.forEach { preference ->
+            val title = preference.title?.takeIf { it.isNotBlank() } ?: preference.key.orEmpty()
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                when (preference) {
+                    is SwPreference.Toggle -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(title, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
+                            preference.summary?.takeIf { it.isNotBlank() }?.let { Text(it, style = small(), color = tokens.colors.textMuted) }
+                        }
+                        MangaChip(if (preference.value) "On" else "Off", preference.value) {
+                            if (preference.enabled) {
+                                send(if (preference.isSwitch) SwPreferenceChange(preference.position, switch = !preference.value) else SwPreferenceChange(preference.position, checkBox = !preference.value))
+                            }
+                        }
+                    }
+                    is SwPreference.Text -> {
+                        var text by remember(sourceId, preference.position, preference.value) { mutableStateOf(preference.value.orEmpty()) }
+                        val changed = text != preference.value.orEmpty()
+                        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            MangaTextField(
+                                text, { text = it }, title, Modifier.weight(1f), secret = isSecretSetting(title) || isSecretSetting(preference.key.orEmpty()),
+                                onSubmit = { if (changed) send(SwPreferenceChange(preference.position, text = text)) },
+                                hint = (preference.dialogMessage ?: preference.summary)?.takeIf { it.isNotBlank() && it != text },
+                            )
+                            MangaButton(
+                                when {
+                                    saving == preference.position -> "Saving…"
+                                    !changed && saved == preference.position -> "Saved"
+                                    else -> "Save"
+                                },
+                                { send(SwPreferenceChange(preference.position, text = text)) }, primary = changed, enabled = changed && saving == null,
+                            )
+                        }
+                    }
+                    is SwPreference.Choice -> {
+                        Text(title, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
+                        preference.summary?.takeIf { it.isNotBlank() && it != "%s" }?.let { Text(it.replace("%s", preference.entries.getOrNull(preference.entryValues.indexOf(preference.value)).orEmpty()), style = small(), color = tokens.colors.textMuted) }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            preference.entryValues.forEachIndexed { index, value ->
+                                MangaChip(preference.entries.getOrNull(index) ?: value, preference.value == value) { if (preference.enabled) send(SwPreferenceChange(preference.position, choice = value)) }
+                            }
+                        }
+                    }
+                    is SwPreference.MultiChoice -> {
+                        Text(title, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
+                        preference.summary?.takeIf { it.isNotBlank() }?.let { Text(it, style = small(), color = tokens.colors.textMuted) }
+                        if (preference.entryValues.isEmpty()) {
+                            Text("Nothing to choose from yet. Some sources fill this in once their address and login are saved.", style = small(), color = tokens.colors.textMuted)
+                        }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            preference.entryValues.forEachIndexed { index, value ->
+                                val on = value in preference.values
+                                MangaChip(preference.entries.getOrNull(index) ?: value, on) {
+                                    if (preference.enabled) send(SwPreferenceChange(preference.position, multiChoice = if (on) preference.values - value else preference.values + value))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (list != null && list.any { it.visible }) {
+        Text("These settings are the extension's own and are kept by the manga server. Changes are saved as you make them.", style = small(), color = tokens.colors.textMuted)
     }
 }
+
+// ---------------------------------------------------------------------------- Metadata
 
 // ---------------------------------------------------------------------------- Metadata
 
@@ -509,163 +554,6 @@ internal fun MetadataTab() {
                 "Accounts are per profile and kept in the system's credential store. Tracking is switched on per series, from the series' page.",
                 style = small(), color = tokens.colors.textMuted,
             )
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------- Settings
-
-/** The extension host and what surrounds it: state, time limits, network, cache, downloads, diagnostics. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun HostSettingsTab() {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
-    val services = manga.services
-    val hostState by services.host.state.collectAsStateWithLifecycle()
-    val log by services.host.log.collectAsStateWithLifecycle()
-    val app by services.appSettings.values.collectAsState()
-    val revision by services.repository.revision.collectAsState()
-    val sizes by produceState(Triple(0L, 0L, 0L), revision / 50, MangaPluginsState.changes) {
-        value = withContext(Dispatchers.IO) { Triple(services.pages.cacheSize(), services.downloads.size(), services.plugins.installedBytes(services.pluginsDir)) }
-    }
-    var proxy by remember { mutableStateOf(services.appSettings.proxy.orEmpty()) }
-    var showLog by remember { mutableStateOf(false) }
-    val runtimeProblem = remember { manga.module.runtimeProblem() }
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { Text("Settings", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary) }
-        item {
-            SettingsBlock(
-                "Extension host",
-                "Extension code runs in a separate helper process (Node.js, included with DebridOne) that is started when a source is first needed and stopped when DebridOne quits. " +
-                    "It talks to the app through its standard input and output only; no network port is opened.",
-            ) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    when (val state = hostState) {
-                        is HostState.Running -> {
-                            StatusPill("Running", PillTone.SUCCESS)
-                            StatusPill("Node.js ${state.info.nodeVersion}")
-                            StatusPill(if (state.info.runtimeOrigin == "bundled") "Bundled runtime" else "Development runtime")
-                            StatusPill(if (state.info.restricted) "File access restricted" else "File access NOT restricted", if (state.info.restricted) PillTone.SUCCESS else PillTone.DANGER)
-                        }
-                        HostState.Starting -> StatusPill("Starting…", PillTone.WARNING)
-                        HostState.Stopped -> StatusPill(if (runtimeProblem == null) "Not running (starts when needed)" else "Unavailable", if (runtimeProblem == null) PillTone.NEUTRAL else PillTone.DANGER)
-                        is HostState.Unavailable -> StatusPill("Stopped: needs attention", PillTone.DANGER)
-                    }
-                    if (services.host.crashCount > 0) StatusPill("Restarted ${plural(services.host.crashCount, "time")} after stopping", PillTone.WARNING)
-                }
-                (hostState as? HostState.Unavailable)?.let { Notice(it.reason, PillTone.DANGER) }
-                runtimeProblem?.let { Notice(it, PillTone.WARNING) }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MangaButton("Restart the host", {
-                        scope.launch(Dispatchers.IO) {
-                            runCatching {
-                                services.host.restart()
-                                services.extensions.reload()
-                            }.onFailure { MangaPluginsState.problem = it.message }.onSuccess { MangaNav.message = "The extension host was restarted." }
-                        }
-                    }, primary = false, icon = Icons.Rounded.Refresh, enabled = runtimeProblem == null)
-                }
-                Text("Installed packages: ${formatBytes(sizes.third)} in ${services.pluginsDir}", style = small(), color = tokens.colors.textMuted)
-            }
-        }
-        item {
-            SettingsBlock("Source timeouts", "How long a source may take to answer one request before DebridOne gives up on it. Chapter lists and images get twice as long.") {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(20, 30, 45, 60, 90, 120).forEach { seconds ->
-                        MangaChip("$seconds s", services.appSettings.timeoutSeconds == seconds && app.isNotEmpty() || services.appSettings.timeoutSeconds == seconds) {
-                            services.appSettings.set(MangaAppSettings.TIMEOUT_SECONDS, seconds.toString())
-                            services.extensions.timeoutMs = seconds * 1000L
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            SettingsBlock(
-                "Network",
-                "Sources connect directly unless a proxy is given here (http://host:port). It applies to the extensions' requests and takes effect when the host is restarted. " +
-                    "Requests to one source are spaced out and limited to three at a time.",
-            ) {
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MangaTextField(proxy, { proxy = it }, "Proxy for extensions (empty: none)", Modifier.weight(1f))
-                    MangaButton("Save", {
-                        val value = proxy.trim()
-                        if (value.isNotEmpty() && !Regex("^https?://[^\\s/]+(:\\d+)?/?$").matches(value)) {
-                            MangaPluginsState.problem = "A proxy address looks like http://host:port."
-                        } else {
-                            services.appSettings.set(MangaAppSettings.PROXY, value.ifEmpty { null })
-                            MangaNav.message = "Saved. Restart the host to use it."
-                        }
-                    }, primary = false)
-                }
-            }
-        }
-        item {
-            SettingsBlock("Cache", "Pages read online are kept on disk, up to a limit, so they open at once the next time. Now: ${formatBytes(sizes.first)}.") {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(250, 500, 1000, 2000, 5000).forEach { megabytes ->
-                        MangaChip(if (megabytes >= 1000) "${megabytes / 1000} GB" else "$megabytes MB", services.appSettings.cacheMegabytes == megabytes) {
-                            services.appSettings.set(MangaAppSettings.CACHE_MEGABYTES, megabytes.toString())
-                            scope.launch(Dispatchers.IO) { services.pages.trimCache(megabytes * 1024L * 1024L) }
-                        }
-                    }
-                    MangaButton("Empty now", {
-                        scope.launch(Dispatchers.IO) {
-                            services.pages.clearCache()
-                            MangaCovers.clear()
-                            MangaNav.message = "Cache emptied."
-                        }
-                    }, primary = false)
-                }
-            }
-        }
-        item {
-            SettingsBlock("Downloads", "Saved chapters: ${formatBytes(sizes.second)} in ${services.downloadsDir}. Chapters are fetched through their source, at the pace it allows.") {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Chapters at the same time", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-                    (1..3).forEach { count ->
-                        MangaChip("$count", services.appSettings.parallelDownloads == count) { services.appSettings.set(MangaAppSettings.PARALLEL_DOWNLOADS, count.toString()) }
-                    }
-                }
-            }
-        }
-        item {
-            SettingsBlock("Source priorities", "Preferred sources are searched and listed first. Star a source in the Sources tab and order the starred ones with the arrows.") {
-                MangaButton("Open Sources", { MangaPluginsState.tab = MangaPluginsTab.SOURCES }, primary = false)
-            }
-        }
-        item {
-            SettingsBlock("Diagnostics", "What the host and the extensions printed since DebridOne started (${log.size} lines). It is kept in memory only and never sent anywhere.") {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MangaButton(if (showLog) "Hide" else "Show", { showLog = !showLog }, primary = false)
-                    MangaButton("Copy", {
-                        val text = log.joinToString("\n") { "[${it.level}] ${it.text}" }
-                        runCatching { java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(text), null) }
-                        MangaNav.message = "Copied ${plural(log.size, "line")}"
-                    }, primary = false, enabled = log.isNotEmpty())
-                    MangaButton("Clear", { services.host.clearLog() }, primary = false, enabled = log.isNotEmpty())
-                }
-                if (showLog) {
-                    SelectionContainer {
-                        Column(
-                            Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(10.dp)).background(tokens.colors.background).padding(12.dp).verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            if (log.isEmpty()) Text("Nothing has been printed.", style = small(), color = tokens.colors.textMuted)
-                            log.takeLast(200).forEach { line ->
-                                Text(
-                                    "${line.level.padEnd(5)} ${line.text}",
-                                    style = small().copy(fontFamily = FontFamily.Monospace),
-                                    color = if (line.level == "error") tokens.colors.danger else if (line.level == "warn") tokens.colors.warning else tokens.colors.textSecondary,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

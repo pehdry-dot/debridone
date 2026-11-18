@@ -32,7 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.shell.SettingsPage
 import com.debridone.app.shell.ShellSection
 import com.debridone.app.shell.ShellState
@@ -68,11 +67,11 @@ internal fun MangaSettings() {
     val manga = LocalManga.current
     val actions = LocalMangaActions.current
     val preferences by manga.services.preferences.values.collectAsState()
-    val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
-    val chosen = remember(preferences) { manga.services.preferences.chapterLanguages() }
+    val sources by rememberMangaSources()
+    val chosen = remember(preferences) { manga.services.preferences.sourceLanguages() }
     // The languages the installed sources publish in, plus any already chosen.
-    val languages = remember(hostState, chosen) {
-        (hostState?.sources?.mapNotNull { it.language }.orEmpty().filter { it != "MULTI" } + COMMON_LANGUAGES + chosen).distinct().sortedBy(::languageName)
+    val languages = remember(sources, chosen) {
+        (sources.map { it.language }.filter { it.isNotBlank() && it != "all" } + chosen).distinct().sortedBy(::languageName)
     }
     val revision by manga.services.repository.revision.collectAsState()
     val cacheSize by produceState(0L, revision / 50) { value = withContext(Dispatchers.IO) { manga.services.pages.cacheSize() } }
@@ -101,24 +100,30 @@ internal fun MangaSettings() {
             }
         }
         item {
-            SettingsBlock("Chapter languages", "Sources such as MangaDex list every translation of a chapter. Choose the languages to list and count; with none chosen, all are shown.") {
+            SettingsBlock(
+                "Source languages",
+                "An extension often brings one source per language. Sources in these languages are switched on when they appear; any single source can still be switched on or off in Plugins › Manga › Sources. With none chosen, every language is on.",
+            ) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     MangaChip("All languages", chosen.isEmpty()) {
-                        manga.services.preferences.setChapterLanguages(emptySet())
-                        manga.services.repository.setChapterLanguages(manga.profileId, emptySet())
+                        manga.services.preferences.setSourceLanguages(emptySet())
+                        manga.services.sources.invalidate()
                     }
                     languages.forEach { language ->
                         MangaChip(languageName(language), language in chosen) {
                             val next = if (language in chosen) chosen - language else chosen + language
-                            manga.services.preferences.setChapterLanguages(next)
-                            manga.services.repository.setChapterLanguages(manga.profileId, next)
+                            // Deselecting the last language would mean "all"; keep one instead.
+                            if (next.isNotEmpty()) {
+                                manga.services.preferences.setSourceLanguages(next)
+                                manga.services.sources.invalidate()
+                            }
                         }
                     }
                 }
             }
         }
         item {
-            SettingsBlock("Your own files", "CBZ and ZIP archives, a folder of chapters or a folder of images. They are read in place and need no source.") {
+            SettingsBlock("Your own files", "CBZ, ZIP, CBR, RAR and EPUB files, a folder of chapters or a folder of images. They are read where they are, through the manga server's Local source; nothing is copied.") {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     MangaButton("Add files", { importLocal(manga, actions, MangaPickers.chooseArchives()) }, primary = false, icon = Icons.Rounded.InsertDriveFile)
                     MangaButton("Add a folder", { MangaPickers.chooseFolder()?.let { importLocal(manga, actions, listOf(it)) } }, primary = false, icon = Icons.Rounded.FolderOpen)
@@ -128,13 +133,13 @@ internal fun MangaSettings() {
         item {
             SettingsBlock(
                 "Library backup",
-                "One file with this profile's library: where each series comes from, your edits and locks, reading progress, bookmarks and collections. It holds no pages, downloads or passwords.",
+                "One file with this profile's library, in the backup format of Suwayomi and Mihon (.tachibk): the series and where each comes from, categories, read chapters, trackers, and what DebridOne keeps with them (reading status, favourites, your edits, bookmarks). It holds no pages, downloads or passwords.",
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     MangaButton("Save a backup…", {
-                        MangaPickers.saveFile("Save the Manga library", "debridone-manga-library.json")?.let { target ->
+                        MangaPickers.saveFile("Save the Manga library", "debridone-manga-library.tachibk")?.let { target ->
                             actions.io {
-                                val count = manga.services.backup.export(manga.profileId, target)
+                                val count = manga.services.repository.exportBackup(target)
                                 MangaNav.message = "${plural(count, "series", "series")} saved to ${target.fileName}"
                             }
                         }
@@ -142,13 +147,14 @@ internal fun MangaSettings() {
                     MangaButton("Restore from a backup…", {
                         MangaPickers.chooseBackup()?.let { source ->
                             actions.io {
-                                val summary = manga.services.backup.restore(manga.profileId, source)
-                                MangaNav.message = "Restored ${plural(summary.series, "series", "series")} with progress on ${plural(summary.chapters, "chapter")}"
+                                MangaNav.message = "Restoring ${source.fileName}…"
+                                val restored = manga.services.repository.restoreBackup(source)
+                                MangaNav.message = "Restored ${plural(restored, "series", "series")}"
                             }
                         }
                     }, primary = false, icon = Icons.Rounded.SettingsBackupRestore)
                 }
-                Text("Restoring adds to the library that is here; nothing already in it is removed.", style = small(), color = tokens.colors.textMuted)
+                Text("Restoring adds to the library that is here; nothing already in it is removed. A backup made by Mihon or another Suwayomi can be restored too.", style = small(), color = tokens.colors.textMuted)
             }
         }
         item {
@@ -164,7 +170,7 @@ internal fun MangaSettings() {
             }
         }
         item {
-            SettingsBlock("Storage", "Pages you have read online are kept for a while so they open at once next time: ${formatBytes(cacheSize)} now.") {
+            SettingsBlock("Storage", "Covers from metadata providers and the pages just read are kept so they show at once: ${formatBytes(cacheSize)} now.") {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     MangaButton("Empty the page cache", {
                         actions.io {
@@ -179,9 +185,9 @@ internal fun MangaSettings() {
         item {
             SettingsBlock("Elsewhere", modifier = Modifier.widthIn(max = 900.dp)) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MangaButton("Sources and extensions", { openMangaPlugins(MangaPluginsTab.INSTALLED) }, primary = false, icon = Icons.Rounded.Extension)
+                    MangaButton("Extensions and sources", { openMangaPlugins(MangaPluginsTab.EXTENSIONS) }, primary = false, icon = Icons.Rounded.Extension)
                     MangaButton("Metadata providers", { openMangaPlugins(MangaPluginsTab.METADATA) }, primary = false)
-                    MangaButton("Extension host, cache and network", { openMangaPlugins(MangaPluginsTab.SETTINGS) }, primary = false)
+                    MangaButton("Manga server", { openMangaPlugins(MangaPluginsTab.SERVER) }, primary = false)
                     MangaButton("Colours, covers and cards", {
                         ShellState.selectAppearanceModule(ModuleId.MANGA)
                         ShellState.selectSettingsPage(SettingsPage.APPEARANCE)
@@ -192,5 +198,3 @@ internal fun MangaSettings() {
         }
     }
 }
-
-private val COMMON_LANGUAGES = listOf("ENGLISH", "SPANISH_ES", "SPANISH_LATAM", "PORTUGUESE_BR", "PORTUGUESE_PT", "FRENCH", "GERMAN", "ITALIAN", "JAPANESE", "KOREAN")

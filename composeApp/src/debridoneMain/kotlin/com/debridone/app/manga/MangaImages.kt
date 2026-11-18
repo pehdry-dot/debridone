@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -18,7 +19,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import com.debridone.manga.host.RemoteSeries
 import com.debridone.manga.library.Series
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.Dispatchers
@@ -99,9 +99,8 @@ internal object MangaCovers {
         }
     }
 
-    fun key(series: Series): String = "s:${series.id}:${series.coverFile ?: series.coverUrl}"
-
-    fun key(remote: RemoteSeries): String = "r:${remote.extensionId}:${remote.coverUrl}"
+    /** The profile is part of the key: two profiles' servers number their series independently. */
+    fun key(series: Series): String = "s:${series.profileId}:${series.id}:${series.coverFile ?: series.coverUrl}"
 }
 
 /** The cover of a library series, or a quiet placeholder when it has none. [large] is for the series page. */
@@ -115,16 +114,23 @@ internal fun SeriesCover(series: Series, modifier: Modifier = Modifier, shape: S
     CoverBox(bitmap, modifier, shape)
 }
 
-/** The cover of a series as a source lists it (no row yet). */
+/** The icon of a source or an extension, as the manga server serves it. */
 @Composable
-internal fun RemoteCover(remote: RemoteSeries, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(12.dp)) {
+internal fun ServerIcon(path: String, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(10.dp)) {
     val manga = LocalManga.current
-    val key = MangaCovers.key(remote)
+    val key = "i:${manga.profileId}:$path"
     val bitmap by produceState(MangaCovers.cached(key), key) {
-        value = MangaCovers.cached(key)
-            ?: MangaCovers.load(key) { manga.services.pages.remoteCover(remote.coverUrl, extensionId = remote.extensionId, raw = remote.raw) }
+        value = if (path.isBlank()) null else MangaCovers.cached(key) ?: MangaCovers.load(key, 128) { manga.services.pages.icon(path) }
     }
-    CoverBox(bitmap, modifier, shape)
+    val tokens = MaterialTheme.nuvio
+    Box(modifier.clip(shape).background(tokens.colors.surfaceElevated), contentAlignment = Alignment.Center) {
+        val shown = bitmap
+        if (shown != null) {
+            Image(bitmap = shown, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+        } else {
+            Icon(androidx.compose.material.icons.Icons.Rounded.Extension, contentDescription = null, tint = tokens.colors.textMuted, modifier = Modifier.fillMaxSize(0.5f))
+        }
+    }
 }
 
 /** A cover by plain address (metadata providers). */

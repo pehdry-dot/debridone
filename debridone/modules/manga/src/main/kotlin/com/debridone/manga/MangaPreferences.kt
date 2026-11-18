@@ -9,7 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Per-profile choices of the Manga section that are not appearance: reading presets for Manga and
- * for Manhwa, chapter languages, the last library view and sort order.
+ * for Manhwa, source languages, the last library view and sort order, and which server the
+ * profile reads from.
  */
 class MangaPreferences internal constructor(private val store: () -> ProfileSettingsTableStore) {
     private val _values = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -43,16 +44,33 @@ class MangaPreferences internal constructor(private val store: () -> ProfileSett
 
     fun setReaderSettings(type: MediaType, settings: ReaderSettings) = set(readerKey(type), settings.normalized().encode())
 
-    /** Tiyo language keys of the chapters to list and count. Empty: every language. */
-    fun chapterLanguages(): Set<String> = get(CHAPTER_LANGUAGES)?.split(',')?.filter { it.isNotBlank() }?.toSet().orEmpty()
+    /**
+     * Language codes of the sources that are switched on unless the person decided for a source
+     * itself. An extension often brings one source per language; without this, installing one
+     * would add dozens of sources to every search. "*" means every language.
+     */
+    fun sourceLanguages(): Set<String> {
+        val stored = get(SOURCE_LANGUAGES) ?: return com.debridone.manga.sources.MangaSources.defaultLanguages()
+        return if (stored == ALL_LANGUAGES) emptySet() else stored.split(',').filter { it.isNotBlank() }.toSet()
+    }
 
-    fun setChapterLanguages(languages: Set<String>) = set(CHAPTER_LANGUAGES, languages.sorted().joinToString(",").ifEmpty { null })
+    /** An empty set means every language. */
+    fun setSourceLanguages(languages: Set<String>) = set(SOURCE_LANGUAGES, if (languages.isEmpty()) ALL_LANGUAGES else languages.sorted().joinToString(","))
 
     private fun readerKey(type: MediaType) = "reader.${type.key}"
 
     companion object {
         private const val PREFIX = "pref."
-        const val CHAPTER_LANGUAGES = "chapter_languages"
+        const val SOURCE_LANGUAGES = "source_languages"
+        private const val ALL_LANGUAGES = "*"
+
+        /** `managed` (the server DebridOne starts, the default) or `remote`. */
+        const val SERVER_MODE = "server.mode"
+        const val SERVER_MODE_REMOTE = "remote"
+        const val SERVER_URL = "server.url"
+        const val SERVER_USERNAME = "server.username"
+        const val SERVER_TIMEOUT = "server.timeout"
+        const val SERVER_REQUIRE_HTTPS = "server.require_https"
         const val LIBRARY_SORT = "library_sort"
         const val LIBRARY_SORT_DESCENDING = "library_sort_descending"
         const val DISCOVER_SOURCE = "discover_source"
@@ -61,9 +79,9 @@ class MangaPreferences internal constructor(private val store: () -> ProfileSett
 }
 
 /**
- * Settings of the Manga section that belong to the app rather than to a profile: how the extension
- * host reaches the network, time limits, and the size of the page cache. Stored under the reserved
- * profile id 0 of Manga's own settings table.
+ * Settings of the Manga section that belong to the app rather than to a profile. Stored under the
+ * reserved profile id 0 of Manga's own settings table. (How sources are reached, how many chapters
+ * download at once and where they are kept are settings of the Suwayomi server itself.)
  */
 class MangaAppSettings internal constructor(private val store: () -> ProfileSettingsTableStore) {
     private val _values = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -80,27 +98,16 @@ class MangaAppSettings internal constructor(private val store: () -> ProfileSett
         _values.value = if (value == null) _values.value - key else _values.value + (key to value)
     }
 
-    /** Seconds a source may take to answer one request. */
-    val timeoutSeconds: Int get() = get(TIMEOUT_SECONDS)?.toIntOrNull()?.coerceIn(10, 180) ?: 45
+    /** Megabytes of covers from metadata providers kept on disk. */
+    val cacheMegabytes: Int get() = get(CACHE_MEGABYTES)?.toIntOrNull()?.coerceIn(50, 5_000) ?: 300
 
-    /** Megabytes of pages kept on disk for re-reading without downloading again. */
-    val cacheMegabytes: Int get() = get(CACHE_MEGABYTES)?.toIntOrNull()?.coerceIn(100, 20_000) ?: 1_000
-
-    /** `http://host:port` for the extensions' requests, or null to connect directly. */
-    val proxy: String? get() = get(PROXY)?.trim()?.takeIf { it.isNotEmpty() }
-
-    val showLegacyPackages: Boolean get() = get(SHOW_LEGACY) == "true"
-
-    /** Chapters downloaded at the same time. */
-    val parallelDownloads: Int get() = get(PARALLEL_DOWNLOADS)?.toIntOrNull()?.coerceIn(1, 3) ?: 1
+    /** True once the person has read what an extension is allowed to do (shown when the first store is added). */
+    val extensionNoticeSeen: Boolean get() = get(EXTENSION_NOTICE_SEEN) == "true"
 
     companion object {
         private const val APP_SCOPE = 0L
         private const val PREFIX = "app."
-        const val TIMEOUT_SECONDS = "timeout_seconds"
         const val CACHE_MEGABYTES = "cache_megabytes"
-        const val PROXY = "proxy"
-        const val SHOW_LEGACY = "show_legacy"
-        const val PARALLEL_DOWNLOADS = "parallel_downloads"
+        const val EXTENSION_NOTICE_SEEN = "extension_notice_seen"
     }
 }

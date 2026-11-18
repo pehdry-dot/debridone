@@ -25,11 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Explore
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.FilterAlt
+import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Whatshot
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +42,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,44 +56,54 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.shell.Notice
 import com.debridone.app.shell.PillTone
 import com.debridone.manga.MangaPreferences
-import com.debridone.manga.host.RemoteSeries
-import com.debridone.manga.library.MangaClassifier
 import com.debridone.manga.library.MediaType
+import com.debridone.manga.library.Series
+import com.debridone.manga.sources.BrowseMode
 import com.debridone.manga.sources.SourceEntry
 import com.debridone.manga.sources.SourceProblem
+import com.debridone.manga.suwayomi.SwFilter
+import com.debridone.manga.suwayomi.SwFilterChange
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.put
+import kotlinx.coroutines.withContext
+
+/** Which filter a choice belongs to: its place in the source's list, and its place inside a group. */
+internal data class FilterKey(val position: Int, val inner: Int? = null)
+
+/** What is chosen in one filter. Only choices that differ from the filter's default are kept. */
+internal sealed interface FilterChoice {
+    data class Check(val on: Boolean) : FilterChoice
+
+    /** IGNORE, INCLUDE or EXCLUDE. */
+    data class Tri(val state: String) : FilterChoice
+    data class Text(val text: String) : FilterChoice
+    data class Select(val index: Int) : FilterChoice
+    data class Sort(val index: Int, val ascending: Boolean) : FilterChoice
+}
 
 /** The Discover page's state: one source, browsed page by page. */
 internal object DiscoverState {
     var sourceId by mutableStateOf<String?>(null)
     var text by mutableStateOf("")
 
-    /** The text the listed results belong to ("" is the source's own directory). */
+    /** The text the listed results belong to ("" is the source's own listing). */
     var applied by mutableStateOf("")
+
+    /** The source's own listing shown while nothing is searched or filtered. */
+    var listing by mutableStateOf(BrowseMode.POPULAR)
     var type by mutableStateOf<MediaType?>(null)
     var language by mutableStateOf<String?>(null)
-    val items = mutableStateListOf<RemoteSeries>()
+    val items = mutableStateListOf<Series>()
     var page by mutableStateOf(0)
     var hasMore by mutableStateOf(false)
     var loading by mutableStateOf(false)
     var problem by mutableStateOf<SourceProblem?>(null)
 
-    /** The source's own filter controls, and what is chosen in them. */
-    var filterOptions by mutableStateOf<JsonArray>(JsonArray(emptyList()))
-    var filterValues by mutableStateOf<Map<String, JsonElement>>(emptyMap())
+    /** The source's own filters, and what is chosen in them. */
+    var filters by mutableStateOf<List<SwFilter>>(emptyList())
+    val choices = mutableStateMapOf<FilterKey, FilterChoice>()
     var filtersFor by mutableStateOf<String?>(null)
     var titleSort by mutableStateOf(false)
     var job: Job? = null
@@ -100,11 +114,12 @@ internal object DiscoverState {
         sourceId = null
         text = ""
         applied = ""
+        listing = BrowseMode.POPULAR
         type = null
         language = null
         clearResults()
-        filterOptions = JsonArray(emptyList())
-        filterValues = emptyMap()
+        filters = emptyList()
+        choices.clear()
         filtersFor = null
         titleSort = false
     }
@@ -126,12 +141,24 @@ internal object DiscoverState {
         clearResults()
         requested++
     }
+
+    /** The choices as the server wants them: one change per filter that is not at its default. */
+    fun changes(): List<SwFilterChange> = choices.entries.sortedWith(compareBy({ it.key.position }, { it.key.inner ?: -1 })).map { (key, choice) ->
+        fun change(position: Int): SwFilterChange = when (choice) {
+            is FilterChoice.Check -> SwFilterChange(position, checkBox = choice.on)
+            is FilterChoice.Tri -> SwFilterChange(position, triState = choice.state)
+            is FilterChoice.Text -> SwFilterChange(position, text = choice.text)
+            is FilterChoice.Select -> SwFilterChange(position, select = choice.index)
+            is FilterChoice.Sort -> SwFilterChange(position, sortIndex = choice.index, sortAscending = choice.ascending)
+        }
+        if (key.inner == null) change(key.position) else SwFilterChange(key.position, group = change(key.inner))
+    }
 }
 
 /**
  * Discover: browse one source at a time, the way the source itself offers its catalogue — its
- * directory, its search, and its own filters and sort orders (genre, status, popularity, latest,
- * title, where the source has them). Manga or Manhwa narrows what is shown.
+ * popular and latest listings, its search, and its own filters and sort orders (genre, status,
+ * and whatever else its extension defines). Manga or Manhwa narrows what is shown.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -139,10 +166,9 @@ internal fun MangaDiscover() {
     val tokens = MaterialTheme.nuvio
     val manga = LocalManga.current
     val scope = rememberCoroutineScope()
-    val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
-    val sources by rememberMangaQuery(hostState, initial = emptyList<SourceEntry>()) { services, profile -> services.sources.enabled(profile) }
-    val languages = sources.mapNotNull { it.descriptor.language }.distinct().sorted()
-    val offered = sources.filter { DiscoverState.language == null || it.descriptor.language == DiscoverState.language }
+    val sources by rememberMangaQuery(initial = emptyList<SourceEntry>()) { services, profile -> services.sources.enabled(profile) }
+    val languages = sources.map { it.language }.filter { it.isNotBlank() }.distinct().sorted()
+    val offered = sources.filter { DiscoverState.language == null || it.language == DiscoverState.language }
     val source = offered.firstOrNull { it.id == DiscoverState.sourceId }
     var filtersOpen by remember { mutableStateOf(false) }
 
@@ -169,15 +195,17 @@ internal fun MangaDiscover() {
         DiscoverState.problem = null
         val nextPage = DiscoverState.page + 1
         val query = DiscoverState.applied
-        val filters = JsonObject(DiscoverState.filterValues)
+        val changes = DiscoverState.changes()
+        // A source applies its filters to a search; with neither text nor filters, its own listing is shown.
+        val mode = if (query.isNotBlank() || changes.isNotEmpty()) BrowseMode.SEARCH else DiscoverState.listing
         DiscoverState.job = scope.launch(Dispatchers.IO) {
             try {
-                val result = manga.services.sources.browse(current.id, query, nextPage, filters)
-                val known = DiscoverState.items.map { it.sourceId }.toSet()
-                DiscoverState.items += result.series.filter { it.sourceId !in known }
+                val result = manga.services.sources.browse(current.id, mode, query, nextPage, changes)
+                val known = DiscoverState.items.map { it.id }.toSet()
+                DiscoverState.items += result.series.filter { it.id !in known }
                 DiscoverState.page = nextPage
                 // A page that brings nothing new means the source has no more, whatever it claims.
-                DiscoverState.hasMore = result.hasMore && result.series.any { it.sourceId !in known }
+                DiscoverState.hasMore = result.hasMore && result.series.any { it.id !in known }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
@@ -189,18 +217,19 @@ internal fun MangaDiscover() {
         }
     }
 
-    // The source's own filter controls, loaded when the source changes.
+    suspend fun loadFilters(current: SourceEntry, refresh: Boolean) {
+        DiscoverState.filters = withContext(Dispatchers.IO) { runCatching { manga.services.sources.filters(current.id, refresh) }.getOrDefault(emptyList()) }
+    }
+
+    // The source's own filters, loaded when the source changes.
     LaunchedEffect(source?.id) {
         val current = source ?: return@LaunchedEffect
         if (DiscoverState.filtersFor != current.id) {
             DiscoverState.filtersFor = current.id
-            DiscoverState.filterOptions = JsonArray(emptyList())
-            DiscoverState.filterValues = emptyMap()
-            if (current.descriptor.filterCount > 0) {
-                val options = runCatching { manga.services.extensions.filterOptions(current.id) }.getOrDefault(JsonArray(emptyList()))
-                DiscoverState.filterOptions = options
-                DiscoverState.filterValues = SourceFilters.defaults(options)
-            }
+            DiscoverState.filters = emptyList()
+            DiscoverState.choices.clear()
+            if (!current.supportsLatest && DiscoverState.listing == BrowseMode.LATEST) DiscoverState.listing = BrowseMode.POPULAR
+            loadFilters(current, refresh = false)
         }
     }
     LaunchedEffect(source?.id, DiscoverState.requested) {
@@ -209,7 +238,7 @@ internal fun MangaDiscover() {
 
     val shown by remember {
         derivedStateOf {
-            val typed = DiscoverState.items.filter { DiscoverState.type == null || MangaClassifier.classify(it.originalLanguage, it.tags) == DiscoverState.type }
+            val typed = DiscoverState.items.filter { DiscoverState.type == null || it.mediaType == DiscoverState.type }
             if (DiscoverState.titleSort) typed.sortedBy { it.title.lowercase() } else typed
         }
     }
@@ -254,46 +283,58 @@ internal fun MangaDiscover() {
                         }
                         LanguagePicker(languages, DiscoverState.language) { DiscoverState.language = it }
                     }
-                    if (source != null && DiscoverState.filterOptions.isNotEmpty()) {
-                        val changed = SourceFilters.changedCount(DiscoverState.filterOptions, DiscoverState.filterValues)
-                        MangaChip(if (changed > 0) "Filters ($changed)" else "Filters", changed > 0, icon = Icons.Rounded.FilterAlt) { filtersOpen = !filtersOpen }
-                    }
                     if (source != null) {
+                        val changed = DiscoverState.choices.size
+                        MangaChip(if (changed > 0) "Filters ($changed)" else "Filters", changed > 0 || filtersOpen, icon = Icons.Rounded.FilterAlt) { filtersOpen = !filtersOpen }
                         MangaChip("Sort by title", DiscoverState.titleSort) { DiscoverState.titleSort = !DiscoverState.titleSort }
                         MangaIconButton(Icons.Rounded.Refresh, "Reload", { load(reset = true) }, enabled = !DiscoverState.loading)
                     }
                 }
-                // Sort orders the source itself offers (popularity, latest update, title…) as one-click chips.
+                // The source's own listings. They show while nothing is searched or filtered.
                 if (source != null) {
-                    SourceFilters.sortControl(DiscoverState.filterOptions)?.let { control ->
-                        SortChips(control, DiscoverState.filterValues[control.id]) { value ->
-                            DiscoverState.filterValues = DiscoverState.filterValues + (control.id to value)
+                    val listed = DiscoverState.applied.isBlank() && DiscoverState.choices.isEmpty()
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MangaChip("Popular", listed && DiscoverState.listing == BrowseMode.POPULAR, icon = Icons.Rounded.Whatshot) {
+                            DiscoverState.listing = BrowseMode.POPULAR
+                            DiscoverState.text = ""
+                            DiscoverState.applied = ""
+                            DiscoverState.choices.clear()
                             load(reset = true)
                         }
+                        if (source.supportsLatest) {
+                            MangaChip("Latest", listed && DiscoverState.listing == BrowseMode.LATEST, icon = Icons.Rounded.NewReleases) {
+                                DiscoverState.listing = BrowseMode.LATEST
+                                DiscoverState.text = ""
+                                DiscoverState.applied = ""
+                                DiscoverState.choices.clear()
+                                load(reset = true)
+                            }
+                        }
+                        if (!listed) MangaChip(if (DiscoverState.applied.isBlank()) "Filtered" else "Results for \"${DiscoverState.applied}\"", true) {}
                     }
                 }
                 if (filtersOpen && source != null) {
                     FilterPanel(
-                        options = DiscoverState.filterOptions,
-                        values = DiscoverState.filterValues,
-                        onChange = { DiscoverState.filterValues = it },
+                        filters = DiscoverState.filters,
+                        sourceName = source.name,
                         onApply = {
                             filtersOpen = false
                             load(reset = true)
                         },
                         onReset = {
-                            DiscoverState.filterValues = SourceFilters.defaults(DiscoverState.filterOptions)
+                            DiscoverState.choices.clear()
+                            // Some sources only know their filters (their libraries, their genres) once asked again.
+                            scope.launch { loadFilters(source, refresh = true) }
                             load(reset = true)
                         },
                     )
                 }
-                if (source != null && source.descriptor.filterCount == 0) {
-                    Text("${source.name} offers no filters or sort orders of its own.", style = small(), color = tokens.colors.textMuted)
+                DiscoverState.problem?.let { problem ->
+                    Notice(problem.message, if (problem.temporary) PillTone.WARNING else PillTone.DANGER)
+                    if (source?.configurable == true) {
+                        MangaButton("Configure ${source.name}", { openMangaPlugins(MangaPluginsTab.SOURCES) }, primary = false, icon = Icons.Rounded.Tune)
+                    }
                 }
-                if (source?.needsSetup == true) {
-                    Notice("${source.name} has to be set up before it can be browsed (its address or account). Open Plugins › Manga › Sources.", PillTone.WARNING)
-                }
-                DiscoverState.problem?.let { problem -> Notice(problem.message, if (problem.temporary) PillTone.WARNING else PillTone.DANGER) }
             }
         }
 
@@ -301,12 +342,12 @@ internal fun MangaDiscover() {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 MangaEmptyState(
                     Icons.Rounded.Extension, "No sources to browse yet",
-                    "Discover shows the catalogues of the sources in Houdoku's extension package. Add it to browse and read online.",
-                ) { MangaButton("Add Source", { openMangaPlugins() }, icon = Icons.Rounded.Extension) }
+                    "Discover shows the catalogues of the sources your extensions provide. Add an extension store and install an extension to browse and read online.",
+                ) { MangaButton("Add extensions", { openMangaPlugins() }, icon = Icons.Rounded.Extension) }
             }
         }
 
-        items(shown, key = { it.extensionId + ":" + it.sourceId }) { remote -> RemoteSeriesCard(remote, source?.name.orEmpty()) }
+        items(shown, key = { it.id }) { series -> SourceSeriesCard(series, source?.name.orEmpty()) }
 
         item(span = { GridItemSpan(maxLineSpan) }) {
             Box(Modifier.fillMaxWidth().padding(vertical = 18.dp), contentAlignment = Alignment.Center) {
@@ -319,7 +360,8 @@ internal fun MangaDiscover() {
                     )
                     source != null && DiscoverState.items.isEmpty() && DiscoverState.problem == null && DiscoverState.page > 0 -> MangaEmptyState(
                         Icons.Rounded.Explore, "Nothing here",
-                        if (DiscoverState.applied.isBlank()) "${source.name} listed no series." else "${source.name} found nothing for \"${DiscoverState.applied}\".",
+                        if (DiscoverState.applied.isBlank()) "${source.name} listed no series." + if (source.configurable) " It may need to be configured first (its address or account)." else ""
+                        else "${source.name} found nothing for \"${DiscoverState.applied}\".",
                     )
                     DiscoverState.items.isNotEmpty() -> Text("End of the list · ${plural(DiscoverState.items.size, "title")}", style = small(), color = tokens.colors.textMuted)
                 }
@@ -335,7 +377,7 @@ private fun DiscoverSourcePicker(sources: List<SourceEntry>, selected: SourceEnt
         MangaChip(selected?.name ?: "Choose a source", true, icon = Icons.Rounded.Public) { open = true }
         DropdownMenu(open, { open = false }, modifier = Modifier.width(300.dp)) {
             sources.forEach { source ->
-                MangaMenuItem(source.name + "  ·  " + languageName(source.descriptor.language), checked = source.id == selected?.id) {
+                MangaMenuItem(source.name + languageName(source.language).let { if (it.isBlank()) "" else "  ·  $it" }, checked = source.id == selected?.id) {
                     open = false
                     onPick(source)
                 }
@@ -346,147 +388,125 @@ private fun DiscoverSourcePicker(sources: List<SourceEntry>, selected: SourceEnt
 
 // ---------------------------------------------------------------------------- source filters
 
-/** One filter control of a source, as Tiyo describes it (`FilterOption`). */
-internal class FilterControl(val json: JsonObject) {
-    val kind: String = json.text("kind").orEmpty()
-    val id: String = json.text("id").orEmpty()
-    val label: String = json.text("label").orEmpty()
-    val default: JsonElement = json["defaultValue"] ?: JsonNull
-
-    /** `options` of select and cycle controls. */
-    val options: List<Pair<String, String>> = pairs("options", "value")
-
-    /** `fields` of multi-toggle and sort controls. */
-    val fields: List<Pair<String, String>> = pairs("fields", "key")
-    val isTriState: Boolean = (json["isTriState"] as? JsonPrimitive)?.booleanOrNull ?: false
-    val bothDirections: Boolean = (json["supportsBothDirections"] as? JsonPrimitive)?.booleanOrNull ?: false
-    val placeholder: String = json.text("placeholder").orEmpty()
-
-    private fun pairs(name: String, keyName: String): List<Pair<String, String>> = (json[name] as? JsonArray).orEmpty().mapNotNull { element ->
-        val item = element as? JsonObject ?: return@mapNotNull null
-        val key = item.text(keyName) ?: return@mapNotNull null
-        key to (item.text("label") ?: key)
-    }
-
-    private fun JsonArray?.orEmpty(): List<JsonElement> = this ?: emptyList()
-}
-
-private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
-
-/** Reads and builds the values of a source's filter controls (Tiyo's `FilterValues`: control id to value). */
-internal object SourceFilters {
-    private val passive = setOf("header", "separator")
-
-    fun controls(options: JsonArray): List<FilterControl> = options.mapNotNull { (it as? JsonObject)?.let(::FilterControl) }
-
-    fun defaults(options: JsonArray): Map<String, JsonElement> =
-        controls(options).filter { it.kind !in passive && it.id.isNotEmpty() }.associate { it.id to it.default }
-
-    fun changedCount(options: JsonArray, values: Map<String, JsonElement>): Int =
-        controls(options).count { it.kind !in passive && it.kind != "sort" && values[it.id] != null && values[it.id] != it.default }
-
-    fun sortControl(options: JsonArray): FilterControl? = controls(options).firstOrNull { it.kind == "sort" && it.fields.isNotEmpty() }
-}
-
-/** The source's sort orders as chips; clicking the active one flips its direction when the source allows. */
+/**
+ * A source's own filters, drawn from the extension's description of them: whatever the source
+ * supports, nothing invented. A choice that equals the filter's default is not sent.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SortChips(control: FilterControl, value: JsonElement?, onChange: (JsonElement) -> Unit) {
-    val current = value as? JsonObject
-    val key = current?.text("key")
-    val direction = (current?.get("direction") as? JsonPrimitive)?.intOrNull ?: 1
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Sort", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.nuvio.colors.textMuted, modifier = Modifier.padding(top = 8.dp, end = 4.dp))
-        control.fields.forEach { (fieldKey, label) ->
-            val active = key == fieldKey
-            MangaChip(
-                label, active,
-                icon = if (active && control.bothDirections) (if (direction == 0) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward) else null,
-            ) {
-                val next = if (active && control.bothDirections) 1 - direction else direction
-                onChange(buildJsonObject { put("key", fieldKey); put("direction", next) })
-            }
-        }
-    }
-}
-
-/** A source's own filters, drawn from its description of them: whatever the source supports, nothing invented. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun FilterPanel(
-    options: JsonArray,
-    values: Map<String, JsonElement>,
-    onChange: (Map<String, JsonElement>) -> Unit,
-    onApply: () -> Unit,
-    onReset: () -> Unit,
-) {
+private fun FilterPanel(filters: List<SwFilter>, sourceName: String, onApply: () -> Unit, onReset: () -> Unit) {
     val tokens = MaterialTheme.nuvio
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(tokens.colors.surface).border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(16.dp)).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SourceFilters.controls(options).forEach { control ->
-            val value = values[control.id]
-            when (control.kind) {
-                "header" -> Text(control.label, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, modifier = Modifier.padding(top = 4.dp))
-                "separator" -> MangaMenuDivider()
-                "checkbox" -> {
-                    val on = (value as? JsonPrimitive)?.booleanOrNull ?: false
-                    MangaChip(control.label, on) { onChange(values + (control.id to JsonPrimitive(!on))) }
-                }
-                "tristatecheckbox" -> {
-                    val state = (value as? JsonPrimitive)?.intOrNull ?: 0
-                    TriStateChip(control.label, state) { onChange(values + (control.id to JsonPrimitive(it))) }
-                }
-                "select", "cycle" -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(control.label, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        control.options.forEach { (optionValue, label) ->
-                            MangaChip(label, (value as? JsonPrimitive)?.contentOrNull == optionValue) { onChange(values + (control.id to JsonPrimitive(optionValue))) }
-                        }
-                    }
-                }
-                "input" -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(control.label, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
-                    MangaSearchField(
-                        (value as? JsonPrimitive)?.contentOrNull.orEmpty(), { onChange(values + (control.id to JsonPrimitive(it))) },
-                        Modifier.widthIn(max = 360.dp).fillMaxWidth(), placeholder = control.placeholder.ifBlank { control.label }, onSubmit = onApply,
-                    )
-                }
-                "multitoggle" -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(control.label, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
-                    val chosen = (value as? JsonObject) ?: JsonObject(emptyMap())
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        control.fields.forEach { (fieldKey, label) ->
-                            val state = (chosen[fieldKey] as? JsonPrimitive)?.intOrNull ?: 0
-                            TriStateChip(label, state, exclude = control.isTriState) { next ->
-                                val updated = JsonObject(if (next == 0) chosen - fieldKey else chosen + (fieldKey to JsonPrimitive(next)))
-                                onChange(values + (control.id to updated))
-                            }
-                        }
-                    }
-                }
-                // Sort orders are offered as chips above the panel.
-                "sort" -> Unit
-                else -> Unit
-            }
+        if (filters.none { it !is SwFilter.Header && it !is SwFilter.Separator }) {
+            Text("$sourceName offers no filters or sort orders of its own.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
         }
+        filters.forEachIndexed { position, filter -> FilterControl(filter, FilterKey(position), onApply) }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 4.dp)) {
             MangaButton("Apply filters", onApply)
             MangaButton("Reset", onReset, primary = false)
         }
-        Text("These filters are the source's own; other sources offer different ones.", style = small(), color = tokens.colors.textMuted)
+        Text("These filters are the source's own; other sources offer different ones. Reset also asks the source for its filters again.", style = small(), color = tokens.colors.textMuted)
     }
 }
 
-/** Off → include → (exclude) → off. Tiyo's TriState: 0 ignore, 1 include, 2 exclude. */
+/** Keeps [choice] only when it differs from the filter's default. */
+private fun choose(key: FilterKey, choice: FilterChoice, isDefault: Boolean) {
+    if (isDefault) DiscoverState.choices.remove(key) else DiscoverState.choices[key] = choice
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TriStateChip(label: String, state: Int, exclude: Boolean = true, onChange: (Int) -> Unit) {
+private fun FilterControl(filter: SwFilter, key: FilterKey, onApply: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    val chosen = DiscoverState.choices[key]
+    when (filter) {
+        is SwFilter.Header -> if (filter.name.isNotBlank()) Text(filter.name, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, modifier = Modifier.padding(top = 4.dp))
+        is SwFilter.Separator -> MangaMenuDivider()
+        is SwFilter.CheckBox -> {
+            val on = (chosen as? FilterChoice.Check)?.on ?: filter.default
+            MangaChip(filter.name, on) { choose(key, FilterChoice.Check(!on), !on == filter.default) }
+        }
+        is SwFilter.TriState -> {
+            val state = (chosen as? FilterChoice.Tri)?.state ?: filter.default
+            TriStateChip(filter.name, state) { next -> choose(key, FilterChoice.Tri(next), next == filter.default) }
+        }
+        is SwFilter.Text -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(filter.name, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
+            MangaSearchField(
+                (chosen as? FilterChoice.Text)?.text ?: filter.default, { choose(key, FilterChoice.Text(it), it == filter.default) },
+                Modifier.widthIn(max = 360.dp).fillMaxWidth(), placeholder = filter.name, onSubmit = onApply,
+            )
+        }
+        is SwFilter.Select -> {
+            val index = (chosen as? FilterChoice.Select)?.index ?: filter.default
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(filter.name, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
+                if (filter.values.size <= 14) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        filter.values.forEachIndexed { option, label -> MangaChip(label.ifBlank { "Any" }, index == option) { choose(key, FilterChoice.Select(option), option == filter.default) } }
+                    }
+                } else {
+                    // A long list (dozens of genres, publishers) folds into a menu.
+                    var open by remember { mutableStateOf(false) }
+                    Box {
+                        MangaChip(filter.values.getOrNull(index)?.ifBlank { "Any" } ?: "Choose", index != filter.default, icon = Icons.Rounded.Tune) { open = true }
+                        DropdownMenu(open, { open = false }, modifier = Modifier.width(300.dp)) {
+                            filter.values.forEachIndexed { option, label ->
+                                MangaMenuItem(label.ifBlank { "Any" }, checked = index == option) {
+                                    open = false
+                                    choose(key, FilterChoice.Select(option), option == filter.default)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        is SwFilter.Sort -> {
+            val current = chosen as? FilterChoice.Sort
+            val index = current?.index ?: filter.defaultIndex
+            val ascending = current?.ascending ?: filter.defaultAscending
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(filter.name.ifBlank { "Sort" }, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    filter.values.forEachIndexed { option, label ->
+                        val active = index == option
+                        // Clicking the active order flips its direction.
+                        MangaChip(label, active, icon = if (active) (if (ascending) Icons.Rounded.ArrowUpward else Icons.Rounded.ArrowDownward) else null) {
+                            val next = FilterChoice.Sort(option, if (active) !ascending else ascending)
+                            choose(key, next, next.index == filter.defaultIndex && next.ascending == filter.defaultAscending)
+                        }
+                    }
+                }
+            }
+        }
+        is SwFilter.Group -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(filter.name, style = MaterialTheme.typography.labelLarge, color = tokens.colors.textSecondary)
+            val simple = filter.filters.all { it is SwFilter.CheckBox || it is SwFilter.TriState }
+            if (simple) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    filter.filters.forEachIndexed { inner, member -> FilterControl(member, FilterKey(key.position, inner), onApply) }
+                }
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(start = 12.dp)) {
+                    filter.filters.forEachIndexed { inner, member -> FilterControl(member, FilterKey(key.position, inner), onApply) }
+                }
+            }
+        }
+    }
+}
+
+/** Off → include → exclude → off, as the source defines a three-state filter. */
+@Composable
+private fun TriStateChip(label: String, state: String, onChange: (String) -> Unit) {
     val tokens = MaterialTheme.nuvio
     val style = LocalManga.current.style
     val (background, content, prefix) = when (state) {
-        1 -> Triple(style.accent, style.onAccent, "+ ")
-        2 -> Triple(tokens.colors.danger.copy(alpha = 0.22f), tokens.colors.danger, "− ")
+        "INCLUDE" -> Triple(style.accent, style.onAccent, "+ ")
+        "EXCLUDE" -> Triple(tokens.colors.danger.copy(alpha = 0.22f), tokens.colors.danger, "− ")
         else -> Triple(tokens.colors.surfaceElevated, tokens.colors.textSecondary, "")
     }
     Text(
@@ -497,7 +517,7 @@ private fun TriStateChip(label: String, state: Int, exclude: Boolean = true, onC
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(background)
-            .clickable(role = Role.Checkbox) { onChange(if (state == 0) 1 else if (state == 1 && exclude) 2 else 0) }
+            .clickable(role = Role.Checkbox) { onChange(if (state == "IGNORE") "INCLUDE" else if (state == "INCLUDE") "EXCLUDE" else "IGNORE") }
             .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }

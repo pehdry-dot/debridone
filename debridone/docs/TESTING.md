@@ -100,19 +100,24 @@ Live checks against the real services: `DEBRIDONE_LIVE_TESTS=1 ./gradlew :debrid
 
 ## Manga
 
-Automated: `./gradlew :debridone:modules:manga:test` (needs the pinned Node.js once:
-`./scripts/debridone/fetch-node-runtime.sh linux-x64`, or `darwin-arm64` / `darwin-x64`). The tests
-start the real extension host, let DebridOne's installer download the real `@tiyo/core` 1.0.3 from
-the npm registry, and read through Tiyo's Komga source against a stand-in server. With
-`DEBRIDONE_REQUIRE_NODE=1` a missing runtime fails the run instead of skipping those tests.
+Automated: `./gradlew :debridone:modules:manga:test` (needs the pinned Suwayomi-Server and Java 21
+runtime once: `./scripts/debridone/fetch-suwayomi-runtime.sh`). The tests start the real
+Suwayomi-Server through DebridOne's own server manager and work through it: every GraphQL document
+DebridOne sends is validated by the server; sample comics are read through its Local source
+(pages, progress, library, categories, bookmarks, a restart, two profiles with separate
+libraries); starting, stopping, a second DebridOne on the same data and a server whose DebridOne
+died are covered. With `DEBRIDONE_REQUIRE_SUWAYOMI=1` a missing server fails the run instead of
+skipping those tests.
 
-Live checks (MangaDex's official test title, Komga's public demo server, AniList):
-`DEBRIDONE_LIVE_TESTS=1 ./gradlew :debridone:modules:manga:test --tests "*LiveSourcesTest" --tests "*LegacyExtensionTest"`.
+Live check with a real Mihon/Tachiyomi extension (adds an extension store, installs the Komga
+extension from it, configures it, and reads from Komga's public demo server):
+`DEBRIDONE_LIVE_TESTS=1 DEBRIDONE_TEST_EXTENSION_STORE=<address of a store's index> ./gradlew :debridone:modules:manga:test --tests "*SuwayomiExtensionLiveTest"`.
+The store is named by whoever runs the test; no store address is written in DebridOne.
 
-Inside the packaged app: `DebridOne.app/Contents/MacOS/DebridOne --manga-self-test` reads a CBZ
-with no extension, starts the host on the bundled Node.js, installs Tiyo, reads a chapter through
-it against a stand-in server, restarts and resumes, and ends with `MANGA SELF-TEST PASSED`
-(`--offline` skips the parts that need the npm registry). CI runs it for every build.
+Inside the packaged app: `DebridOne.app/Contents/MacOS/DebridOne --manga-self-test` finds the
+bundled server and Java, starts the server, checks that it only answers DebridOne, reads a CBZ
+through it, restarts and resumes, checks that no server process is left behind, and ends with
+`MANGA SELF-TEST PASSED`. It needs no network. CI runs it for every build.
 
 By hand — online source (use a server or site you are allowed to read from; Komga's demo server
 at `https://demo.komga.org`, user `demo@komga.org`, password `komga-demo`, has public-domain

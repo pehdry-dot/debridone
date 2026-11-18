@@ -10,17 +10,22 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Extension
@@ -28,16 +33,21 @@ import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Storefront
+import androidx.compose.material.icons.rounded.SystemUpdateAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -47,6 +57,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -54,52 +65,73 @@ import com.debridone.app.shell.Notice
 import com.debridone.app.shell.PillTone
 import com.debridone.app.shell.StatusPill
 import com.debridone.manga.MangaAppSettings
-import com.debridone.manga.host.HostPluginState
-import com.debridone.manga.plugins.AvailablePackage
-import com.debridone.manga.plugins.CompatibilityLevel
-import com.debridone.manga.plugins.PackageKind
-import com.debridone.manga.plugins.PackageStatus
-import com.debridone.manga.plugins.PluginRules
-import com.debridone.manga.plugins.PreparedInstall
-import com.debridone.module.InstalledPlugin
-import com.debridone.module.PluginActionResult
+import com.debridone.manga.MangaPreferences
+import com.debridone.manga.suwayomi.MangaConnection
+import com.debridone.manga.suwayomi.MangaServer
+import com.debridone.manga.suwayomi.RemoteServer
+import com.debridone.manga.suwayomi.SwExtension
+import com.debridone.manga.suwayomi.SwStore
 import com.nuvio.app.core.ui.nuvio
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal enum class MangaPluginsTab(val label: String) {
-    INSTALLED("Installed"),
-    BROWSE("Browse"),
+    EXTENSIONS("Extensions"),
+    STORES("Stores"),
     SOURCES("Sources"),
     METADATA("Metadata"),
-    SETTINGS("Settings"),
+    SERVER("Server"),
 }
 
-/** State of Plugins › Manga that outlives leaving the tab: the sub-tab, and an install in progress. */
+/** State of Plugins › Manga that outlives leaving the tab: the sub-tab, what is being worked on, and the last outcome. */
 internal object MangaPluginsState {
-    var tab by mutableStateOf(MangaPluginsTab.INSTALLED)
+    var tab by mutableStateOf(MangaPluginsTab.EXTENSIONS)
 
-    /** "Downloading and checking @tiyo/core 1.0.3 (12 of 79)". */
+    /** Package names of extensions being installed, updated or removed right now. */
+    val working = mutableStateMapOf<String, String>()
+
+    /** "Asking the stores for their lists…" while a long request runs. */
     var progress by mutableStateOf<String?>(null)
-
-    /** A package that has been checked and is waiting for the person's decision. */
-    var review by mutableStateOf<PreparedInstall?>(null)
     var problem by mutableStateOf<String?>(null)
     var notice by mutableStateOf<String?>(null)
 
-    /** Bumped after an install, update or removal so the lists are read again. */
-    var changes by mutableStateOf(0)
+    /** What the extension list is narrowed to. Kept so that coming back shows the same list. */
+    var query by mutableStateOf("")
+    var language by mutableStateOf<String?>(null)
+    var installedOnly by mutableStateOf(false)
+    var showAdult by mutableStateOf(false)
+
+    /** The source whose settings are open. */
+    var configuring by mutableStateOf<String?>(null)
+
+    /** A store address waiting for the person to confirm they have read what an extension may do. */
+    var pendingStore by mutableStateOf<String?>(null)
+
+    fun say(message: String) {
+        notice = message
+        problem = null
+    }
+
+    fun fail(message: String?) {
+        problem = message ?: "That did not work."
+        notice = null
+    }
 }
 
 /**
- * Plugins › Manga. Manga's extensions are Houdoku's: one package, Tiyo, that brings the sources.
- * This tab talks only to Manga's own module; nothing here is shared with Streaming or Music.
+ * Plugins › Manga. Manga's sources are Mihon/Tachiyomi extensions, installed and run by the
+ * profile's Suwayomi server from extension stores the person adds. This tab talks only to Manga's
+ * own module; nothing here is shared with Streaming or Music.
  */
 @Composable
 fun MangaPluginsTab() {
     MangaProvider {
         val manga = LocalManga.current
+        // The extensions live in the profile's manga server: looking at them needs it running.
+        LaunchedEffect(manga.profileId) { manga.module.ensureServer() }
+        val connection by manga.services.server.state.collectAsStateWithLifecycle()
         Column(Modifier.fillMaxSize().background(manga.style.background)) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 40.dp, end = 40.dp, top = 6.dp, bottom = 10.dp),
@@ -108,58 +140,36 @@ fun MangaPluginsTab() {
                 MangaPluginsTab.entries.forEach { tab -> MangaChip(tab.label, MangaPluginsState.tab == tab) { MangaPluginsState.tab = tab } }
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                when (MangaPluginsState.tab) {
-                    MangaPluginsTab.INSTALLED -> InstalledTab()
-                    MangaPluginsTab.BROWSE -> BrowseTab()
+                val needsServer = MangaPluginsState.tab != MangaPluginsTab.SERVER && MangaPluginsState.tab != MangaPluginsTab.METADATA
+                if (needsServer && connection !is MangaConnection.Ready) {
+                    MangaServerStatus(connection)
+                } else when (MangaPluginsState.tab) {
+                    MangaPluginsTab.EXTENSIONS -> ExtensionsTab()
+                    MangaPluginsTab.STORES -> StoresTab()
                     MangaPluginsTab.SOURCES -> SourcesTab()
                     MangaPluginsTab.METADATA -> MetadataTab()
-                    MangaPluginsTab.SETTINGS -> HostSettingsTab()
+                    MangaPluginsTab.SERVER -> ServerTab()
                 }
             }
         }
-        MangaPluginsState.review?.let { InstallReviewDialog(it) }
+        MangaPluginsState.configuring?.let { sourceId -> SourceSettingsDialog(sourceId) { MangaPluginsState.configuring = null } }
+        MangaPluginsState.pendingStore?.let { address -> ExtensionNoticeDialog(address) }
         MangaDialogs()
     }
 }
 
-/** Starts an install: download, verify, trial load. Ends with the review dialog, or with the reason it was refused. */
-internal fun beginInstall(manga: MangaContext, scope: kotlinx.coroutines.CoroutineScope, name: String, version: String) {
-    if (MangaPluginsState.progress != null) return
-    MangaPluginsState.problem = null
-    MangaPluginsState.notice = null
-    MangaPluginsState.progress = "Downloading and checking $name $version…"
-    scope.launch(Dispatchers.IO) {
+/** Runs something that talks to the manga server, off the UI thread, and reports how it went in the tab. */
+private fun CoroutineScope.pluginWork(progress: String? = null, block: suspend () -> String?) {
+    if (progress != null) MangaPluginsState.progress = progress
+    launch(Dispatchers.IO) {
         try {
-            MangaPluginsState.review = manga.services.plugins.prepare(name, version) { done, total ->
-                MangaPluginsState.progress = "Downloading and checking $name $version ($done of $total packages)…"
-            }
+            block()?.let(MangaPluginsState::say)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (failure: Throwable) {
-            MangaPluginsState.problem = failure.message ?: "$name could not be installed."
+            MangaPluginsState.fail(failure.message)
         } finally {
-            MangaPluginsState.progress = null
-        }
-    }
-}
-
-private fun beginImport(manga: MangaContext, scope: kotlinx.coroutines.CoroutineScope) {
-    val file = MangaPickers.choosePackage() ?: return
-    if (MangaPluginsState.progress != null) return
-    MangaPluginsState.problem = null
-    MangaPluginsState.notice = null
-    MangaPluginsState.progress = "Checking ${file.fileName}…"
-    scope.launch(Dispatchers.IO) {
-        try {
-            MangaPluginsState.review = manga.services.plugins.prepareFromFile(file) { done, total ->
-                MangaPluginsState.progress = "Checking ${file.fileName} ($done of $total packages)…"
-            }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            MangaPluginsState.problem = failure.message ?: "${file.fileName} could not be imported."
-        } finally {
-            MangaPluginsState.progress = null
+            if (progress != null) MangaPluginsState.progress = null
         }
     }
 }
@@ -168,403 +178,420 @@ private fun beginImport(manga: MangaContext, scope: kotlinx.coroutines.Coroutine
 private fun PluginsMessages() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
-    MangaPluginsState.progress?.let { text ->
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-        }
-    }
-    MangaPluginsState.problem?.let { Notice(it, PillTone.DANGER) }
-    MangaPluginsState.notice?.let { Notice(it, PillTone.SUCCESS) }
-    manga.module.runtimeProblem()?.let { Notice(it, PillTone.WARNING) }
-}
-
-private fun compatibilityTone(level: CompatibilityLevel): PillTone = when (level) {
-    CompatibilityLevel.VERIFIED -> PillTone.SUCCESS
-    CompatibilityLevel.UNTESTED -> PillTone.WARNING
-    CompatibilityLevel.UNSUPPORTED -> PillTone.DANGER
-}
-
-private fun compatibilityLabel(level: CompatibilityLevel): String = when (level) {
-    CompatibilityLevel.VERIFIED -> "Verified"
-    CompatibilityLevel.UNTESTED -> "Not tested"
-    CompatibilityLevel.UNSUPPORTED -> "Not supported"
-}
-
-private fun displayName(name: String): String = when (PluginRules.kindOf(name)) {
-    PackageKind.TIYO -> "Tiyo"
-    PackageKind.LEGACY -> name.substringAfter("extension-").replaceFirstChar(Char::uppercase) + " (legacy)"
-    null -> name
-}
-
-// ---------------------------------------------------------------------------- Installed
-
-@Composable
-private fun InstalledTab() {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
-    val registry by manga.module.plugins.installed.collectAsStateWithLifecycle()
-    val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
-    val disabled = registry.filter { !it.enabled }.map { it.id }.toSet()
-    val packages by produceState<List<PackageStatus>?>(null, hostState, registry, MangaPluginsState.changes) {
-        value = withContext(Dispatchers.IO) { runCatching { manga.services.plugins.installed(disabled) }.getOrDefault(emptyList()) }
-    }
-    var updates by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var checking by remember { mutableStateOf(false) }
-    var removing by remember { mutableStateOf<String?>(null) }
-    fun checkUpdates(announce: Boolean) {
-        if (checking) return
-        checking = true
-        scope.launch(Dispatchers.IO) {
-            updates = runCatching { manga.services.plugins.updates() }.getOrElse {
-                if (announce) MangaPluginsState.problem = "The registry could not be asked for updates: ${it.message}"
-                emptyMap()
-            }
-            if (announce && updates.isEmpty() && MangaPluginsState.problem == null) MangaPluginsState.notice = "Everything is up to date."
-            checking = false
-        }
-    }
-    LaunchedEffect(packages?.size) { if (!packages.isNullOrEmpty()) checkUpdates(announce = false) }
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Installed", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
-                    Text("Extension packages in use by Manga. They are shared by every profile; each profile chooses its sources and keeps its own logins.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-                }
-                MangaButton(if (checking) "Checking…" else "Check for updates", { checkUpdates(announce = true) }, primary = false, icon = Icons.Rounded.Update, enabled = !checking && !packages.isNullOrEmpty())
-            }
-        }
-        item { PluginsMessages() }
-        items(packages.orEmpty(), key = { it.name }) { pkg ->
-            val entry = registry.firstOrNull { it.id == pkg.name }
-            PackageCard(pkg, entry, updates[pkg.name], onRemove = { removing = pkg.name })
-        }
-        item {
-            // The built-in source: always there, nothing to install.
-            val local = registry.firstOrNull { it.id == "local-files" }
-            PluginCardFrame {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(local?.name ?: "Local files", style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary)
-                        Text(local?.description ?: "CBZ and ZIP archives and image folders on this computer.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-                    }
-                    StatusPill("Built in", PillTone.SUCCESS)
-                }
-            }
-        }
-        if (packages?.isEmpty() == true) {
-            item {
-                MangaEmptyState(
-                    Icons.Rounded.Extension, "No extension package installed",
-                    "Online sources come from Tiyo, the extension package of the Houdoku manga reader. Local files work without it.",
-                ) { MangaButton("Browse", { MangaPluginsState.tab = MangaPluginsTab.BROWSE }, icon = Icons.Rounded.Extension) }
-            }
-        }
-    }
-
-    removing?.let { name ->
-        MangaDialogFrame("Uninstall ${displayName(name)}?", { removing = null }, width = 460) {
-            Text(
-                "Its sources stop being available. Series you added from them stay in your library with their progress, and downloaded chapters stay readable; the rest needs the package again.",
-                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-            )
-            MangaDialogButtons("Uninstall", { removing = null }, danger = true) {
-                removing = null
-                scope.launch(Dispatchers.IO) {
-                    when (val result = manga.module.plugins.remove(name)) {
-                        is PluginActionResult.Failure -> MangaPluginsState.problem = result.message
-                        else -> MangaPluginsState.notice = "${displayName(name)} was uninstalled."
-                    }
-                    MangaPluginsState.changes++
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PluginCardFrame(content: @Composable () -> Unit) {
-    val tokens = MaterialTheme.nuvio
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(tokens.colors.surface).border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(18.dp)).padding(20.dp)) { content() }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PackageCard(pkg: PackageStatus, entry: InstalledPlugin?, update: String?, onRemove: () -> Unit) {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
-    val enabled = entry?.enabled ?: true
-    PluginCardFrame {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MangaPluginsState.progress?.let { text ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("${displayName(pkg.name)}  ${pkg.version}", style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary)
-                    Text(pkg.name + "  ·  from the npm registry", style = small(), color = tokens.colors.textMuted)
-                }
-                when {
-                    !enabled -> StatusPill("Switched off")
-                    pkg.error != null -> StatusPill("Failed to load", PillTone.DANGER)
-                    pkg.loaded -> StatusPill("Running", PillTone.SUCCESS)
-                    else -> StatusPill("Not loaded", PillTone.WARNING)
-                }
-                StatusPill(compatibilityLabel(pkg.compatibility.level), compatibilityTone(pkg.compatibility.level))
-            }
-            Text(
-                when (pkg.kind) {
-                    PackageKind.TIYO -> "The extension package of the Houdoku manga reader (MIT licence). It runs unmodified in DebridOne's extension host."
-                    PackageKind.LEGACY -> "A source in Houdoku's older format, run through an adapter."
-                    null -> "Not a Houdoku extension package; it is ignored."
-                } + if (pkg.loaded) "  ${plural(pkg.sourceCount, "source")}." else "",
-                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-            )
-            Text(pkg.compatibility.explanation, style = small(), color = tokens.colors.textMuted)
-            pkg.error?.let { Notice("It could not be loaded: $it", PillTone.DANGER) }
-            pkg.shadowedBy?.let { Text("Its source is also in ${displayName(it)}, whose copy is the one in use.", style = small(), color = tokens.colors.textMuted) }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (update != null) {
-                    MangaButton("Update to $update", { beginInstall(manga, scope, pkg.name, update) }, icon = Icons.Rounded.Update, enabled = MangaPluginsState.progress == null)
-                }
-                MangaChip(if (enabled) "Enabled" else "Disabled", enabled) {
-                    scope.launch(Dispatchers.IO) {
-                        val result = manga.module.plugins.setEnabled(pkg.name, !enabled)
-                        if (result is PluginActionResult.Failure) MangaPluginsState.problem = result.message
-                    }
-                }
-                MangaButton("Configure sources", { MangaPluginsState.tab = MangaPluginsTab.SOURCES }, primary = false, icon = Icons.Rounded.Tune, enabled = pkg.loaded)
-                MangaButton("Uninstall", onRemove, primary = false, danger = true, icon = Icons.Rounded.Delete)
+                CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                Text(text, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
             }
         }
+        MangaPluginsState.problem?.let { Notice(it, PillTone.DANGER) }
+        MangaPluginsState.notice?.let { Notice(it, PillTone.SUCCESS) }
     }
 }
 
-// ---------------------------------------------------------------------------- Browse
+// ---------------------------------------------------------------------------- Extensions
 
+/** What the server knows about extensions: the installed ones, and what the stores offer. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BrowseTab() {
+private fun ExtensionsTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
-    val app by manga.services.appSettings.values.collectAsState()
-    val showLegacy = app[MangaAppSettings.SHOW_LEGACY] == "true"
-    var reload by remember { mutableStateOf(0) }
-    var failure by remember { mutableStateOf<String?>(null) }
-    val offered by produceState<List<AvailablePackage>?>(null, showLegacy, reload, MangaPluginsState.changes) {
-        value = null
-        failure = null
-        value = withContext(Dispatchers.IO) {
-            runCatching { manga.services.plugins.available(showLegacy) }.getOrElse {
-                failure = "The package registry could not be reached: ${it.message ?: "network error"}"
-                emptyList()
+    val revision by manga.services.extensions.revision.collectAsState()
+    val generation by manga.services.server.generation.collectAsState()
+    val extensions by produceState<List<SwExtension>?>(null, revision, generation) {
+        value = withContext(Dispatchers.IO) { runCatching { manga.services.extensions.list() }.getOrNull() }
+    }
+    val stores by produceState<List<SwStore>>(emptyList(), revision, generation) {
+        value = withContext(Dispatchers.IO) { runCatching { manga.services.extensions.stores() }.getOrDefault(emptyList()) }
+    }
+    val all = extensions.orEmpty()
+    val installed = all.filter { it.installed }
+    val outdated = installed.filter { it.hasUpdate }
+    val languages = all.map { it.lang }.filter { it.isNotBlank() }.distinct().sortedBy(::languageName)
+    val needle = MangaPluginsState.query.trim().lowercase()
+    val shown = all.filter { extension ->
+        (needle.isEmpty() || extension.name.lowercase().contains(needle) || extension.pkgName.lowercase().contains(needle)) &&
+            (MangaPluginsState.language == null || extension.lang == MangaPluginsState.language) &&
+            (!MangaPluginsState.installedOnly || extension.installed) &&
+            (MangaPluginsState.showAdult || extension.installed || extension.contentWarning != "NSFW")
+    }
+
+    fun change(extension: SwExtension, doing: String, done: String, action: (String) -> Unit) {
+        if (extension.pkgName in MangaPluginsState.working) return
+        MangaPluginsState.working[extension.pkgName] = doing
+        scope.launch(Dispatchers.IO) {
+            try {
+                action(extension.pkgName)
+                MangaPluginsState.say("${extension.name} $done.")
+            } catch (failure: Throwable) {
+                MangaPluginsState.fail("${extension.name}: ${failure.message ?: "that did not work."}")
+            } finally {
+                MangaPluginsState.working.remove(extension.pkgName)
             }
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Browse", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Extensions", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
+                Text(
+                    "A source is provided by an extension: the same extension packages Mihon and Tachiyomi use. The manga server installs them from the stores you added, or from a package file, and runs them itself.",
+                    style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MangaButton("Check the stores", {
+                        scope.pluginWork("Asking the stores for their lists…") {
+                            val fresh = manga.services.extensions.list(refresh = true)
+                            val updates = fresh.count { it.installed && it.hasUpdate }
+                            "${plural(fresh.size, "extension")} listed" + if (updates > 0) ", ${plural(updates, "update")} available." else "."
+                        }
+                    }, primary = false, icon = Icons.Rounded.Refresh, enabled = stores.isNotEmpty() && MangaPluginsState.progress == null)
+                    if (outdated.isNotEmpty()) {
+                        MangaButton("Update all (${outdated.size})", {
+                            scope.pluginWork("Updating ${plural(outdated.size, "extension")}…") { "${plural(manga.services.extensions.updateAll(), "extension")} updated." }
+                        }, icon = Icons.Rounded.SystemUpdateAlt, enabled = MangaPluginsState.progress == null)
+                    }
+                    MangaButton("Install from a file…", {
+                        MangaPickers.choosePackage()?.let { file ->
+                            scope.pluginWork("Installing ${file.fileName}…") { "${manga.services.extensions.installFile(file).name} installed from ${file.fileName}." }
+                        }
+                    }, primary = false, icon = Icons.Rounded.InsertDriveFile, enabled = MangaPluginsState.progress == null)
+                    MangaButton("Stores (${stores.size})", { MangaPluginsState.tab = MangaPluginsTab.STORES }, primary = false, icon = Icons.Rounded.Storefront)
+                }
+                PluginsMessages()
+                if (extensions != null && stores.isEmpty() && installed.isEmpty()) {
+                    MangaEmptyState(
+                        Icons.Rounded.Extension, "No extension store yet",
+                        "DebridOne comes with no store and no sources of its own. Add the address of an extension store you trust, then install the extensions you want from it. Your own files need none of this: add them from Manga's Library.",
+                    ) {
+                        MangaButton("Add a store", { MangaPluginsState.tab = MangaPluginsTab.STORES }, icon = Icons.Rounded.Storefront)
+                    }
+                }
+                if (all.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MangaSearchField(MangaPluginsState.query, { MangaPluginsState.query = it }, Modifier.width(300.dp), placeholder = "Find an extension")
+                        MangaChip("Installed (${installed.size})", MangaPluginsState.installedOnly) { MangaPluginsState.installedOnly = !MangaPluginsState.installedOnly }
+                        LanguagePicker(languages, MangaPluginsState.language) { MangaPluginsState.language = it }
+                        MangaChip("Show 18+", MangaPluginsState.showAdult) { MangaPluginsState.showAdult = !MangaPluginsState.showAdult }
+                    }
                     Text(
-                        "What the npm registry lists for Houdoku. Current Houdoku loads one package, Tiyo, which contains all of its sources. Nothing here is made up: if the registry cannot be reached, the list is empty.",
-                        style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                        "${plural(shown.size, "extension")} shown of ${all.size}" + if (!MangaPluginsState.showAdult) " · extensions their store marks as 18+ are hidden" else "",
+                        style = small(), color = tokens.colors.textMuted,
                     )
                 }
-                MangaIconButton(Icons.Rounded.Refresh, "Ask the registry again", { reload++ })
             }
         }
-        item { PluginsMessages() }
-        failure?.let { text -> item { Notice(text, PillTone.WARNING) } }
-        if (offered == null) {
-            item { Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp)) } }
-        }
-        items(offered.orEmpty().filter { it.kind == PackageKind.TIYO }, key = { it.name }) { pkg -> AvailableCard(pkg) }
-        item {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                MangaButton("Import a package file…", { beginImport(manga, scope) }, primary = false, icon = Icons.Rounded.InsertDriveFile, enabled = MangaPluginsState.progress == null)
-                MangaChip("Show older Houdoku extensions", showLegacy) { manga.services.appSettings.set(MangaAppSettings.SHOW_LEGACY, (!showLegacy).toString()) }
-            }
-            Text(
-                "A package file is an npm archive (.tgz) of a published Houdoku extension package. It goes through the same checks and review as an install from the registry.",
-                style = small(), color = tokens.colors.textMuted, modifier = Modifier.padding(top = 8.dp),
+        items(shown, key = { it.pkgName }) { extension ->
+            ExtensionRow(
+                extension, MangaPluginsState.working[extension.pkgName],
+                onInstall = { change(extension, "Installing…", "installed") { manga.services.extensions.install(it) } },
+                onUpdate = { change(extension, "Updating…", "updated") { manga.services.extensions.update(it) } },
+                onRemove = { change(extension, "Removing…", "removed") { manga.services.extensions.uninstall(it) } },
             )
         }
-        val legacy = offered.orEmpty().filter { it.kind == PackageKind.LEGACY }
-        if (showLegacy && offered != null) {
-            item {
-                Notice(
-                    "These are Houdoku's pre-Tiyo extensions: one source per package, last published in 2022–2023. Current Houdoku no longer loads them. " +
-                        "DebridOne runs them through an adapter; one of them (Komga) was tested, the others were not, and many of their sites have changed since.",
-                    PillTone.WARNING,
-                )
-            }
-            if (legacy.isEmpty() && failure == null) item { Text("The registry lists none.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted) }
-        }
-        items(legacy, key = { it.name }) { pkg -> AvailableCard(pkg) }
     }
 }
 
+@Composable
+private fun ExtensionRow(extension: SwExtension, working: String?, onInstall: () -> Unit, onUpdate: () -> Unit, onRemove: () -> Unit) {
+    val manga = LocalManga.current
+    val tokens = MaterialTheme.nuvio
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(tokens.colors.surface).border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        ServerIcon(extension.iconUrl, Modifier.size(40.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(extension.name, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOf(languageName(extension.lang), "version ${extension.versionName}", extension.storeName.orEmpty(), extension.pkgName).filter { it.isNotBlank() }.joinToString("  ·  "),
+                style = small(), color = tokens.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (extension.contentWarning == "NSFW") StatusPill("18+", PillTone.WARNING)
+        if (extension.obsolete) StatusPill("No longer in a store", PillTone.WARNING)
+        when {
+            working != null -> {
+                CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                Text(working, style = small(), color = tokens.colors.textSecondary)
+            }
+            extension.installed -> {
+                if (extension.hasUpdate) MangaButton("Update", onUpdate, icon = Icons.Rounded.SystemUpdateAlt) else StatusPill("Installed", PillTone.SUCCESS)
+                MangaIconButton(Icons.Rounded.Delete, "Remove ${extension.name}", onRemove, size = 34.dp)
+            }
+            else -> MangaButton("Install", onInstall, primary = false, icon = Icons.Rounded.Download)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- Stores
+
+private const val EXTENSION_NOTICE =
+    "An extension is a small program written by someone else. The manga server runs it with your own rights on this computer: " +
+        "it can reach the internet and read and write your files. It runs inside the manga server, never inside DebridOne itself, " +
+        "and neither DebridOne nor Suwayomi reviews what a store offers. Add only stores you trust."
+
+/** Extension stores: addresses the person adds. None is shipped or suggested. */
+@Composable
+private fun StoresTab() {
+    val manga = LocalManga.current
+    val tokens = MaterialTheme.nuvio
+    val scope = rememberCoroutineScope()
+    val revision by manga.services.extensions.revision.collectAsState()
+    val generation by manga.services.server.generation.collectAsState()
+    val stores by produceState<List<SwStore>?>(null, revision, generation) {
+        value = withContext(Dispatchers.IO) { runCatching { manga.services.extensions.stores() }.getOrNull() }
+    }
+    val settings by manga.services.appSettings.values.collectAsState()
+    var address by remember { mutableStateOf("") }
+
+    fun add() {
+        val wanted = address.trim()
+        if (wanted.isEmpty() || MangaPluginsState.progress != null) return
+        if (settings[MangaAppSettings.EXTENSION_NOTICE_SEEN] != "true") {
+            MangaPluginsState.pendingStore = wanted
+        } else {
+            addStore(manga, scope, wanted) { address = "" }
+        }
+    }
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Extension stores", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
+                Text(
+                    "A store is a list of extensions published at a web address. The manga server reads the store formats Suwayomi supports: the current one, and older \"index.min.json\" repositories. " +
+                        "DebridOne includes no store: you add the address of one you trust, for this profile.",
+                    style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                )
+                Notice(EXTENSION_NOTICE, PillTone.WARNING)
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MangaTextField(address, { address = it }, "Address of the store's index", Modifier.weight(1f), onSubmit = ::add, hint = "It starts with https:// and usually ends in repo.json, index.pb or index.min.json.")
+                    MangaButton("Add store", ::add, icon = Icons.Rounded.Add, enabled = address.isNotBlank() && MangaPluginsState.progress == null)
+                }
+                PluginsMessages()
+            }
+        }
+        val list = stores
+        if (list != null && list.isEmpty()) {
+            item { Text("No store has been added for this profile.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted) }
+        }
+        items(list.orEmpty(), key = { it.indexUrl }) { store ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(tokens.colors.surface).border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(Icons.Rounded.Storefront, contentDescription = null, tint = manga.style.accent, modifier = Modifier.size(26.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(store.name.ifBlank { "Unnamed store" }, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
+                    SelectionContainer { Text(store.indexUrl, style = small(), color = tokens.colors.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    if (store.signingKey.isNotBlank()) Text("Signing key ${store.signingKey.take(24)}…", style = small(), color = tokens.colors.textMuted, maxLines = 1)
+                }
+                if (store.legacy) StatusPill("Older format") else StatusPill("Current format", PillTone.SUCCESS)
+                store.website?.let { site -> MangaButton("Its site", { openInBrowser(site) }, primary = false, icon = Icons.Rounded.OpenInNew) }
+                MangaButton("Remove", {
+                    scope.pluginWork("Removing ${store.name}…") {
+                        manga.services.extensions.removeStore(store.indexUrl)
+                        "${store.name.ifBlank { "The store" }} was removed. Extensions installed from it stay until you remove them."
+                    }
+                }, primary = false, danger = true, icon = Icons.Rounded.Delete, enabled = MangaPluginsState.progress == null)
+            }
+        }
+    }
+}
+
+private fun addStore(manga: MangaContext, scope: CoroutineScope, address: String, onAdded: () -> Unit) {
+    scope.pluginWork("Adding the store and reading its list…") {
+        val store = manga.services.extensions.addStore(address)
+        val offered = runCatching { manga.services.extensions.list().count { it.storeIndexUrl == store.indexUrl } }.getOrDefault(0)
+        withContext(Dispatchers.Main) { onAdded() }
+        "${store.name.ifBlank { "The store" }} was added" + if (offered > 0) ": ${plural(offered, "extension")} to choose from in Extensions." else "."
+    }
+}
+
+/** Shown once, before the first store is added: what an extension is allowed to do. */
+@Composable
+private fun ExtensionNoticeDialog(address: String) {
+    val manga = LocalManga.current
+    val tokens = MaterialTheme.nuvio
+    val scope = rememberCoroutineScope()
+    val dismiss = { MangaPluginsState.pendingStore = null }
+    MangaDialogFrame("Before you add a store", dismiss, width = 560) {
+        Text(EXTENSION_NOTICE, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+        Text(
+            "Earlier versions of DebridOne ran Houdoku's extensions in a restricted helper. Mihon/Tachiyomi extensions cannot be restricted that way: this is how Suwayomi runs them.",
+            style = small(), color = tokens.colors.textMuted,
+        )
+        SelectionContainer { Text(address, style = small().copy(fontFamily = FontFamily.Monospace), color = tokens.colors.textPrimary) }
+        MangaDialogButtons("I understand, add the store", dismiss) {
+            manga.services.appSettings.set(MangaAppSettings.EXTENSION_NOTICE_SEEN, "true")
+            dismiss()
+            addStore(manga, scope, address) {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------- Server
+
+/** The profile's manga server: what it is, how it is doing, and — instead of it — a server of the person's own. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AvailableCard(pkg: AvailablePackage) {
+private fun ServerTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
-    var version by remember(pkg.name, pkg.latest) { mutableStateOf(pkg.latest ?: pkg.versions.firstOrNull()?.version.orEmpty()) }
-    var versionMenu by remember { mutableStateOf(false) }
-    val compatibility = PluginRules.compatibility(pkg.name, version)
-    val published = pkg.versions.firstOrNull { it.version == version }?.publishedAt?.take(10)
-    PluginCardFrame {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(displayName(pkg.name), style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary)
-                    Text(listOfNotNull(pkg.name, pkg.license?.let { "$it licence" }, published?.let { "published $it" }).joinToString("  ·  "), style = small(), color = tokens.colors.textMuted)
-                }
-                pkg.installedVersion?.let { StatusPill("Installed: $it", PillTone.SUCCESS) }
-                StatusPill(compatibilityLabel(compatibility.level), compatibilityTone(compatibility.level))
-            }
+    val connection by manga.services.server.state.collectAsStateWithLifecycle()
+    val preferences by manga.services.preferences.values.collectAsState()
+    val remote = preferences[MangaPreferences.SERVER_MODE] == MangaPreferences.SERVER_MODE_REMOTE
+    var url by remember(manga.profileId) { mutableStateOf(preferences[MangaPreferences.SERVER_URL].orEmpty()) }
+    var username by remember(manga.profileId) { mutableStateOf(preferences[MangaPreferences.SERVER_USERNAME].orEmpty()) }
+    var password by remember(manga.profileId) { mutableStateOf("") }
+    val hasPassword = remember(manga.profileId, connection) { manga.module.hasRemotePassword(manga.profileId) }
+    var timeout by remember(manga.profileId) { mutableStateOf(preferences[MangaPreferences.SERVER_TIMEOUT] ?: "60") }
+    var requireHttps by remember(manga.profileId) { mutableStateOf(preferences[MangaPreferences.SERVER_REQUIRE_HTTPS] != "false") }
+    var testing by remember { mutableStateOf(false) }
+    var outcome by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var showLog by remember { mutableStateOf(false) }
+    val runtimeProblem = remember { manga.module.runtimeProblem() }
+
+    fun entered() = RemoteServer(
+        url = url, username = username.takeIf { it.isNotBlank() },
+        password = password.ifEmpty { manga.module.remoteServerOf(manga.profileId)?.password },
+        timeoutSeconds = timeout.toIntOrNull() ?: 60, requireHttps = requireHttps,
+    )
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item {
+            Text("Manga server", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
             Text(
-                // Tiyo's registry entry carries no description of its own (only a build-tool note), so it is described here.
-                if (pkg.kind == PackageKind.TIYO) "The extension package of the Houdoku manga reader: its manga sources, as one package. Published by Houdoku's author under the MIT licence."
-                else pkg.description?.takeIf { it.isNotBlank() } ?: "A Houdoku source in the older format.",
+                "Manga's library, sources, downloads and trackers are kept by Suwayomi-Server. DebridOne starts one for each profile, on this computer only, when Manga is first opened; the screens and the reader are DebridOne's own.",
                 style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
             )
-            Text(compatibility.explanation, style = small(), color = tokens.colors.textMuted)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val isInstalled = pkg.installedVersion == version
-                MangaButton(
-                    when {
-                        isInstalled -> "Installed"
-                        pkg.installedVersion == null -> "Install $version"
-                        PluginRules.compareVersions(version, pkg.installedVersion!!) > 0 -> "Update to $version"
-                        else -> "Install $version instead"
-                    },
-                    { beginInstall(manga, scope, pkg.name, version) },
-                    icon = Icons.Rounded.Download,
-                    enabled = !isInstalled && version.isNotBlank() && compatibility.level != CompatibilityLevel.UNSUPPORTED && MangaPluginsState.progress == null,
-                )
-                if (pkg.versions.size > 1) {
-                    Box {
-                        MangaChip("Version $version", false) { versionMenu = true }
-                        DropdownMenu(versionMenu, { versionMenu = false }) {
-                            pkg.versions.take(12).forEach { option ->
-                                val level = PluginRules.compatibility(pkg.name, option.version).level
-                                MangaMenuItem("${option.version}  ·  ${compatibilityLabel(level).lowercase()}", checked = option.version == version) {
-                                    version = option.version
-                                    versionMenu = false
+        }
+        item {
+            SettingsBlock("Now") {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    when (val state = connection) {
+                        is MangaConnection.Ready -> {
+                            StatusPill("Running", PillTone.SUCCESS)
+                            Text(
+                                (if (state.remote) "Your own server at ${state.address}" else "This profile's server, on this computer only") + " · Suwayomi-Server ${state.version}",
+                                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary,
+                            )
+                        }
+                        is MangaConnection.Connecting -> {
+                            CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                            Text(if (state.remote) "Connecting…" else "Starting…", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+                        }
+                        is MangaConnection.Failed -> {
+                            StatusPill(if (state.retrying) "Not reachable, trying again" else "Not running", PillTone.DANGER)
+                            Text(state.message, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f))
+                        }
+                        MangaConnection.Idle -> {
+                            StatusPill("Not started")
+                            Text("It starts when Manga is opened.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
+                        }
+                    }
+                }
+                if (runtimeProblem != null && !remote) Notice(runtimeProblem, PillTone.DANGER)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MangaButton(if (connection is MangaConnection.Ready) "Restart" else "Start", { manga.services.server.reconnect() }, primary = connection !is MangaConnection.Ready, icon = Icons.Rounded.RestartAlt)
+                    if (!remote) {
+                        MangaButton(if (showLog) "Hide the server's log" else "Show the server's log", { showLog = !showLog }, primary = false)
+                        MangaButton("Show its folder", { revealInFileManager(manga.services.server.manager.directory(manga.profileId)) }, primary = false, icon = Icons.Rounded.FolderOpen)
+                    }
+                }
+                if (showLog && !remote) {
+                    val lines = remember(connection, showLog) { manga.services.server.manager.log().takeLast(120) }
+                    SelectionContainer {
+                        Text(
+                            lines.joinToString("\n").ifBlank { "Nothing was printed yet." },
+                            style = small().copy(fontFamily = FontFamily.Monospace), color = tokens.colors.textMuted,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(10.dp)).background(tokens.colors.background).verticalScroll(rememberScrollState()).padding(12.dp),
+                        )
+                    }
+                }
+                if (!remote) {
+                    Text(
+                        "Only this computer can reach it, and only with a password DebridOne makes anew at every start. Each profile has its own server folder, so profiles never share a library.",
+                        style = small(), color = tokens.colors.textMuted,
+                    )
+                }
+            }
+        }
+        item {
+            SettingsBlock(
+                "Which server this profile reads from",
+                "By default, the one DebridOne runs. If you already run a Suwayomi server (at home, on a NAS), this profile can use that instead: its library is then the server's, shared with whatever else uses it, " +
+                    "and files of this computer cannot be opened through it.",
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MangaChip("DebridOne's own", !remote) {
+                        manga.services.preferences.set(MangaPreferences.SERVER_MODE, null)
+                        outcome = null
+                        manga.services.server.reconnect()
+                    }
+                    MangaChip("A server of my own", remote) { manga.services.preferences.set(MangaPreferences.SERVER_MODE, MangaPreferences.SERVER_MODE_REMOTE) }
+                }
+                if (remote) {
+                    MangaTextField(url, { url = it }, "Address", Modifier.widthIn(max = 620.dp).fillMaxWidth(), hint = "For example https://manga.example.org or http://192.168.1.20:4567")
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.widthIn(max = 620.dp)) {
+                        MangaTextField(username, { username = it }, "User name (if the server asks for one)", Modifier.weight(1f))
+                        MangaTextField(
+                            password, { password = it }, if (hasPassword) "Password (saved; type to replace it)" else "Password", Modifier.weight(1f), secret = true,
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Bottom) {
+                        MangaTextField(timeout, { timeout = it.filter(Char::isDigit).take(3) }, "Seconds to wait for an answer", Modifier.width(220.dp))
+                        MangaChip("Require a secure connection (https)", requireHttps) { requireHttps = !requireHttps }
+                    }
+                    Text(
+                        "The password is kept in the system's credential store, for this profile. Servers that use Suwayomi's \"basic\" sign-in, or none, are supported.",
+                        style = small(), color = tokens.colors.textMuted,
+                    )
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        MangaButton("Test the connection", {
+                            testing = true
+                            outcome = null
+                            val candidate = entered()
+                            scope.launch(Dispatchers.IO) {
+                                outcome = try {
+                                    true to "It answers: Suwayomi-Server ${MangaServer.test(candidate)}."
+                                } catch (failure: Exception) {
+                                    false to (failure.message ?: "The server could not be reached.")
+                                } finally {
+                                    testing = false
                                 }
                             }
-                        }
+                        }, primary = false, enabled = url.isNotBlank() && !testing)
+                        MangaButton("Save and connect", {
+                            manga.services.preferences.set(MangaPreferences.SERVER_URL, url.trim())
+                            manga.services.preferences.set(MangaPreferences.SERVER_USERNAME, username.trim().ifEmpty { null })
+                            manga.services.preferences.set(MangaPreferences.SERVER_TIMEOUT, timeout.ifBlank { null })
+                            manga.services.preferences.set(MangaPreferences.SERVER_REQUIRE_HTTPS, if (requireHttps) null else "false")
+                            if (password.isNotEmpty()) manga.module.setRemotePassword(manga.profileId, password)
+                            if (username.isBlank()) manga.module.setRemotePassword(manga.profileId, null)
+                            password = ""
+                            outcome = null
+                            manga.services.server.reconnect()
+                        }, enabled = url.isNotBlank())
+                        if (testing) CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
                     }
-                }
-                (pkg.homepage ?: "https://www.npmjs.com/package/${pkg.name}").let { url ->
-                    MangaButton("Its page", { openInBrowser(url) }, primary = false, icon = Icons.Rounded.OpenInNew)
+                    outcome?.let { (ok, text) -> Notice(text, if (ok) PillTone.SUCCESS else PillTone.DANGER) }
                 }
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------- review before installing
-
-/**
- * The last step before a package is installed: what it is, what its code will and will not be able
- * to do, the sources it brings and the sites they talk to. Nothing has been installed at this point.
- */
-@Composable
-private fun InstallReviewDialog(prepared: PreparedInstall) {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
-    var installing by remember { mutableStateOf(false) }
-    fun decline() {
-        if (installing) return
-        MangaPluginsState.review = null
-        scope.launch(Dispatchers.IO) { runCatching { manga.services.plugins.cancel(prepared) } }
+/** Shows a folder in Finder (or the file manager of the system). */
+internal fun revealInFileManager(folder: java.nio.file.Path) {
+    runCatching {
+        java.nio.file.Files.createDirectories(folder)
+        if (java.awt.Desktop.isDesktopSupported() && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.OPEN)) java.awt.Desktop.getDesktop().open(folder.toFile())
     }
-    MangaDialogFrame(
-        (if (prepared.replacesVersion != null) "Update" else "Install") + " ${displayName(prepared.name)} ${prepared.version}?",
-        ::decline, width = 640,
-    ) {
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                StatusPill(compatibilityLabel(prepared.compatibility.level), compatibilityTone(prepared.compatibility.level))
-                Text(
-                    "${prepared.name}  ·  ${plural(prepared.staged.packages, "package")}, ${formatBytes(prepared.staged.bytes)}, every archive matched its checksum" +
-                        (prepared.replacesVersion?.let { "  ·  replaces $it" } ?: ""),
-                    style = small(), color = tokens.colors.textMuted,
-                )
-            }
-            Text("What this package is", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
-            Text(
-                "Program code written by other people, not by DebridOne. It was loaded once on trial in a separate helper process and registered ${plural(prepared.sources.size, "source")}.",
-                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-            )
-            Text("What its code can do", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
-            Text(
-                "• Make network requests — to the sites of its sources (listed below), and technically to any address.\n" +
-                    "• See what you search for and which series and chapters you open in its sources, and the settings you enter for them (such as a server login).\n" +
-                    "• Hand page images to DebridOne through one hand-over folder.",
-                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-            )
-            Text("What it cannot do", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
-            Text(
-                "• Read or change your files: it can only read its own folder.\n" +
-                    "• Reach your DebridOne account, your library database, Streaming or Music, or anything in the Keychain.\n" +
-                    "• Start other programs, or keep running after DebridOne quits.\n" +
-                    "• Take the app down: if it crashes, only the extension helper restarts.",
-                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-            )
-            prepared.warnings.forEach { Notice(it, PillTone.WARNING) }
-            Text("${plural(prepared.sources.size, "source")} in this package", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
-            Column(
-                Modifier.fillMaxWidth().heightIn(max = 190.dp).clip(RoundedCornerShape(12.dp)).background(tokens.colors.background).padding(12.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                prepared.sources.forEach { source ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(source.name, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary, modifier = Modifier.weight(0.4f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(languageName(source.language), style = small(), color = tokens.colors.textMuted, modifier = Modifier.weight(0.25f), maxLines = 1)
-                        Text(source.url.removePrefix("https://").removePrefix("http://"), style = small(), color = tokens.colors.textMuted, modifier = Modifier.weight(0.35f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
-            Text(
-                "DebridOne has not checked what these sites offer or whether you may read it where you live; that is between you and each source. Sources can be switched off one by one after installing.",
-                style = small(), color = tokens.colors.textMuted,
-            )
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            if (installing) CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp).padding(end = 0.dp))
-            MangaButton("Don't install", ::decline, primary = false, enabled = !installing, modifier = Modifier.padding(start = 10.dp))
-            MangaButton(if (prepared.replacesVersion != null) "Update" else "Install", {
-                installing = true
-                scope.launch(Dispatchers.IO) {
-                    when (val result = manga.module.confirmInstall(prepared)) {
-                        is PluginActionResult.Failure -> MangaPluginsState.problem = result.message
-                        else -> {
-                            MangaPluginsState.notice = "${displayName(prepared.name)} ${prepared.version} is installed: ${plural(prepared.sources.size, "source")} available."
-                            MangaPluginsState.tab = MangaPluginsTab.SOURCES
-                        }
-                    }
-                    MangaPluginsState.changes++
-                    MangaPluginsState.review = null
-                    installing = false
-                }
-            }, enabled = !installing, modifier = Modifier.padding(start = 10.dp))
-        }
-    }
-}
-
-/** For screens outside this file: what the running host has loaded. */
-@Composable
-internal fun rememberHostState(): HostPluginState? {
-    val manga = LocalManga.current
-    val state by manga.services.extensions.state.collectAsStateWithLifecycle()
-    return state
 }

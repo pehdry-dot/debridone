@@ -43,14 +43,20 @@ jobs:
       # missing library fails the run instead of quietly skipping those tests.
       - name: Install libmpv for the Music playback tests
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libmpv2
-      # The Manga tests start the real extension host on the pinned Node.js build and load the real
-      # Tiyo package (downloaded from the package registry by DebridOne's own installer).
-      - name: Fetch the Node.js runtime for the Manga extension host
-        run: ./scripts/debridone/fetch-node-runtime.sh linux-x64
+      # The Manga tests start the real Suwayomi-Server (the pinned release jar) on the pinned Java 21
+      # runtime and read sample comics through it. With the variable below a missing server fails
+      # the run instead of quietly skipping those tests. Both downloads are checked against a SHA-256.
+      - name: Cache Suwayomi-Server and its Java runtime
+        uses: actions/cache@v5
+        with:
+          path: debridone/modules/manga/build/suwayomi-runtime
+          key: suwayomi-runtime-linux-x64-${{ hashFiles('scripts/debridone/fetch-suwayomi-runtime.sh') }}
+      - name: Fetch Suwayomi-Server and its Java runtime for the Manga tests
+        run: ./scripts/debridone/fetch-suwayomi-runtime.sh linux-x64
       - name: Run DebridOne tests
         env:
           DEBRIDONE_REQUIRE_LIBMPV: "1"
-          DEBRIDONE_REQUIRE_NODE: "1"
+          DEBRIDONE_REQUIRE_SUWAYOMI: "1"
         run: >
           ./gradlew
           :debridone:platform:test
@@ -105,10 +111,16 @@ jobs:
       - name: Fetch the macOS libmpv runtime
         run: ./scripts/debridone/fetch-macos-runtime.sh "${MACOS_ARCH}"
 
-      # Manga's extensions are JavaScript: the app carries the pinned official Node.js build for
-      # this architecture (checked against its published SHA-256) and never uses the runner's own.
-      - name: Fetch the Node.js runtime for the Manga extension host
-        run: ./scripts/debridone/fetch-node-runtime.sh "${MACOS_ARCH}"
+      # Manga's backend is Suwayomi-Server, which needs Java 21: the app carries the pinned server
+      # jar and a pinned Java runtime for this architecture (each checked against its SHA-256) and
+      # never uses a Java found on the computer.
+      - name: Cache Suwayomi-Server and its Java runtime
+        uses: actions/cache@v5
+        with:
+          path: debridone/modules/manga/build/suwayomi-runtime
+          key: suwayomi-runtime-${{ matrix.arch }}-${{ hashFiles('scripts/debridone/fetch-suwayomi-runtime.sh') }}
+      - name: Fetch Suwayomi-Server and its Java runtime
+        run: ./scripts/debridone/fetch-suwayomi-runtime.sh "${MACOS_ARCH}"
 
       - uses: actions/setup-java@v5
         with:
@@ -153,16 +165,16 @@ jobs:
           kill "${pid}" || true
           echo "Smoke test passed: the app started and created its databases."
 
-      # Inside the packaged app: reads a CBZ with no extension, starts the extension host on the
-      # Node.js bundled in the app, installs Houdoku's real extension package (Tiyo) from the
-      # package registry through the app's own verified installer, and reads a chapter through one
-      # of Tiyo's sources against a stand-in server, including a restart and resume.
+      # Inside the packaged app: finds the Suwayomi-Server and the Java runtime bundled in it, starts
+      # the server for a profile, checks that only DebridOne can talk to it, reads a comic archive
+      # through it, restarts and resumes, and checks that no server process is left behind.
       - name: Manga self-test in the packaged app
         run: |
           app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
-          ls -l "${app}/Contents/app/resources/manga-host/" || { echo "The extension host is not in the app bundle." >&2; exit 1; }
-          "${app}/Contents/app/resources/manga-host/node" --version
-          codesign -dv "${app}/Contents/app/resources/manga-host/node" 2>&1 | sed 's/^/  /' || true
+          suwayomi="${app}/Contents/app/resources/suwayomi"
+          ls -l "${suwayomi}/" || { echo "Manga's server is not in the app bundle." >&2; exit 1; }
+          "${suwayomi}/jre/bin/java" -version
+          codesign -dv "${suwayomi}/jre/bin/java" 2>&1 | sed 's/^/  /' || true
           "${app}/Contents/MacOS/DebridOne" --manga-self-test 2>&1 | tee "${RUNNER_TEMP}/manga-self-test.log"
           {
             echo "### Manga self-test (${MACOS_ARCH})"
@@ -172,9 +184,10 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
           grep -q "MANGA SELF-TEST PASSED" "${RUNNER_TEMP}/manga-self-test.log"
 
-      # The file people download: the Node.js inside the DMG's copy of the app must still be a
-      # program (packaging once dropped that), and must start from the read-only disk image.
-      - name: Check the extension runtime inside the DMG
+      # The file people download: the Java inside the DMG's copy of the app must still be a
+      # program (packaging drops that bit unless it is put back), and must start from the
+      # read-only disk image.
+      - name: Check Manga's server runtime inside the DMG
         run: |
           dmg="$(find composeApp/build/compose/release-dmgs -maxdepth 1 -name '*.dmg' | head -n 1)"
           test -f "${dmg}" || { echo "No DMG was produced." >&2; exit 1; }
@@ -182,11 +195,13 @@ jobs:
           hdiutil attach "${dmg}" -nobrowse -readonly -mountpoint "${mount}" > /dev/null
           trap 'hdiutil detach "${mount}" > /dev/null || true' EXIT
           app="$(find "${mount}" -maxdepth 1 -name '*.app' | head -n 1)"
-          node="${app}/Contents/app/resources/manga-host/node"
-          ls -l "${node}"
-          test -x "${node}" || { echo "The Node.js runtime inside the DMG is not executable." >&2; exit 1; }
-          "${node}" --version
-          test -f "${app}/Contents/app/resources/manga-host/host/src/host.js" || { echo "The extension host is missing from the DMG." >&2; exit 1; }
+          java="${app}/Contents/app/resources/suwayomi/jre/bin/java"
+          ls -l "${java}"
+          test -x "${java}" || { echo "The Java runtime inside the DMG is not executable." >&2; exit 1; }
+          "${java}" -version
+          test -x "${app}/Contents/app/resources/suwayomi/jre/lib/jspawnhelper" || { echo "jspawnhelper inside the DMG is not executable." >&2; exit 1; }
+          test -f "${app}/Contents/app/resources/suwayomi/Suwayomi-Server.jar" || { echo "Suwayomi-Server is missing from the DMG." >&2; exit 1; }
+          ls -lh "${dmg}"
 
       # Imports the test audio files into a temporary library and plays one file of every format
       # from start to end through the libmpv inside the bundle, then restarts the Music engine and

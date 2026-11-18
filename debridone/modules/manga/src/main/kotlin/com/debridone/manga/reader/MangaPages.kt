@@ -1,26 +1,17 @@
 package com.debridone.manga.reader
 
-import com.debridone.manga.host.HostException
-import com.debridone.manga.host.ImageRef
-import com.debridone.manga.host.MangaExtensions
 import com.debridone.manga.library.Chapter
 import com.debridone.manga.library.MangaRepository
 import com.debridone.manga.library.Series
-import com.debridone.manga.local.LocalChapterPages
-import com.debridone.manga.local.LocalLibrary
-import com.debridone.manga.net.HttpStatusException
 import com.debridone.manga.net.MangaHttp
+import com.debridone.manga.suwayomi.MangaServer
+import com.debridone.manga.suwayomi.SuwayomiException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonObject
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -34,298 +25,202 @@ class OpenChapter internal constructor(
     val chapter: Chapter,
     val series: Series,
     val pageCount: Int,
-    /** "local", "downloaded" or "online". */
+    /** "local" (a file of the Local source), "downloaded" (kept by the server for offline reading) or "online". */
     val origin: String,
-    internal var source: PageSource,
+    /** Each page's address on the server. */
+    internal val pages: List<String>,
+    /** The connection the addresses belong to. */
+    internal val generation: Int,
 )
-
-internal sealed interface PageSource {
-    class Local(val pages: LocalChapterPages) : PageSource
-    class Downloaded(val dir: Path, val files: List<String>) : PageSource
-    class Remote(val urls: List<String>, val resolvedAt: Long) : PageSource
-}
 
 /** The page could not be shown. [message] is written for the reader; [temporary] means trying again may help. */
 class PageException(message: String, val temporary: Boolean, cause: Throwable? = null) : IOException(message, cause)
 
 /**
- * Turns "page 7 of this chapter" into image bytes, wherever the chapter lives:
- *  - a local archive or folder (read directly; no extension host involved);
- *  - a downloaded chapter (read from the downloads folder);
- *  - a source extension (page addresses from the extension, images through it or straight from the
- *    address it hands back), kept in a size-limited cache on disk.
+ * Turns "page 7 of this chapter" into image bytes. Every page comes from Suwayomi-Server: it
+ * fetches it from the source (keeping its own cache), or reads it from a downloaded chapter or a
+ * local file. The reader never sees an address, only bytes.
+ *
+ * Pages just shown are kept in memory, so paging back and forth does not ask again. Covers that
+ * come from a metadata provider (a web address, not the server) are kept on disk.
  */
 class MangaPages(
+    private val server: MangaServer,
     private val repository: MangaRepository,
-    private val extensions: MangaExtensions,
-    private val local: LocalLibrary,
     private val cacheDir: Path,
-    private val coverDir: Path,
-    private val clock: () -> Long = System::currentTimeMillis,
+    /** Bytes of page images kept in memory. */
+    private val memoryBudget: Long = 160L * 1024 * 1024,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
-    private val directFetches = Semaphore(4)
+    private val fetches = Semaphore(6)
     private val pageLocks = ConcurrentHashMap<String, Mutex>()
+    private val remembered = object : LinkedHashMap<String, ByteArray>(64, 0.75f, true) {}
+    private var rememberedBytes = 0L
 
-    /** Sources seen to hand back the address unchanged: their images are fetched without asking the host each time. */
-    private val plainImageSources = ConcurrentHashMap.newKeySet<String>()
-
-    private val pagesDir: Path get() = cacheDir.resolve("pages")
     private val coverCacheDir: Path get() = cacheDir.resolve("covers")
 
-    /** Works out the page list of a chapter. Offline copies are preferred over the source. */
+    /** Asks the server for the chapter's pages. For a chapter of an online source this is a request to that source. */
     suspend fun open(chapterId: Long): OpenChapter = withContext(Dispatchers.IO) {
         val chapter = repository.chapter(chapterId) ?: throw PageException("This chapter is no longer in the library.", false)
         val series = repository.series(chapter.seriesId) ?: throw PageException("This series is no longer in the library.", false)
-        val opened = when {
-            series.isLocal -> {
-                val pages = try {
-                    local.pages(Paths.get(chapter.sourceId))
-                } catch (failure: IOException) {
-                    throw PageException(failure.message ?: "The file could not be opened.", false, failure)
-                }
-                if (pages.pages.isEmpty()) throw PageException("\"${Paths.get(chapter.sourceId).fileName}\" contains no images.", false)
-                OpenChapter(chapter, series, pages.pages.size, "local", PageSource.Local(pages))
-            }
-            chapter.isDownloaded && downloadedFiles(chapter).isNotEmpty() -> {
-                val files = downloadedFiles(chapter)
-                OpenChapter(chapter, series, files.size, "downloaded", PageSource.Downloaded(Paths.get(chapter.downloadDir!!), files))
-            }
-            else -> {
-                val urls = resolve(series, chapter)
-                OpenChapter(chapter, series, urls.size, "online", PageSource.Remote(urls, clock()))
-            }
+        val generation = server.generation.value
+        val (opened, pages) = try {
+            server.api().chapterPages(chapter.id.toInt())
+        } catch (failure: SuwayomiException) {
+            throw problem(series, failure)
         }
-        repository.setPageCount(chapterId, opened.pageCount)
-        opened
+        if (pages.isEmpty()) throw PageException("\"${chapter.displayName}\" has no pages.", false)
+        // The page count is known now; the chapter list shows it from here on.
+        runCatching { repository.reloadChapters(opened.mangaId) }
+        OpenChapter(
+            chapter = repository.chapter(chapterId) ?: chapter,
+            series = series,
+            pageCount = pages.size,
+            origin = if (series.isLocal) "local" else if (opened.downloaded) "downloaded" else "online",
+            pages = pages,
+            generation = generation,
+        )
     }
 
     /** The image of one page (zero-based). */
     suspend fun page(open: OpenChapter, index: Int): ByteArray = withContext(Dispatchers.IO) {
         if (index !in 0 until open.pageCount) throw PageException("This chapter has no page ${index + 1}.", false)
-        when (val source = open.source) {
-            is PageSource.Local -> try {
-                checked(local.read(source.pages, index))
-            } catch (failure: PageException) {
-                throw failure
-            } catch (failure: IOException) {
-                throw PageException(failure.message ?: "The page could not be read.", false, failure)
-            }
-            is PageSource.Downloaded -> try {
-                checked(Files.readAllBytes(source.dir.resolve(source.files[index])))
-            } catch (failure: PageException) {
-                throw failure
-            } catch (failure: IOException) {
-                throw PageException("Page ${index + 1} of the downloaded chapter could not be read. Deleting and downloading the chapter again will repair it.", false, failure)
-            }
-            is PageSource.Remote -> remotePage(open, source, index)
-        }
-    }
-
-    /** True when the page is already on disk and will show without a request. */
-    fun isCached(open: OpenChapter, index: Int): Boolean =
-        open.source !is PageSource.Remote || Files.isRegularFile(cacheFile(open.chapter.id, index))
-
-    private suspend fun remotePage(open: OpenChapter, source: PageSource.Remote, index: Int): ByteArray {
-        val file = cacheFile(open.chapter.id, index)
-        val lock = pageLocks.getOrPut("${open.chapter.id}/$index") { Mutex() }
-        return lock.withLock {
-            if (Files.isRegularFile(file)) {
-                runCatching { Files.readAllBytes(file) }.getOrNull()?.takeIf(::looksLikeImage)?.let { return@withLock it }
-            }
-            val bytes = try {
-                fetchImage(open.series, source.urls[index])
-            } catch (failure: Exception) {
-                val problem = asPageException(open.series, failure)
-                // Some sources (MangaDex) hand out page addresses that expire after a while: when an old
-                // address is refused, ask the source for the chapter's pages once more.
-                val expired = clock() - source.resolvedAt > STALE_ADDRESSES_MS && problem.cause is HttpStatusException
-                if (!expired) throw problem
-                val fresh = PageSource.Remote(resolve(open.series, open.chapter), clock())
-                open.source = fresh
-                try {
-                    fetchImage(open.series, fresh.urls.getOrNull(index) ?: throw PageException("The source no longer lists page ${index + 1}.", false))
-                } catch (second: Exception) {
-                    throw asPageException(open.series, second)
+        val key = key(open, index)
+        remembered(key)?.let { return@withContext it }
+        val lock = pageLocks.getOrPut(key) { Mutex() }
+        try {
+            lock.withLock {
+                remembered(key) ?: fetches.withPermit {
+                    if (open.generation != server.generation.value) throw PageException("The manga server was restarted. Open the chapter again.", true)
+                    val bytes = try {
+                        server.transport().bytes(open.pages[index], timeoutSeconds = PAGE_TIMEOUT_SECONDS)
+                    } catch (failure: SuwayomiException) {
+                        throw problem(open.series, failure)
+                    }
+                    if (!looksLikeImage(bytes)) throw PageException("Page ${index + 1} is not an image the reader can show.", false)
+                    remember(key, bytes)
+                    bytes
                 }
             }
-            Files.createDirectories(file.parent)
-            val partial = file.resolveSibling(file.fileName.toString() + ".part")
-            Files.write(partial, bytes)
-            Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING)
-            bytes
-        }.also { pageLocks.remove("${open.chapter.id}/$index") }
-    }
-
-    private suspend fun resolve(series: Series, chapter: Chapter): List<String> {
-        val urls = try {
-            extensions.pages(series.extensionId, series.sourceId, chapter.sourceId)
-        } catch (failure: HostException) {
-            throw asPageException(series, failure)
-        }
-        if (urls.isEmpty()) throw PageException("${series.sourceName.ifBlank { "The source" }} lists no pages for this chapter.", false)
-        return urls
-    }
-
-    /**
-     * One image from a source. The extension decides: it either returns the bytes itself (when the
-     * site needs its login or headers) or an address, which is then fetched here.
-     */
-    private suspend fun fetchImage(series: Series, url: String): ByteArray {
-        if (series.extensionId in plainImageSources && isWebAddress(url)) {
-            try {
-                return direct(url)
-            } catch (failure: PageException) {
-                // The shortcut did not hold for this address (the source may hand out some images itself):
-                // ask the source after all, and stop assuming.
-                plainImageSources -= series.extensionId
-            }
-        }
-        val raw = series.sourceRaw?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() } ?: JsonObject(emptyMap())
-        return when (val image = extensions.image(series.extensionId, raw, url)) {
-            is ImageRef.Url -> {
-                if (image.url == url) plainImageSources += series.extensionId
-                direct(image.url)
-            }
-            is ImageRef.Spooled -> try {
-                checked(Files.readAllBytes(image.file))
-            } finally {
-                runCatching { Files.deleteIfExists(image.file) }
-            }
+        } finally {
+            pageLocks.remove(key, lock)
         }
     }
 
-    private fun isWebAddress(url: String): Boolean = url.startsWith("http://") || url.startsWith("https://")
+    /** True when the page will show without a request. */
+    fun isCached(open: OpenChapter, index: Int): Boolean = synchronized(remembered) { remembered.containsKey(key(open, index)) }
 
-    private suspend fun direct(url: String): ByteArray {
-        if (!isWebAddress(url)) throw PageException("The source returned an address that cannot be opened.", false)
-        return directFetches.withPermit {
-            try {
-                checked(MangaHttp.get(url, maxBytes = MAX_IMAGE_BYTES).body)
-            } catch (failure: HttpStatusException) {
-                throw PageException("The image host answered ${failure.status}.", failure.status >= 500 || failure.status == 429, failure)
-            } catch (failure: PageException) {
-                throw failure
-            } catch (failure: IOException) {
-                throw PageException("The image could not be downloaded (${failure.message ?: "network error"}).", true, failure)
-            }
+    private fun key(open: OpenChapter, index: Int) = "${open.generation}/${open.chapter.id}/$index"
+
+    private fun remembered(key: String): ByteArray? = synchronized(remembered) { remembered[key] }
+
+    private fun remember(key: String, bytes: ByteArray) = synchronized(remembered) {
+        remembered.put(key, bytes)?.let { rememberedBytes -= it.size }
+        rememberedBytes += bytes.size
+        val eldest = remembered.entries.iterator()
+        while (rememberedBytes > memoryBudget && remembered.size > 1 && eldest.hasNext()) {
+            val entry = eldest.next()
+            if (entry.key == key) continue
+            rememberedBytes -= entry.value.size
+            eldest.remove()
         }
     }
 
-    private fun asPageException(series: Series, failure: Throwable): PageException = when (failure) {
-        is PageException -> failure
-        is HostException -> {
-            val problem = com.debridone.manga.sources.SourceProblem.of(series.sourceName.ifBlank { "The source" }, failure)
-            PageException(problem.message, problem.temporary, failure)
+    private fun problem(series: Series, failure: SuwayomiException): PageException {
+        val detail = failure.message.orEmpty()
+        return when (failure.kind) {
+            SuwayomiException.Kind.UNREACHABLE -> PageException(detail.ifBlank { "The manga server is not running." }, true, failure)
+            SuwayomiException.Kind.TIMEOUT -> PageException("${series.sourceName.ifBlank { "The source" }} did not answer in time.", true, failure)
+            SuwayomiException.Kind.UNAUTHORIZED -> PageException(detail, false, failure)
+            else -> PageException(
+                if (series.isLocal) "The file could not be read: $detail" else "${series.sourceName.ifBlank { "The source" }} could not provide this: $detail",
+                temporary = true, cause = failure,
+            )
         }
-        else -> PageException(failure.message ?: "The page could not be loaded.", true, failure)
     }
 
-    private fun checked(bytes: ByteArray): ByteArray {
-        if (!looksLikeImage(bytes)) throw PageException("The source returned something that is not an image.", false)
-        return bytes
-    }
+    // ---- covers and icons -----------------------------------------------------------------------
 
-    // ---- covers ---------------------------------------------------------------------------------
-
-    /** The cover of a series, or null when it has none. Remote covers are cached on disk. */
+    /** The cover of a series, or null when it has none. */
     suspend fun cover(series: Series): ByteArray? = withContext(Dispatchers.IO) {
         series.coverFile?.let { path ->
             runCatching { Files.readAllBytes(Paths.get(path)) }.getOrNull()?.takeIf(::looksLikeImage)?.let { return@withContext it }
         }
-        if (series.isLocal) {
-            val bytes = runCatching { local.firstPage(Paths.get(series.sourceId)) }.getOrNull()?.takeIf(::looksLikeImage) ?: return@withContext null
-            // Keep it, so the library does not open an archive for every cover on every start.
-            runCatching {
-                Files.createDirectories(coverDir)
-                val file = coverDir.resolve("local-${series.id}")
-                Files.write(file, bytes)
-                repository.setCoverFile(series.id, file.toString())
-            }
-            return@withContext bytes
-        }
-        remoteCover(series.coverUrl, series)
+        fetch(series.coverUrl)
     }
 
-    /** A cover by address, for search results and metadata matches that have no row yet. [series] routes it through its source when needed. */
-    suspend fun remoteCover(url: String, series: Series? = null, extensionId: String? = null, raw: JsonObject? = null): ByteArray? = withContext(Dispatchers.IO) {
-        if (url.isBlank()) return@withContext null
-        val file = coverCacheDir.resolve(sha1(url))
-        if (Files.isRegularFile(file)) {
-            runCatching { Files.readAllBytes(file) }.getOrNull()?.takeIf(::looksLikeImage)?.let { return@withContext it }
+    /** A cover by address: a path of the server, or a web address from a metadata provider. */
+    suspend fun remoteCover(url: String): ByteArray? = withContext(Dispatchers.IO) { fetch(url) }
+
+    /** The icon of a source or an extension (a path of the server). */
+    suspend fun icon(path: String): ByteArray? = withContext(Dispatchers.IO) { fetch(path) }
+
+    private suspend fun fetch(address: String): ByteArray? {
+        if (address.isBlank()) return null
+        if (address.startsWith("/")) {
+            // The server keeps its own copy of covers and icons; asking it again costs nothing.
+            return fetches.withPermit { runCatching { server.transport().bytes(address) }.getOrNull()?.takeIf(::looksLikeImage) }
         }
-        val bytes = runCatching {
-            val source = series?.extensionId?.takeIf { !series.isLocal } ?: extensionId
-            val sourceCover = (series?.sourceRaw?.let { runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull() } ?: raw)
-            val fromSource = source != null && (sourceCover?.get("remoteCoverUrl") as? JsonPrimitive)?.contentOrNull == url
-            when {
-                // The source's own cover goes through the source, like a page: it may need the source's login.
-                fromSource && source !in plainImageSources -> when (val image = extensions.image(source!!, sourceCover ?: JsonObject(emptyMap()), url)) {
-                    is ImageRef.Url -> {
-                        if (image.url == url) plainImageSources += source
-                        direct(image.url)
-                    }
-                    is ImageRef.Spooled -> try {
-                        checked(Files.readAllBytes(image.file))
-                    } finally {
-                        runCatching { Files.deleteIfExists(image.file) }
-                    }
-                }
-                else -> direct(url)
-            }
-        }.getOrNull() ?: return@withContext null
+        if (!address.startsWith("https://") && !address.startsWith("http://")) return null
+        val file = coverCacheDir.resolve(sha1(address))
+        if (Files.isRegularFile(file)) {
+            runCatching { Files.readAllBytes(file) }.getOrNull()?.takeIf(::looksLikeImage)?.let { return it }
+        }
+        val bytes = fetches.withPermit {
+            runCatching { MangaHttp.get(address, mapOf("Accept" to "image/*"), MAX_IMAGE_BYTES).body }.getOrNull()?.takeIf(::looksLikeImage)
+        } ?: return null
         runCatching {
             Files.createDirectories(coverCacheDir)
             val partial = file.resolveSibling(file.fileName.toString() + ".part")
             Files.write(partial, bytes)
             Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING)
         }
-        bytes
+        return bytes
     }
 
     // ---- cache ----------------------------------------------------------------------------------
 
-    private fun cacheFile(chapterId: Long, index: Int): Path = pagesDir.resolve(chapterId.toString()).resolve(index.toString())
+    /** Bytes used by covers kept on disk and pages kept in memory. */
+    fun cacheSize(): Long = sizeOf(coverCacheDir) + synchronized(remembered) { rememberedBytes }
 
-    private fun downloadedFiles(chapter: Chapter): List<String> {
-        val dir = chapter.downloadDir?.let(Paths::get)?.takeIf { Files.isDirectory(it) } ?: return emptyList()
-        return Files.newDirectoryStream(dir).use { stream ->
-            stream.filter { Files.isRegularFile(it) && !it.fileName.toString().endsWith(".part") }.map { it.fileName.toString() }
-        }.sortedWith(LocalLibrary.naturalOrder)
-    }
-
-    /** Bytes used by cached pages and covers. */
-    fun cacheSize(): Long = sizeOf(pagesDir) + sizeOf(coverCacheDir)
-
-    /** Deletes cached pages, least recently used chapters first, until the cache is under [maxBytes]. Downloads are not touched. */
+    /** Deletes the oldest kept covers until they take less than [maxBytes]. */
     fun trimCache(maxBytes: Long) {
-        if (!Files.isDirectory(pagesDir)) return
-        val chapters = Files.newDirectoryStream(pagesDir).use { it.toList() }
-            .map { Triple(it, sizeOf(it), runCatching { Files.getLastModifiedTime(it).toMillis() }.getOrDefault(0)) }
+        if (!Files.isDirectory(coverCacheDir)) return
+        val files = Files.newDirectoryStream(coverCacheDir).use { it.toList() }
+            .map { Triple(it, runCatching { Files.size(it) }.getOrDefault(0), runCatching { Files.getLastModifiedTime(it).toMillis() }.getOrDefault(0)) }
             .sortedBy { it.third }
-        var total = chapters.sumOf { it.second }
-        for ((dir, size, _) in chapters) {
+        var total = files.sumOf { it.second }
+        for ((file, size, _) in files) {
             if (total <= maxBytes) break
-            deleteTree(dir)
+            runCatching { Files.deleteIfExists(file) }
             total -= size
         }
     }
 
+    /** Forgets kept pages and covers here, and asks the server to drop the page images it keeps from sources. */
     fun clearCache() {
-        deleteTree(pagesDir)
-        deleteTree(coverCacheDir)
+        synchronized(remembered) {
+            remembered.clear()
+            rememberedBytes = 0
+        }
+        if (Files.exists(coverCacheDir)) {
+            Files.walk(coverCacheDir).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { runCatching { Files.deleteIfExists(it) } } }
+        }
     }
 
-    fun forgetChapter(chapterId: Long) = deleteTree(pagesDir.resolve(chapterId.toString()))
+    fun forgetChapter(chapterId: Long) = synchronized(remembered) {
+        val entries = remembered.entries.iterator()
+        while (entries.hasNext()) {
+            val entry = entries.next()
+            if (entry.key.substringAfter('/').substringBefore('/') == chapterId.toString()) {
+                rememberedBytes -= entry.value.size
+                entries.remove()
+            }
+        }
+    }
 
     private fun sizeOf(path: Path): Long {
         if (!Files.exists(path)) return 0
         return Files.walk(path).use { stream -> stream.filter { Files.isRegularFile(it) }.mapToLong { runCatching { Files.size(it) }.getOrDefault(0) }.sum() }
-    }
-
-    private fun deleteTree(path: Path) {
-        if (!Files.exists(path)) return
-        Files.walk(path).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { runCatching { Files.deleteIfExists(it) } } }
     }
 
     private fun sha1(text: String): String =
@@ -333,9 +228,9 @@ class MangaPages(
 
     companion object {
         private const val MAX_IMAGE_BYTES = 64 * 1024 * 1024
-        private const val STALE_ADDRESSES_MS = 5 * 60 * 1000L
+        private const val PAGE_TIMEOUT_SECONDS = 90
 
-        /** JPEG, PNG, GIF, WebP or BMP, by their first bytes. */
+        /** JPEG, PNG, GIF, WebP, BMP or AVIF/HEIF, by their first bytes. */
         fun looksLikeImage(bytes: ByteArray): Boolean = imageExtension(bytes) != null
 
         /** The file extension matching the image's real format, or null when it is not an image. */
@@ -349,6 +244,7 @@ class MangaPages(
                 at(0) == 'R'.code && at(1) == 'I'.code && at(2) == 'F'.code && at(3) == 'F'.code &&
                     at(8) == 'W'.code && at(9) == 'E'.code && at(10) == 'B'.code && at(11) == 'P'.code -> "webp"
                 at(0) == 'B'.code && at(1) == 'M'.code -> "bmp"
+                at(4) == 'f'.code && at(5) == 't'.code && at(6) == 'y'.code && at(7) == 'p'.code -> "avif"
                 else -> null
             }
         }

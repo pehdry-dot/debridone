@@ -356,7 +356,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
 
     fun chapter(id: Int): SwChapter = chapter(transport.execute(CHAPTER, buildJsonObject { put("id", id) }).need("chapter"))
 
-    /** Chapters read since [sinceSeconds], most recent first, across the library. */
+    /** Chapters read since [sinceSeconds], most recent first, in and outside the library. */
     fun recentlyRead(sinceSeconds: Long, limit: Int): List<SwChapter> =
         transport.execute(RECENTLY_READ, buildJsonObject { put("since", sinceSeconds.toString()); put("first", limit) })
             .nodes("chapters").map { chapter(it) }
@@ -996,7 +996,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
         val CHAPTER = document("query(^id: Int!) { chapter(id: ^id) { ...ChapterFields } } $CHAPTER_FIELDS")
         val RECENTLY_READ = document(
             """query(^since: LongString!, ^first: Int!) {
-              chapters(filter: { lastReadAt: { greaterThan: ^since }, inLibrary: { equalTo: true } }, order: [{ by: LAST_READ_AT, byType: DESC }], first: ^first) {
+              chapters(filter: { lastReadAt: { greaterThan: ^since } }, order: [{ by: LAST_READ_AT, byType: DESC }], first: ^first) {
                 nodes { ...ChapterFields }
               }
             } $CHAPTER_FIELDS""",

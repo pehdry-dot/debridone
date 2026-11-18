@@ -273,7 +273,7 @@ internal fun MangaReader(chapterId: Long, startPage: Int? = null) {
     LaunchedEffect(session) { session.start(startPage) }
     DisposableEffect(session) {
         onDispose {
-            session.save()
+            MangaBackground.run { session.save() }
             session.close()
         }
     }
@@ -322,7 +322,7 @@ internal fun MangaReader(chapterId: Long, startPage: Int? = null) {
             MangaNav.message = edge
             return
         }
-        session.save()
+        MangaBackground.run { session.save() }
         MangaNav.replace(MangaRoute.Reader(chapter.id, if (atEnd) Int.MAX_VALUE else 0))
     }
     fun nextChapter() = go(session.next, edge = "This is the last chapter.")
@@ -422,7 +422,7 @@ internal fun MangaReader(chapterId: Long, startPage: Int? = null) {
                 onNextChapter = ::nextChapter,
                 onPreviousChapter = { previousChapter() },
                 onChapter = { chapter ->
-                    session.save()
+                    MangaBackground.run { session.save() }
                     MangaNav.replace(MangaRoute.Reader(chapter.id))
                 },
             )

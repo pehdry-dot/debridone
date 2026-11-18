@@ -62,7 +62,7 @@ import com.debridone.manga.library.MetadataLink
 import com.debridone.manga.library.Series
 import com.debridone.manga.library.SeriesEdit
 import com.debridone.manga.library.SeriesField
-import com.debridone.manga.local.LocalLibrary
+import com.debridone.manga.local.LocalFiles
 import com.debridone.manga.metadata.MetadataMatch
 import com.debridone.manga.metadata.TrackingResult
 import com.debridone.manga.reader.ReaderSettings
@@ -112,15 +112,14 @@ internal object MangaPickers {
     }
 
     fun chooseArchives(): List<Path> = chooseFiles(
-        "Choose comic archives", "Comic archives (CBZ, ZIP)",
-        (LocalLibrary.ARCHIVE_EXTENSIONS + LocalLibrary.UNSUPPORTED_ARCHIVE_EXTENSIONS).toTypedArray(), multiple = true,
+        "Choose comic archives", "Comic archives (CBZ, ZIP, CBR, RAR, EPUB)", arrayOf("cbz", "zip", "cbr", "rar", "epub"), multiple = true,
     )
 
     fun chooseImage(): Path? = chooseFiles("Choose a cover", "Images", arrayOf("jpg", "jpeg", "png", "webp"), multiple = false).firstOrNull()
 
-    fun choosePackage(): Path? = chooseFiles("Choose an extension package", "npm package archives (.tgz)", arrayOf("tgz"), multiple = false).firstOrNull()
+    fun choosePackage(): Path? = chooseFiles("Choose an extension package", "Mihon/Tachiyomi extension packages (.apk)", arrayOf("apk"), multiple = false).firstOrNull()
 
-    fun chooseBackup(): Path? = chooseFiles("Choose a Manga library backup", "DebridOne Manga backups (.json)", arrayOf("json"), multiple = false).firstOrNull()
+    fun chooseBackup(): Path? = chooseFiles("Choose a Manga library backup", "Suwayomi and Mihon backups (.tachibk, .proto.gz)", arrayOf("tachibk", "gz"), multiple = false).firstOrNull()
 
     fun saveFile(title: String, suggestedName: String): Path? {
         if (isMac) {
@@ -165,7 +164,6 @@ internal fun importLocal(manga: MangaContext, actions: MangaActions, paths: List
         val problems = ArrayList<String>()
         for (path in paths) {
             try {
-                if (Files.isRegularFile(path) && !LocalLibrary.isReadableArchive(path)) throw java.io.IOException(LocalLibrary.unsupportedMessage(path))
                 lastId = manga.services.local.import(manga.profileId, path, type).id
                 imported++
             } catch (failure: java.io.IOException) {
@@ -417,7 +415,7 @@ private fun EditMetadataDialog(seriesId: Long, onDismiss: () -> Unit) {
 private fun storeCover(manga: MangaContext, seriesId: Long, picture: Path): String? {
     val bytes = Files.readAllBytes(picture)
     if (!com.debridone.manga.reader.MangaPages.looksLikeImage(bytes)) throw java.io.IOException("${picture.fileName} is not a picture DebridOne can show.")
-    val dir = manga.services.downloadsDir.resolveSibling("covers")
+    val dir = manga.services.coversDir
     Files.createDirectories(dir)
     val target = dir.resolve("custom-$seriesId-${System.currentTimeMillis()}")
     Files.write(target, bytes)
@@ -696,7 +694,7 @@ private fun ChangeSourceDialog(seriesId: Long, onDismiss: () -> Unit) {
                                 busy = true
                                 scope.launch(Dispatchers.IO) {
                                     try {
-                                        val edition = manga.services.sources.remember(manga.profileId, remote)
+                                        val edition = remote
                                         manga.services.sources.refresh(edition.id)
                                         val marked = manga.services.repository.carryOver(from.id, edition.id, copyRead)
                                         MangaNav.message = "Now on ${result.source.name}" + if (marked > 0) " · ${plural(marked, "chapter")} marked read" else ""
@@ -714,7 +712,7 @@ private fun ChangeSourceDialog(seriesId: Long, onDismiss: () -> Unit) {
                             .padding(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RemoteCover(remote, Modifier.width(44.dp).aspectRatio(COVER_ASPECT), shape = RoundedCornerShape(6.dp))
+                        SeriesCover(remote, Modifier.width(44.dp).aspectRatio(COVER_ASPECT), shape = RoundedCornerShape(6.dp))
                         Column(Modifier.weight(1f)) {
                             Text(remote.title, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(listOfNotNull(remote.status, languageName(result.source.language)).joinToString("  ·  "), style = small(), color = tokens.colors.textMuted)

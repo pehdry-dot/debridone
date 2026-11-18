@@ -25,13 +25,12 @@ The macOS libmpv runtime is stored with Git LFS. `scripts/debridone/fetch-macos-
 it for you: from this repository or upstream Nuvio Desktop with Git LFS, or over HTTPS when Git LFS
 is not installed. Each file is checked against the SHA-256 recorded in the repository.
 
-Manga's extension host runs on Node.js. `scripts/debridone/fetch-node-runtime.sh <platform>`
-(`darwin-arm64`, `darwin-x64` or `linux-x64`) downloads the official Node.js 22.23.4 build from
-nodejs.org, checks it against the SHA-256 recorded in the script and unpacks it under
-`debridone/modules/manga/build/node-runtime/`. `dev.sh` and `build-macos-dev-dmg.sh` call it for
-you; a Node.js installed on your machine is not used. The host's own packages are installed from
-`debridone/modules/manga/host/package-lock.json` (with install scripts off) by the Gradle task
-`:debridone:modules:manga:prepareMangaHost`, which needs the package registry once.
+Manga's backend is Suwayomi-Server, which needs Java 21. `scripts/debridone/fetch-suwayomi-runtime.sh <platform>`
+(`darwin-arm64`, `darwin-x64` or `linux-x64`) downloads the pinned Suwayomi-Server release jar and
+the pinned Eclipse Temurin 21 JRE, checks each against its SHA-256, and puts them under
+`debridone/modules/manga/build/suwayomi-runtime/`. `dev.sh` and `build-macos-dev-dmg.sh` call it for
+you; a Java installed on your machine is not used for the server. The packaged app carries both
+(`Contents/app/resources/suwayomi/`), which is why the DMG is about 200 MB larger than before.
 
 ## Run from source
 
@@ -64,7 +63,7 @@ xattr -dr com.apple.quarantine /Applications/DebridOne.app
 `.github/workflows/debridone-macos-dev.yml` runs the tests, then builds unsigned DMGs on
 `macos-15` and `macos-26` (both arm64) and `macos-15-intel` (x86_64), smoke-tests the app bundle
 (it must stay running and create its databases), runs the Manga and Music self-tests inside the
-packaged app, starts the bundled Node.js from the mounted DMG, and uploads the DMGs as artifacts. Apple Silicon is
+packaged app, starts the bundled Java from the mounted DMG, and uploads the DMGs as artifacts. Apple Silicon is
 built on two images because GitHub's Apple Silicon runners are short on capacity at times and
 cancel a job that gets no machine. Started by hand (Actions › Run workflow), the workflow can
 build one architecture only.

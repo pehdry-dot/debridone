@@ -112,6 +112,9 @@ class SuwayomiServerManager(
     /** The process this manager started, for tests that play the part of a DebridOne that died. */
     internal fun runningProcess(): Process? = process
 
+    /** The process id of the server this manager started, or null when none is running. */
+    val runningProcess: Long? get() = process?.takeIf { it.isAlive }?.pid()
+
     fun directory(profile: Long): Path = dataRoot.resolve("profile-$profile")
 
     /** The folder Suwayomi's built-in Local source reads from. */

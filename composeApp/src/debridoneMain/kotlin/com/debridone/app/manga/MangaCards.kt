@@ -48,8 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.debridone.manga.host.RemoteSeries
-import com.debridone.manga.library.MangaClassifier
+import com.debridone.manga.library.Series
 import com.debridone.manga.library.MediaType
 import com.debridone.manga.library.SeriesSummary
 import com.nuvio.app.core.ui.nuvio
@@ -105,22 +104,22 @@ internal fun SeriesCard(
     )
 }
 
-/** A series as a source lists it: not in the library (yet), so no progress. */
+/** A series as a source lists it: maybe in the library, but shown without progress. */
 @Composable
-internal fun RemoteSeriesCard(remote: RemoteSeries, sourceName: String, modifier: Modifier = Modifier, inLibrary: Boolean = false) {
+internal fun SourceSeriesCard(series: Series, sourceName: String, modifier: Modifier = Modifier) {
     val actions = LocalMangaActions.current
-    val type = MangaClassifier.classify(remote.originalLanguage, remote.tags)
     CoverCard(
-        title = remote.title,
-        subtitle = listOfNotNull(remote.status, sourceName.takeIf { it.isNotBlank() }).joinToString(" · "),
-        typeLabel = type.label,
-        cornerBadge = null,
+        title = series.title,
+        subtitle = listOfNotNull(series.status, sourceName.takeIf { it.isNotBlank() }).joinToString(" · "),
+        typeLabel = series.mediaType.label,
+        cornerBadge = if (series.inLibrary) "In library" else null,
         progress = null,
         modifier = modifier,
-        onClick = { actions.open(remote) },
-        cover = { RemoteCover(remote, Modifier.fillMaxSize()) },
+        onClick = { actions.open(series) },
+        cover = { SeriesCover(series, Modifier.fillMaxSize()) },
         hoverActions = {
-            if (inLibrary) HoverAction(Icons.Rounded.Check, "In your library", primary = true) { actions.open(remote) }
+            if (series.inLibrary) HoverAction(Icons.Rounded.Check, "In your library", primary = true) { actions.open(series) }
+            else HoverAction(Icons.Rounded.Add, "Add to library") { actions.toggleLibrary(series) }
         },
     )
 }

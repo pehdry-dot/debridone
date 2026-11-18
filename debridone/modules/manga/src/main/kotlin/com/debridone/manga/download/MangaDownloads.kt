@@ -1,11 +1,8 @@
 package com.debridone.manga.download
 
-import com.debridone.manga.library.Chapter
-import com.debridone.manga.library.DownloadState
 import com.debridone.manga.library.MangaRepository
-import com.debridone.manga.reader.MangaPages
-import com.debridone.manga.reader.OpenChapter
-import com.debridone.manga.reader.PageException
+import com.debridone.manga.suwayomi.MangaServer
+import com.debridone.manga.suwayomi.SwDownloadStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,174 +10,131 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
-import java.nio.file.StandardCopyOption
 
 /**
- * Saves chapters for reading without a connection.
- *
- * Chapters wait in a queue (kept in the database, so it survives a restart) and are fetched one
- * after another through the same page pipeline the reader uses — nothing a source would not hand to
- * the reader is requested. Pages are written one file each under
- * `downloads/<profile>/<series>/<chapter>/0001.jpg…`; a page is only given its final name once it is
- * complete, so an interrupted download resumes with the pages it already has.
+ * Chapters kept for reading offline. Downloading is Suwayomi-Server's: it has the queue, fetches
+ * the pages through the source's extension, keeps the files in its downloads folder, and serves a
+ * downloaded chapter's pages from there. This class asks it to, and watches the queue so the
+ * screens can show progress.
  */
 class MangaDownloads(
+    private val server: MangaServer,
     private val repository: MangaRepository,
-    private val pages: MangaPages,
-    private val downloadsDir: Path,
     private val scope: CoroutineScope,
-    private val parallel: () -> Int = { 1 },
 ) {
-    /** Pause before a page is asked for again; doubled for the third attempt. */
-    @Volatile
-    var retryDelayMs: Long = 1_500
+    private val _status = MutableStateFlow(SwDownloadStatus(running = false, queue = emptyList()))
 
-    private val guard = Mutex()
-    private val running = HashMap<Long, Job>()
+    /** The queue as the server last reported it. */
+    val status: StateFlow<SwDownloadStatus> = _status.asStateFlow()
+
     private val _active = MutableStateFlow<Set<Long>>(emptySet())
 
-    /** Ids of the chapters being downloaded right now. */
+    /** The chapters that are waiting or being downloaded. */
     val active: StateFlow<Set<Long>> = _active.asStateFlow()
 
-    /** Called once when the module starts: downloads cut short by quitting go back in the queue. */
-    fun resume() {
-        repository.requeueInterruptedDownloads()
-        pump()
+    /** How often the queue is looked at while something is in it, and while nothing is. */
+    var busyIntervalMs: Long = 800
+    var idleIntervalMs: Long = 8_000
+
+    private var watcher: Job? = null
+    private val askedForPages = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
+    /** Starts watching the queue. Called once the module runs; does nothing while no server is connected. */
+    fun watch() {
+        if (watcher?.isActive == true) return
+        watcher = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                val busy = if (server.isReady) runCatching { poll() }.getOrDefault(false) else false
+                delay(if (busy) busyIntervalMs else idleIntervalMs)
+            }
+        }
+    }
+
+    /** Looks at the queue now. Returns true while something is waiting or downloading. */
+    fun poll(): Boolean {
+        apply(server.api().downloadStatus())
+        return _status.value.queue.any { it.state == "QUEUED" || it.state == "DOWNLOADING" }
+    }
+
+    private fun apply(next: SwDownloadStatus) {
+        val before = _status.value
+        _status.value = next
+        _active.value = next.queue.filter { it.state == "QUEUED" || it.state == "DOWNLOADING" }.map { it.chapterId.toLong() }.toSet()
+        val changed = repository.setQueue(next)
+        // A chapter that left the queue, or is reported finished, is on disk now (or was removed): ask again.
+        val finished = next.queue.filter { it.state == "FINISHED" }.map { it.mangaId }
+        val left = before.queue.filter { old -> next.queue.none { it.chapterId == old.chapterId } }.map { it.mangaId }
+        // The page count of a chapter becomes known when its download starts; the progress line needs it.
+        val started = next.queue.filter { it.state == "DOWNLOADING" && it.progress > 0 && askedForPages.add(it.chapterId) }.map { it.mangaId }
+        val affected = (finished + left + started).distinct()
+        if (affected.isNotEmpty()) {
+            for (mangaId in affected) runCatching { repository.reloadChapters(mangaId) }
+            runCatching { repository.refreshMangas(affected) }
+        }
+        if (changed || affected.isNotEmpty()) repository.changed()
     }
 
     fun enqueue(chapterIds: Collection<Long>) {
         if (chapterIds.isEmpty()) return
-        repository.queueDownloads(chapterIds)
-        pump()
+        val api = server.api()
+        apply(api.enqueueDownloads(chapterIds.map { it.toInt() }))
+        // A queue that was stopped stays stopped until asked; asking for a download means "download".
+        if (!_status.value.running) apply(api.startDownloader())
+        watch()
     }
 
-    /** Stops a download that is waiting or running, and deletes what was saved for these chapters. */
+    /** Takes chapters out of the queue. What was already downloaded stays. */
+    fun cancel(chapterIds: Collection<Long>) {
+        if (chapterIds.isEmpty()) return
+        apply(server.api().dequeueDownloads(chapterIds.map { it.toInt() }))
+    }
+
+    /** Tries failed chapters again. */
+    fun retry(chapterIds: Collection<Long>) {
+        if (chapterIds.isEmpty()) return
+        val ids = chapterIds.map { it.toInt() }
+        val api = server.api()
+        runCatching { api.dequeueDownloads(ids) }
+        apply(api.enqueueDownloads(ids))
+        if (!_status.value.running) apply(api.startDownloader())
+    }
+
+    /** Deletes downloaded chapters from the server's disk, and takes them out of the queue. */
     fun delete(chapterIds: Collection<Long>) {
-        scope.launch(Dispatchers.IO) {
-            for (id in chapterIds) {
-                val job = guard.withLock { running.remove(id) }
-                job?.cancel()
-                job?.join()
-                val chapter = repository.chapter(id) ?: continue
-                val dir = chapter.downloadDir?.let(Paths::get) ?: directory(chapter)
-                deleteTree(dir)
-                repository.setDownloadState(id, null)
-                _active.update { it - id }
-            }
-            pump()
-        }
+        if (chapterIds.isEmpty()) return
+        val ids = chapterIds.map { it.toInt() }
+        val api = server.api()
+        val queued = _status.value.queue.map { it.chapterId }.toSet()
+        ids.filter { it in queued }.takeIf { it.isNotEmpty() }?.let { apply(api.dequeueDownloads(it)) }
+        api.deleteDownloadedChapters(ids)
+        val owners = chapterIds.mapNotNull { repository.rawChapter(it)?.mangaId }.distinct()
+        for (mangaId in owners) runCatching { repository.reloadChapters(mangaId) }
+        runCatching { repository.refreshMangas(owners) }
+        repository.changed()
     }
 
-    /** Pauses everything that is waiting or running; saved pages are kept. */
+    /** Empties the queue. Downloaded chapters stay. */
     fun cancelAll(profileId: Long) {
-        scope.launch(Dispatchers.IO) {
-            val waiting = repository.downloads(profileId).filter { it.second.downloadState == DownloadState.QUEUED || it.second.downloadState == DownloadState.RUNNING }
-            for ((_, chapter) in waiting) {
-                val job = guard.withLock { running.remove(chapter.id) }
-                job?.cancel()
-                job?.join()
-                repository.setDownloadState(chapter.id, DownloadState.FAILED, error = "Stopped. Retry to carry on from page ${chapter.downloadPages + 1}.")
-                _active.update { it - chapter.id }
-            }
-        }
+        if (server.profileId != profileId) return
+        apply(server.api().clearDownloader())
     }
 
-    private fun pump() {
-        scope.launch(Dispatchers.IO) {
-            guard.withLock {
-                while (running.size < parallel().coerceIn(1, 3)) {
-                    val next = repository.nextQueuedDownload() ?: break
-                    repository.setDownloadState(next.id, DownloadState.RUNNING)
-                    _active.update { it + next.id }
-                    running[next.id] = scope.launch(Dispatchers.IO) {
-                        try {
-                            download(next)
-                        } finally {
-                            guard.withLock { running.remove(next.id) }
-                            _active.update { it - next.id }
-                            pump()
-                        }
-                    }
-                }
-            }
-        }
-    }
+    fun pause() = apply(server.api().stopDownloader())
 
-    private suspend fun download(chapter: Chapter) {
-        val dir = directory(chapter)
-        try {
-            Files.createDirectories(dir)
-            val open = pages.open(chapter.id)
-            val existing = Files.newDirectoryStream(dir).use { stream -> stream.map { it.fileName.toString() }.filter { !it.endsWith(".part") }.toSet() }
-            var done = 0
-            for (index in 0 until open.pageCount) {
-                val prefix = "%04d.".format(index + 1)
-                if (existing.none { it.startsWith(prefix) }) {
-                    val bytes = pageWithRetries(open, index)
-                    val extension = MangaPages.imageExtension(bytes) ?: "img"
-                    val partial = dir.resolve("$prefix$extension.part")
-                    Files.write(partial, bytes)
-                    Files.move(partial, dir.resolve("$prefix$extension"), StandardCopyOption.REPLACE_EXISTING)
-                }
-                done++
-                repository.setDownloadProgress(chapter.id, done, open.pageCount)
-            }
-            repository.setDownloadState(chapter.id, DownloadState.DONE, dir = dir.toString(), pages = open.pageCount)
-            // The reader now uses the saved copy; the cached one is no longer needed.
-            pages.forgetChapter(chapter.id)
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (failure: PageException) {
-            repository.setDownloadState(chapter.id, DownloadState.FAILED, error = failure.message)
-        } catch (failure: Exception) {
-            repository.setDownloadState(chapter.id, DownloadState.FAILED, error = failure.message ?: "The download failed.")
-        }
-    }
+    fun resume() = apply(server.api().startDownloader())
 
     /**
-     * One page, asked for again when the failure looks temporary (a dropped connection, a source
-     * that did not answer in time, a busy server). A chapter of fifty pages should not fail because
-     * one request stalled; a failure that would repeat (a missing page, a login that is refused)
-     * is not retried.
+     * Bytes the managed server's downloads take on this computer, or null when the server is
+     * someone else's computer (its disk is not ours to measure).
      */
-    private suspend fun pageWithRetries(open: OpenChapter, index: Int): ByteArray {
-        var attempt = 1
-        while (true) {
-            try {
-                return pages.page(open, index)
-            } catch (failure: PageException) {
-                if (!failure.temporary || attempt >= PAGE_ATTEMPTS) throw failure
-                delay(retryDelayMs * attempt)
-                attempt++
-            }
-        }
-    }
-
-    private fun directory(chapter: Chapter): Path {
-        val profile = repository.series(chapter.seriesId)?.profileId ?: 0
-        return downloadsDir.resolve(profile.toString()).resolve(chapter.seriesId.toString()).resolve(chapter.id.toString())
-    }
-
-    /** Bytes used by saved chapters. */
-    fun size(): Long {
-        if (!Files.isDirectory(downloadsDir)) return 0
-        return Files.walk(downloadsDir).use { stream -> stream.filter { Files.isRegularFile(it) }.mapToLong { runCatching { Files.size(it) }.getOrDefault(0) }.sum() }
-    }
-
-    private fun deleteTree(path: Path) {
-        if (!Files.exists(path)) return
-        Files.walk(path).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { runCatching { Files.deleteIfExists(it) } } }
-    }
-
-    private companion object {
-        /** How often one page is asked for before the chapter is reported as failed. */
-        const val PAGE_ATTEMPTS = 3
+    fun size(): Long? {
+        val profile = server.profileId ?: return 0
+        if (server.isRemote) return null
+        val folder = server.manager.directory(profile).resolve("downloads")
+        if (!Files.isDirectory(folder)) return 0
+        return Files.walk(folder).use { stream -> stream.filter { Files.isRegularFile(it) }.mapToLong { runCatching { Files.size(it) }.getOrDefault(0) }.sum() }
     }
 }

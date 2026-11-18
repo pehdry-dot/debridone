@@ -34,13 +34,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.shell.Notice
 import com.debridone.app.shell.PillTone
 import com.debridone.app.shell.ShellSection
 import com.debridone.app.shell.ShellState
 import com.debridone.manga.library.LibraryFilter
-import com.debridone.manga.library.MangaClassifier
 import com.debridone.manga.library.MediaType
 import com.debridone.manga.library.SeriesSummary
 import com.debridone.manga.sources.SourceEntry
@@ -78,25 +76,19 @@ internal object SearchState {
     }
 }
 
-/** Opens Plugins › Manga on its Browse tab: where sources are added. */
-internal fun openMangaPlugins(tab: MangaPluginsTab = MangaPluginsTab.BROWSE) {
+/** Opens Plugins › Manga: where extension stores, extensions and sources are managed. */
+internal fun openMangaPlugins(tab: MangaPluginsTab = MangaPluginsTab.EXTENSIONS) {
     MangaPluginsState.tab = tab
     ShellState.selectPluginsTab(ModuleId.MANGA)
     ShellState.select(ShellSection.PLUGINS)
 }
 
-/** Human names of Tiyo's language keys. */
-internal fun languageName(key: String?): String = when (key) {
-    null -> "Unknown"
-    "MULTI" -> "Multiple languages"
-    "CHINESE_SIMP" -> "Chinese (Simplified)"
-    "CHINESE_TRAD" -> "Chinese (Traditional)"
-    "PORTUGUESE_BR" -> "Portuguese (Brazil)"
-    "PORTUGUESE_PT" -> "Portuguese (Portugal)"
-    "SPANISH_ES" -> "Spanish (Spain)"
-    "SPANISH_LATAM" -> "Spanish (Latin America)"
-    "SERBO_CROATIAN" -> "Serbo-Croatian"
-    else -> key.lowercase().replaceFirstChar(Char::uppercase)
+/** The name of a source's language code ("en", "pt-BR"), in English. */
+internal fun languageName(code: String?): String = when {
+    code.isNullOrBlank() -> ""
+    code == "all" -> "Multiple languages"
+    code == "other" -> "Other"
+    else -> java.util.Locale.forLanguageTag(code).getDisplayName(java.util.Locale.ENGLISH).ifBlank { code }
 }
 
 /**
@@ -110,13 +102,12 @@ internal fun MangaSearch() {
     val tokens = MaterialTheme.nuvio
     val manga = LocalManga.current
     val scope = rememberCoroutineScope()
-    val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
-    val sources by rememberMangaQuery(hostState, initial = emptyList<SourceEntry>()) { services, profile -> services.sources.enabled(profile) }
+    val sources by rememberMangaQuery(initial = emptyList<SourceEntry>()) { services, profile -> services.sources.enabled(profile) }
     val libraryMatches by rememberMangaQuery(SearchState.searched, initial = emptyList<SeriesSummary>()) { services, profile ->
         if (SearchState.searched.isBlank()) emptyList() else services.repository.library(profile, LibraryFilter(query = SearchState.searched))
     }
-    val languages = sources.mapNotNull { it.descriptor.language }.distinct().sorted()
-    val candidates = sources.filter { SearchState.language == null || it.descriptor.language == SearchState.language }
+    val languages = sources.map { it.language }.filter { it.isNotBlank() }.distinct().sorted()
+    val candidates = sources.filter { SearchState.language == null || it.language == SearchState.language }
 
     fun search() {
         val text = SearchState.text.trim()
@@ -171,8 +162,8 @@ internal fun MangaSearch() {
             item {
                 MangaEmptyState(
                     Icons.Rounded.Extension, "No sources yet",
-                    "Search looks through the sources of Houdoku's extension package. Add it to get started; your local files are in the Library.",
-                ) { MangaButton("Add Source", { openMangaPlugins() }, icon = Icons.Rounded.Extension) }
+                    "Search looks through the sources of the extensions you installed. Add an extension store and install an extension to get started; your own files are in the Library.",
+                ) { MangaButton("Add extensions", { openMangaPlugins() }, icon = Icons.Rounded.Extension) }
             }
         }
 
@@ -186,7 +177,7 @@ internal fun MangaSearch() {
 
         val ordered = SearchState.results.sortedWith(compareBy<SourceSearchResult> { it.error != null }.thenBy { it.series.isEmpty() }.thenBy { it.source.name.lowercase() })
         items(ordered, key = { it.source.id }) { result ->
-            val shown = result.series.filter { SearchState.type == null || MangaClassifier.classify(it.originalLanguage, it.tags) == SearchState.type }
+            val shown = result.series.filter { SearchState.type == null || it.mediaType == SearchState.type }
             when {
                 result.error != null -> Column(Modifier.padding(horizontal = 40.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     MangaSectionHeader(result.source.name, caption = languageName(result.source.language))
@@ -206,8 +197,8 @@ internal fun MangaSearch() {
                         DiscoverState.open(result.source.id, SearchState.searched)
                         MangaNav.root(MangaRoute.Discover)
                     },
-                    key = { it.extensionId + ":" + it.sourceId },
-                ) { remote, modifier -> RemoteSeriesCard(remote, result.source.name, modifier) }
+                    key = { it.id },
+                ) { series, modifier -> SourceSeriesCard(series, result.source.name, modifier) }
             }
         }
 
@@ -242,7 +233,7 @@ internal fun SourcePicker(sources: List<SourceEntry>, selected: Set<String>?, on
             MangaMenuDivider()
             sources.forEach { source ->
                 val isSelected = selected != null && source.id in selected
-                MangaMenuItem(source.name, checked = isSelected) {
+                MangaMenuItem(source.name + languageName(source.language).let { if (it.isBlank()) "" else "  ·  $it" }, checked = isSelected) {
                     val next = if (isSelected) selected!! - source.id else selected.orEmpty() + source.id
                     onChange(next.ifEmpty { null })
                 }

@@ -1,25 +1,21 @@
 package com.debridone.manga
 
 import com.debridone.manga.download.MangaDownloads
-import com.debridone.manga.host.ExtensionHost
-import com.debridone.manga.host.HostException
-import com.debridone.manga.host.HostLaunch
-import com.debridone.manga.host.HostRuntime
-import com.debridone.manga.host.MangaExtensions
-import com.debridone.manga.host.MangaHostRuntime
-import com.debridone.manga.library.MangaBackup
 import com.debridone.manga.library.MangaRepository
 import com.debridone.manga.library.MangaSchema
-import com.debridone.manga.local.LocalLibrary
+import com.debridone.manga.local.LocalFiles
 import com.debridone.manga.metadata.MangaMetadata
 import com.debridone.manga.metadata.MetadataEndpoints
-import com.debridone.manga.plugins.MangaPlugins
-import com.debridone.manga.plugins.PackageKind
-import com.debridone.manga.plugins.PluginInstaller
-import com.debridone.manga.plugins.PluginRules
-import com.debridone.manga.plugins.PreparedInstall
 import com.debridone.manga.reader.MangaPages
+import com.debridone.manga.sources.MangaExtensions
 import com.debridone.manga.sources.MangaSources
+import com.debridone.manga.suwayomi.MangaConnection
+import com.debridone.manga.suwayomi.MangaServer
+import com.debridone.manga.suwayomi.RemoteServer
+import com.debridone.manga.suwayomi.SuwayomiRuntime
+import com.debridone.manga.suwayomi.SuwayomiRuntimeLocator
+import com.debridone.manga.suwayomi.SuwayomiServerManager
+import com.debridone.manga.suwayomi.SuwayomiUnavailable
 import com.debridone.module.AppearanceOption
 import com.debridone.module.AvailablePlugin
 import com.debridone.module.ChoiceValue
@@ -40,9 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.nio.file.Files
@@ -50,40 +44,43 @@ import java.nio.file.Path
 
 /** Everything the Manga screens work with. Created when the module starts. */
 class MangaServices internal constructor(
+    /** The connection to the active profile's Suwayomi-Server. */
+    val server: MangaServer,
     val repository: MangaRepository,
-    val host: ExtensionHost,
-    val extensions: MangaExtensions,
-    val plugins: MangaPlugins,
     val sources: MangaSources,
+    val extensions: MangaExtensions,
     val pages: MangaPages,
-    val local: LocalLibrary,
+    val local: LocalFiles,
     val downloads: MangaDownloads,
     val metadata: MangaMetadata,
-    val backup: MangaBackup,
     val preferences: MangaPreferences,
     val appSettings: MangaAppSettings,
-    /** Where extension packages are installed (shared by all profiles). */
-    val pluginsDir: Path,
-    val downloadsDir: Path,
+    /** Where covers the person chose themselves are kept. */
+    val coversDir: Path,
 )
 
 /**
  * Manga & Manhwa module.
  *
- * Its sources are the extensions of Houdoku (https://github.com/xgi/houdoku, MIT): the unmodified
- * Tiyo package (https://github.com/xgi/tiyo, MIT) runs in a bundled Node.js helper process, loaded
- * with Houdoku's own plugin manager (aki-plugin-manager, MIT). See debridone/docs/MANGA.md and
- * THIRD_PARTY_NOTICES.md. Local files (CBZ, ZIP, image folders) are read without any of that.
+ * Its backend is Suwayomi-Server (https://github.com/Suwayomi/Suwayomi-Server, MPL-2.0), the
+ * unmodified release jar, run as a separate process with a bundled Java 21 runtime and reached
+ * through its GraphQL API. Sources are the Mihon/Tachiyomi extensions Suwayomi loads; the library,
+ * categories, chapters, reading progress, downloads and trackers are Suwayomi's. The screens and
+ * the reader are DebridOne's own. See debridone/docs/MANGA.md and THIRD_PARTY_NOTICES.md.
  *
- * Owns `modules/manga/manga.db`. Nothing in here may reference Streaming, Music or Games.
+ * Each DebridOne profile has a Suwayomi data folder of its own (`modules/manga/suwayomi/profile-N`)
+ * and only the active profile's server runs: Suwayomi has no user accounts, so separate folders
+ * are what keeps profiles apart. A profile can instead be pointed at a server the person runs.
+ *
+ * Owns `modules/manga/manga.db` (its settings and metadata-provider choices, and the library of
+ * the earlier Houdoku-based version, kept for migration). Nothing in here may reference Streaming,
+ * Music or Games.
  */
 class MangaModule(
     storage: ModuleStorage,
     clock: () -> Long = System::currentTimeMillis,
-    /** Finds the Node.js runtime. The app uses the bundled copy; tests name theirs. */
-    private val runtimeLocator: () -> HostRuntime = { MangaHostRuntime.locate() },
-    /** Package registry address; tests use a local stand-in. */
-    private val registry: String = PluginInstaller.DEFAULT_REGISTRY,
+    /** Finds Suwayomi-Server and its Java runtime. The app uses the bundled copies; tests name theirs. */
+    private val runtime: () -> SuwayomiRuntime = { SuwayomiRuntimeLocator.locate() },
     /** Where the metadata services are reached; tests use local stand-ins. */
     private val metadataEndpoints: MetadataEndpoints = MetadataEndpoints(),
 ) : SqliteBackedModule(ModuleId.MANGA, storage, clock) {
@@ -98,207 +95,147 @@ class MangaModule(
     /** The profile whose library and reading state are shown. */
     val activeProfile: StateFlow<Long?> = _activeProfile.asStateFlow()
 
-    private val pluginsDir: Path get() = storage.dataDir.resolve("plugins")
+    /** Where every profile's Suwayomi data folder is. */
+    val serverDataDir: Path get() = storage.dataDir.resolve("suwayomi")
 
     override fun onStarted() {
-        val database = requireDatabase()
-        val repository = MangaRepository(database, clock)
+        requireDatabase()
         val appSettings = MangaAppSettings(::settingsStore).also { it.load() }
         val preferences = MangaPreferences(::settingsStore)
-        val spool = storage.cacheDir.resolve("host-spool")
-        // Images handed over by a host that is gone are of no use to anyone.
-        runCatching { PluginInstaller.deleteRecursively(spool) }
-
-        fun launch(plugins: Path, name: String) = HostLaunch(
-            runtime = runtimeLocator(),
-            pluginsDir = plugins,
-            spoolDir = storage.cacheDir.resolve(if (name == "main") "host-spool" else "host-spool-$name"),
-            homeDir = storage.cacheDir.resolve("host-home"),
-            proxy = appSettings.proxy ?: environmentProxy(),
-        )
-        val host = ExtensionHost({ launch(pluginsDir, "main") }, clock)
-        lateinit var sources: MangaSources
-        val extensions = MangaExtensions(
-            host,
-            storedSettings = { descriptor -> _activeProfile.value?.let { profile -> sources.storedSettings(profile, descriptor.id) } },
-            disabledPackages = { plugins.installed.value.filter { !it.enabled && !it.builtIn }.map { it.id }.toSet() },
-        ).also { it.timeoutMs = appSettings.timeoutSeconds * 1000L }
-        lateinit var metadata: MangaMetadata
-        sources = MangaSources(extensions, repository, storage.secrets, clock, sourceLeads = { seriesId -> metadata.extensionLeads(seriesId) })
-        metadata = MangaMetadata(
+        val manager = SuwayomiServerManager(serverDataDir, runtime)
+        val server = MangaServer(manager, moduleScope) { profile -> remoteServer(profile) }
+        val repository = MangaRepository(server, moduleScope, clock)
+        val sources = MangaSources(server, repository, clock) { preferences.sourceLanguages() }
+        val pages = MangaPages(server, repository, storage.cacheDir)
+        val downloads = MangaDownloads(server, repository, moduleScope)
+        val metadata = MangaMetadata(
             repository, storage.secrets,
             providerEnabled = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.enabled == true },
             providerPriority = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.priority ?: Int.MAX_VALUE },
-            extensionDetails = { series -> sources.sourceDetails(series) },
+            // The source is asked again, and what Suwayomi then has is the source's offer.
+            extensionDetails = { series ->
+                runCatching { sources.refresh(series.id) }
+                repository.sourceDetails(series.id)
+            },
             endpoints = metadataEndpoints, clock = clock,
         )
-        val installer = PluginInstaller(pluginsDir, storage.dataDir.resolve("plugin-staging"), registry)
-        runCatching { installer.cleanUp() }
-        val local = LocalLibrary(repository)
-        val pages = MangaPages(repository, extensions, local, storage.cacheDir, storage.dataDir.resolve("covers"), clock)
-        val services = MangaServices(
+        _services.value = MangaServices(
+            server = server,
             repository = repository,
-            host = host,
-            extensions = extensions,
-            plugins = MangaPlugins(installer, extensions, host) { staging -> launch(staging, "trial") },
             sources = sources,
+            extensions = MangaExtensions(server, sources),
             pages = pages,
-            local = local,
-            downloads = MangaDownloads(repository, pages, storage.dataDir.resolve("downloads"), moduleScope) { appSettings.parallelDownloads },
+            local = LocalFiles(server, repository, sources),
+            downloads = downloads,
             metadata = metadata,
-            backup = MangaBackup(repository, clock),
             preferences = preferences,
             appSettings = appSettings,
-            pluginsDir = pluginsDir,
-            downloadsDir = storage.dataDir.resolve("downloads"),
+            coversDir = storage.dataDir.resolve("covers"),
         )
-        _services.value = services
-
-        runBlocking {
-            runCatching { registerPlugin(LOCAL_FILES) }
-            // Packages on disk that the registry does not know yet (for example after restoring a backup).
-            for (pkg in installer.installed()) {
-                if (pkg.kind != null && plugins.installed.value.none { it.id == pkg.name }) runCatching { registerPlugin(descriptor(pkg.name, pkg.version, 0)) }
-            }
-        }
-        // Switching a package on or off takes effect at once: the host loads the packages again.
-        moduleScope.launch {
-            plugins.installed.map { list -> list.filter { !it.enabled }.map { it.id }.toSet() }.distinctUntilChanged().drop(1).collect {
-                runCatching { if (installer.installed().isNotEmpty()) extensions.reload() }
-            }
-        }
-        // Load the installed packages in the background so the sources are there when Manga is opened.
-        // With nothing installed the host is not started at all.
-        moduleScope.launch(Dispatchers.IO) {
-            runCatching { services.pages.trimCache(appSettings.cacheMegabytes * 1024L * 1024L) }
-            if (installer.installed().any { it.kind != null }) runCatching { extensions.ensureLoaded() }
-            // Downloads that were under way when the app last closed carry on.
-            runCatching { services.downloads.resume() }
-        }
+        runBlocking { runCatching { registerPlugin(LOCAL_FILES) } }
+        downloads.watch()
+        moduleScope.launch(Dispatchers.IO) { runCatching { pages.trimCache(appSettings.cacheMegabytes * 1024L * 1024L) } }
     }
+
+    /** The server a profile chose to use instead of the one DebridOne starts, or null. */
+    private fun remoteServer(profileId: Long): RemoteServer? {
+        val values = settingsStore().all(profileId, SERVER_PREFIX).mapKeys { it.key.removePrefix(SERVER_PREFIX) }
+        if (values[MangaPreferences.SERVER_MODE] != MangaPreferences.SERVER_MODE_REMOTE) return null
+        val url = values[MangaPreferences.SERVER_URL]?.takeIf { it.isNotBlank() } ?: return null
+        return RemoteServer(
+            url = url,
+            username = values[MangaPreferences.SERVER_USERNAME]?.takeIf { it.isNotBlank() },
+            password = storage.secrets.child("profile.$profileId").get(SERVER_PASSWORD),
+            timeoutSeconds = values[MangaPreferences.SERVER_TIMEOUT]?.toIntOrNull() ?: 60,
+            requireHttps = values[MangaPreferences.SERVER_REQUIRE_HTTPS] != "false",
+        )
+    }
+
+    /** Saves (or, with null, forgets) the password of the active profile's remote server. It is kept in the credential store only. */
+    fun setRemotePassword(profileId: Long, password: String?) {
+        val store = storage.secrets.child("profile.$profileId")
+        if (password.isNullOrEmpty()) store.delete(SERVER_PASSWORD) else store.put(SERVER_PASSWORD, password)
+    }
+
+    fun hasRemotePassword(profileId: Long): Boolean = storage.secrets.child("profile.$profileId").get(SERVER_PASSWORD) != null
+
+    /** The remote server as the active profile's settings describe it now, with the stored password; null when it uses its own. */
+    fun remoteServerOf(profileId: Long): RemoteServer? = remoteServer(profileId)
 
     override fun onActiveProfileChanged(profileId: Long?) {
         val services = _services.value ?: return
-        val changed = _activeProfile.value != profileId
         services.preferences.load(profileId)
-        if (profileId != null) services.repository.setChapterLanguages(profileId, services.preferences.chapterLanguages())
         _activeProfile.value = profileId
-        if (changed && profileId != null) {
-            moduleScope.launch(Dispatchers.IO) {
-                // Series that were only looked at, a month ago or more, are forgotten.
-                runCatching { services.repository.pruneUnused(profileId, PREVIEW_RETENTION_MS) }
-                // Each profile has its own source settings (server addresses, logins): load the sources afresh with them.
-                if (services.extensions.state.value != null) runCatching { services.extensions.reload() }
-            }
+        // Each profile has a server of its own. One that is running is replaced now; otherwise
+        // nothing starts until Manga is opened.
+        services.server.activate(profileId)
+    }
+
+    /** Starts the active profile's server if it is not running yet. Called when Manga (or its settings) is opened. */
+    fun ensureServer() {
+        _services.value?.server?.ensureStarted()
+    }
+
+    /**
+     * Starts the active profile's server if needed and waits until it answers. Throws, with the
+     * server's own reason, when it cannot be used. For things that reach Manga from outside it (a
+     * comic archive handed over by the download manager) before Manga was ever opened.
+     */
+    suspend fun awaitServer(timeoutMs: Long = 120_000) {
+        val server = _services.value?.server ?: throw java.io.IOException("Manga is not running.")
+        server.ensureStarted()
+        val settled = kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
+            server.state.first { it is MangaConnection.Ready || (it is MangaConnection.Failed && !it.retrying) }
+        }
+        when (settled) {
+            is MangaConnection.Ready -> Unit
+            is MangaConnection.Failed -> throw java.io.IOException(settled.message)
+            else -> throw java.io.IOException("The manga server did not start in time.")
         }
     }
 
     override fun onProfileDeleted(profileId: Long) {
         val services = _services.value ?: return
-        services.extensions.state.value?.sources?.forEach { services.sources.clearSettings(profileId, it.id) }
         services.metadata.deleteProfile(profileId)
-        val downloadDirs = services.repository.deleteProfile(profileId)
-        downloadDirs.forEach { dir -> runCatching { PluginInstaller.deleteRecursively(Path.of(dir)) } }
-        runCatching { PluginInstaller.deleteRecursively(services.downloadsDir.resolve(profileId.toString())) }
+        runCatching { storage.secrets.child("profile.$profileId").delete(SERVER_PASSWORD) }
+        // The profile's whole Suwayomi folder goes: library, downloads, extensions, tracker sign-ins.
+        // A deleted profile is never the active one, so its server is not running.
+        val folder = services.server.manager.directory(profileId)
+        if (Files.exists(folder)) {
+            runCatching { Files.walk(folder).use { stream -> stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } } }
+        }
     }
 
     override fun onClosing() {
-        _services.value?.host?.close()
+        _services.value?.server?.close()
     }
 
-    // ---- installing extension packages ----------------------------------------------------------
+    override val pluginImportUnavailableReason: String? =
+        "Manga's sources are Mihon/Tachiyomi extensions, installed by its Suwayomi server from an extension store you add. Use the Manga tab."
 
-    /**
-     * Second step of an install: the person has read the review. Puts the package in place, loads
-     * it, and lists it in Manga's plugin registry.
-     */
-    suspend fun confirmInstall(prepared: PreparedInstall): PluginActionResult {
-        val services = _services.value ?: return PluginActionResult.Failure("Manga is not running.")
-        return try {
-            val state = services.plugins.confirm(prepared)
-            val loaded = state.packages.firstOrNull { it.name == prepared.name }
-            val plugin = registerPlugin(descriptor(prepared.name, prepared.version, loaded?.sourceCount ?: prepared.sources.size))
-            if (loaded != null && !loaded.loaded && loaded.error != null) reportPluginError(prepared.name, loaded.error)
-            PluginActionResult.Success(plugin)
-        } catch (failure: Exception) {
-            PluginActionResult.Failure(failure.message ?: "The package could not be installed.")
-        }
-    }
+    override suspend fun importPlugin(location: String): PluginActionResult =
+        PluginActionResult.Failure(pluginImportUnavailableReason!!)
 
-    private fun descriptor(name: String, version: String, sourceCount: Int): PluginDescriptor = when (PluginRules.kindOf(name)) {
-        PackageKind.TIYO -> PluginDescriptor(
-            id = name, name = "Tiyo", kind = PluginKind.SOURCE, version = version,
-            description = "Houdoku's extension package" + if (sourceCount > 0) ": $sourceCount manga sources." else ".",
-            origin = "npm:$name",
-        )
-        else -> PluginDescriptor(
-            id = name, name = name.substringAfter("extension-").replaceFirstChar(Char::uppercase) + " (legacy)", kind = PluginKind.SOURCE, version = version,
-            description = "Older Houdoku extension format: one source.", origin = "npm:$name",
-        )
-    }
+    override suspend fun availablePlugins(): List<AvailablePlugin> = emptyList()
 
-    override val pluginImportUnavailableReason: String? = null
-
-    /**
-     * The generic import of the Plugins screen. Manga installs packages from its own tab, where a
-     * package is shown for review before it is installed; this entry point has no such step, so it
-     * only accepts the exact package DebridOne has verified and pinned.
-     */
-    override suspend fun importPlugin(location: String): PluginActionResult {
-        val services = _services.value ?: return PluginActionResult.Failure("Manga is not running.")
-        val text = location.trim().removePrefix("npm:")
-        val name = if (text.startsWith("@")) "@" + text.drop(1).substringBefore("@") else text.substringBefore("@")
-        val version = text.removePrefix(name).removePrefix("@").ifBlank { null }
-        if (PluginRules.kindOf(name) == null) {
-            return PluginActionResult.Failure(
-                "\"$location\" is not a Houdoku extension package. Houdoku's sources come in one package, ${PluginRules.TIYO_PACKAGE}; install it from Plugins › Manga › Browse.",
-            )
-        }
-        val wanted = version ?: PluginRules.VERIFIED_TIYO_VERSIONS.maxWithOrNull(PluginRules::compareVersions)
-        if (name != PluginRules.TIYO_PACKAGE || wanted !in PluginRules.VERIFIED_TIYO_VERSIONS) {
-            return PluginActionResult.Failure("Only verified versions can be installed here. Use Plugins › Manga › Browse to review and install $name${version?.let { " $it" }.orEmpty()}.")
-        }
-        return try {
-            confirmInstall(services.plugins.prepare(name, wanted!!))
-        } catch (failure: Exception) {
-            PluginActionResult.Failure(failure.message ?: "The package could not be installed.")
-        }
-    }
-
-    override suspend fun availablePlugins(): List<AvailablePlugin> {
-        val services = _services.value ?: return emptyList()
-        return runCatching { services.plugins.available() }.getOrDefault(emptyList())
-            .filter { it.installedVersion == null }
-            .map { AvailablePlugin(it.name, "Tiyo", PluginKind.SOURCE, it.description, "npm:${it.name}") }
-    }
-
-    /** The registry entry is gone; remove the package's files as well. */
-    override fun onPluginRemoved(pluginId: String) {
-        val services = _services.value ?: return
-        if (PluginRules.kindOf(pluginId) == null) return
-        runBlocking { runCatching { services.plugins.remove(pluginId) } }
-    }
-
-    private fun environmentProxy(): String? =
-        listOf("HTTPS_PROXY", "https_proxy").firstNotNullOfOrNull { System.getenv(it)?.takeIf(String::isNotBlank) }
-
-    /** Why online sources cannot run in this build, or null when the runtime is present. */
+    /** Why the bundled server cannot run in this build, or null when it is present. */
     fun runtimeProblem(): String? = try {
-        runtimeLocator()
+        runtime()
         null
-    } catch (failure: HostException) {
+    } catch (failure: SuwayomiUnavailable) {
         failure.message
     }
 
     override val readiness: ModuleReadiness = ModuleReadiness.Ready
 
-    /** Houdoku/Tiyo extensions live here, separate from every other module's plugins. */
+    /** Manga's own plugin registry table, separate from every other module's. Suwayomi's extensions are listed by the server, not here. */
     override val pluginTable = "manga_extensions"
     override val metadataTable = "manga_metadata_providers"
     override val settingsTable = "manga_profile_settings"
 
     override val migrations = listOf(
         Migration(
+            // The description is part of the stored migration history: it stays as it was written.
             1, "tiyo extension registry, manga metadata providers, profile settings",
             PluginTableStore.createTableSql("manga_extensions"),
             MetadataProviderTableStore.createTableSql("manga_metadata_providers"),
@@ -313,15 +250,14 @@ class MangaModule(
         PluginKind.UTILITY,
     )
 
-    override val pluginImportHint =
-        "Houdoku's extension package (@tiyo/core). Other packages are not Houdoku extensions and are refused."
+    override val pluginImportHint = "Extensions are installed from an extension store, in the Manga tab."
 
     override val defaultMetadataProviders = listOf(
         MetadataProvider("manual", "Manual edits", "Details you set yourself. Locked fields are never overwritten.", enabled = true, priority = -10, implemented = true),
-        MetadataProvider("extension", "Extension metadata", "Details supplied by the source the series comes from.", enabled = true, priority = 0, implemented = true),
-        MetadataProvider("anilist", "AniList", "Titles, synopsis, genres, status, authors, covers and banners. Optional reading-list tracking with your own account.", enabled = true, priority = 10, implemented = true),
+        MetadataProvider("extension", "Source metadata", "Details supplied by the source the series comes from, through its extension.", enabled = true, priority = 0, implemented = true),
+        MetadataProvider("anilist", "AniList", "Titles, synopsis, genres, status, authors, covers and banners.", enabled = true, priority = 10, implemented = true),
         MetadataProvider("mangadex", "MangaDex", "Titles, synopsis, tags, status, authors and covers.", enabled = true, priority = 20, implemented = true),
-        MetadataProvider("myanimelist", "MyAnimeList", "The official API. Needs your own API client ID; tracking needs you to sign in.", enabled = false, priority = 30, implemented = true, requiresCredentials = true),
+        MetadataProvider("myanimelist", "MyAnimeList", "The official API. Needs your own API client ID.", enabled = false, priority = 30, implemented = true, requiresCredentials = true),
     )
 
     override val appearanceOptions: List<AppearanceOption> = listOf(
@@ -352,11 +288,12 @@ class MangaModule(
     )
 
     companion object {
-        private const val PREVIEW_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+        private const val SERVER_PREFIX = "pref."
+        private const val SERVER_PASSWORD = "server.password"
 
         val LOCAL_FILES = PluginDescriptor(
             "local-files", "Local files", PluginKind.SOURCE,
-            description = "CBZ and ZIP archives and image folders on this computer. Needs no extension.", builtIn = true,
+            description = "CBZ, ZIP, CBR, RAR and EPUB files and image folders on this computer, read through the manga server's Local source. Needs no extension.", builtIn = true,
         )
     }
 }

@@ -90,8 +90,9 @@ import com.debridone.app.shell.ShellState
 import com.debridone.app.shell.parseHex
 import com.debridone.manga.MangaModule
 import com.debridone.manga.MangaServices
-import com.debridone.manga.host.RemoteSeries
 import com.debridone.manga.library.Series
+import com.debridone.manga.sources.SourceEntry
+import com.debridone.manga.suwayomi.MangaConnection
 import com.debridone.module.CommonAppearanceKeys
 import com.debridone.module.ModuleStatus
 import com.nuvio.app.core.ui.nuvio
@@ -203,6 +204,10 @@ internal fun <T> rememberMangaQuery(vararg keys: Any?, initial: T, query: (Manga
     }
 }
 
+/** The sources of the connected server, kept current as extensions come and go. Empty while there is no server. */
+@Composable
+internal fun rememberMangaSources(): State<List<SourceEntry>> = rememberMangaQuery(initial = emptyList()) { services, profile -> services.sources.list(profile) }
+
 /** Things screens ask the engine to do. Each runs off the UI thread and reports failures in words. */
 internal class MangaActions(private val services: MangaServices, private val profileId: Long, private val scope: CoroutineScope) {
     fun io(block: suspend () -> Unit) {
@@ -215,12 +220,6 @@ internal class MangaActions(private val services: MangaServices, private val pro
                 MangaNav.message = failure.message ?: "Something went wrong."
             }
         }
-    }
-
-    /** Opens the page of a series found in a source. It gets a row for this profile, outside the library until added. */
-    fun open(remote: RemoteSeries) = io {
-        val series = services.sources.remember(profileId, remote)
-        withContext(Dispatchers.Main) { MangaNav.open(MangaRoute.SeriesPage(series.id)) }
     }
 
     fun open(series: Series) = MangaNav.open(MangaRoute.SeriesPage(series.id))
@@ -251,6 +250,24 @@ internal class MangaActions(private val services: MangaServices, private val pro
 }
 
 internal val LocalMangaActions = staticCompositionLocalOf<MangaActions> { error("no Manga actions") }
+
+/**
+ * Work that has to finish even when the screen that asked for it is gone: saving where the reader
+ * was when a chapter is left. It talks to the manga server, so it never runs on the UI thread.
+ */
+internal object MangaBackground {
+    private val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    fun run(block: () -> Unit) {
+        scope.launch {
+            try {
+                block()
+            } catch (failure: Throwable) {
+                MangaNav.message = failure.message ?: "Something went wrong."
+            }
+        }
+    }
+}
 
 /**
  * Provides the Manga engine to [content]. Renders nothing while the module is starting or when no
@@ -328,6 +345,8 @@ fun MangaScreen() {
     MangaProvider {
         val manga = LocalManga.current
         val route = MangaNav.current
+        // The profile's manga server is started the first time Manga is opened, not with the app.
+        LaunchedEffect(manga.profileId) { manga.module.ensureServer() }
         // The reader takes the whole window: no sidebar, no navigation.
         val reading = route is MangaRoute.Reader
         LaunchedEffect(reading) { ShellState.setMangaImmersive(reading) }
@@ -340,7 +359,11 @@ fun MangaScreen() {
                 Column(Modifier.fillMaxSize().padding(top = topInset)) {
                     MangaTopBar()
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        when (route) {
+                        val connection by manga.services.server.state.collectAsStateWithLifecycle()
+                        // The settings stay reachable while the server is down: that is where a wrong address is put right.
+                        if (connection !is MangaConnection.Ready && route != MangaRoute.Settings) {
+                            MangaServerStatus(connection)
+                        } else when (route) {
                             MangaRoute.Home -> MangaHome()
                             MangaRoute.Discover -> MangaDiscover()
                             MangaRoute.Search -> MangaSearch()
@@ -743,4 +766,63 @@ private fun MangaMessageBar(modifier: Modifier = Modifier) {
             .clickable { MangaNav.message = null }
             .padding(horizontal = 18.dp, vertical = 12.dp),
     )
+}
+
+/**
+ * What is shown in place of a page while the profile's manga server is not ready: that it is
+ * starting, or why it could not, with a way to try again and the server's own last words.
+ */
+@Composable
+internal fun MangaServerStatus(connection: MangaConnection) {
+    val tokens = MaterialTheme.nuvio
+    val manga = LocalManga.current
+    var details by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+    ) {
+        when (connection) {
+            is MangaConnection.Failed -> {
+                Icon(BookIcon, contentDescription = null, tint = tokens.colors.textMuted, modifier = Modifier.size(52.dp))
+                Text(
+                    if (connection.remote) "Your manga server cannot be used right now" else "The manga server could not be started",
+                    style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary,
+                )
+                Text(
+                    connection.message + if (connection.retrying) "\nDebridOne keeps trying." else "",
+                    style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.fillMaxWidth(0.7f),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    MangaButton("Try again", { manga.services.server.reconnect() })
+                    MangaButton("Server settings", { MangaNav.root(MangaRoute.Settings) }, primary = false)
+                    if (connection.log.isNotEmpty()) MangaButton(if (details) "Hide details" else "Show details", { details = !details }, primary = false)
+                }
+                if (details && connection.log.isNotEmpty()) {
+                    androidx.compose.foundation.text.selection.SelectionContainer {
+                        Text(
+                            connection.log.takeLast(40).joinToString("\n"),
+                            style = small().copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), color = tokens.colors.textMuted,
+                            modifier = Modifier.fillMaxWidth(0.9f).clip(RoundedCornerShape(12.dp)).background(tokens.colors.surface).padding(14.dp),
+                        )
+                    }
+                }
+            }
+            else -> {
+                CircularProgressIndicator(color = manga.style.accent)
+                val remote = (connection as? MangaConnection.Connecting)?.remote == true
+                Text(
+                    if (remote) "Connecting to your manga server…" else "Starting the manga server…",
+                    style = MaterialTheme.typography.titleMedium, color = tokens.colors.textPrimary,
+                )
+                if (!remote) {
+                    Text(
+                        "Manga runs on Suwayomi-Server, which DebridOne starts for this profile. It takes a few seconds.",
+                        style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                    )
+                }
+            }
+        }
+    }
 }

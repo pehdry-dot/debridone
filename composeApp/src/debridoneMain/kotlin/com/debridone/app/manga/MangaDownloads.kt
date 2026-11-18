@@ -50,16 +50,25 @@ internal object MangaDownloadActions {
             MangaNav.message = "There is nothing to download."
             return
         }
-        manga.services.downloads.enqueue(chapterIds)
-        MangaNav.message = if (chapterIds.size == 1) "Download queued" else "${chapterIds.size} chapters queued for download"
+        MangaBackground.run {
+            manga.services.downloads.enqueue(chapterIds)
+            MangaNav.message = if (chapterIds.size == 1) "Download queued" else "${chapterIds.size} chapters queued for download"
+        }
     }
 
     fun delete(manga: MangaContext, actions: MangaActions, chapterIds: List<Long>) {
         if (chapterIds.isEmpty()) return
         actions.io {
-            val withDownloads = chapterIds.filter { manga.services.repository.chapter(it)?.downloadState != null }
-            manga.services.downloads.delete(withDownloads)
-            MangaNav.message = if (withDownloads.isEmpty()) "None of these chapters is downloaded." else "${plural(withDownloads.size, "download")} removed"
+            val chapters = chapterIds.mapNotNull { manga.services.repository.chapter(it) }.filter { it.downloadState != null }
+            val saved = chapters.filter { it.downloadState == DownloadState.DONE }
+            // What is still waiting is taken out of the queue; what is on disk is deleted there.
+            manga.services.downloads.cancel(chapters.filter { it.downloadState != DownloadState.DONE }.map { it.id })
+            manga.services.downloads.delete(saved.map { it.id })
+            MangaNav.message = when {
+                chapters.isEmpty() -> "None of these chapters is downloaded."
+                saved.isEmpty() -> "${plural(chapters.size, "download")} cancelled"
+                else -> "${plural(saved.size, "download")} removed"
+            }
         }
     }
 }
@@ -81,7 +90,8 @@ fun MangaDownloads(embedded: Boolean = false) {
     val revision by manga.services.repository.revision.collectAsState()
     // Measured now and then while pages arrive, and again whenever a chapter starts, finishes or is deleted.
     val states = downloads.orEmpty().map { it.second.id to it.second.downloadState }
-    val size by produceState(0L, revision / 20, states) { value = withContext(Dispatchers.IO) { manga.services.downloads.size() } }
+    // Null: the chapters are on a server elsewhere, whose disk DebridOne cannot measure.
+    val size by produceState(0L as Long?, revision / 20, states) { value = withContext(Dispatchers.IO) { manga.services.downloads.size() } }
     val all = downloads.orEmpty()
     val failed = all.filter { it.second.downloadState == DownloadState.FAILED }
     val waiting = all.filter { it.second.downloadState == DownloadState.QUEUED || it.second.downloadState == DownloadState.RUNNING }
@@ -99,8 +109,8 @@ fun MangaDownloads(embedded: Boolean = false) {
                     MangaPageHeading("Downloads", summaryLine(all, size), Modifier.weight(1f))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 6.dp)) {
-                    if (failed.isNotEmpty()) MangaButton("Retry failed (${failed.size})", { manga.services.downloads.enqueue(failed.map { it.second.id }) }, primary = false, icon = Icons.Rounded.Refresh)
-                    if (waiting.isNotEmpty()) MangaButton("Stop all", { manga.services.downloads.cancelAll(manga.profileId) }, primary = false, icon = Icons.Rounded.Stop)
+                    if (failed.isNotEmpty()) MangaButton("Retry failed (${failed.size})", { actions.io { manga.services.downloads.retry(failed.map { it.second.id }) } }, primary = false, icon = Icons.Rounded.Refresh)
+                    if (waiting.isNotEmpty()) MangaButton("Stop all", { actions.io { manga.services.downloads.cancelAll(manga.profileId) } }, primary = false, icon = Icons.Rounded.Stop)
                 }
             }
         }
@@ -108,7 +118,7 @@ fun MangaDownloads(embedded: Boolean = false) {
             item {
                 MangaEmptyState(
                     Icons.Rounded.Download, "No downloads",
-                    "Chapters you download from a series' page are kept here for reading without a connection. Local files are already offline.",
+                    "Chapters you download from a series' page are kept by the manga server for reading without a connection. Your own files are already offline.",
                 ) { MangaButton("Library", { MangaNav.root(MangaRoute.Library) }, primary = false) }
             }
         }
@@ -132,7 +142,7 @@ fun MangaDownloads(embedded: Boolean = false) {
     }
 }
 
-private fun summaryLine(all: List<Pair<Series, Chapter>>, size: Long): String {
+private fun summaryLine(all: List<Pair<Series, Chapter>>, size: Long?): String {
     val done = all.count { it.second.downloadState == DownloadState.DONE }
     val waiting = all.count { it.second.downloadState == DownloadState.QUEUED || it.second.downloadState == DownloadState.RUNNING }
     val failed = all.count { it.second.downloadState == DownloadState.FAILED }
@@ -140,7 +150,7 @@ private fun summaryLine(all: List<Pair<Series, Chapter>>, size: Long): String {
         "${plural(done, "chapter")} saved",
         if (waiting > 0) "$waiting waiting" else null,
         if (failed > 0) "$failed failed" else null,
-        formatBytes(size),
+        if (size == null) "kept on your manga server" else formatBytes(size),
     ).joinToString("  ·  ")
 }
 
@@ -178,7 +188,7 @@ private fun DownloadRow(chapter: Chapter) {
             null -> Unit
         }
         if (chapter.downloadState == DownloadState.FAILED) {
-            MangaIconButton(Icons.Rounded.Refresh, "Retry", { manga.services.downloads.enqueue(listOf(chapter.id)) })
+            MangaIconButton(Icons.Rounded.Refresh, "Retry", { actions.io { manga.services.downloads.retry(listOf(chapter.id)) } })
         }
         MangaIconButton(
             Icons.Rounded.Delete, if (chapter.downloadState == DownloadState.DONE) "Delete this download" else "Cancel this download",

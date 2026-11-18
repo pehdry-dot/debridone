@@ -64,7 +64,7 @@ private class HomeData(
 internal fun MangaHome() {
     val manga = LocalManga.current
     val actions = LocalMangaActions.current
-    val hostState by manga.services.extensions.state.collectAsStateWithLifecycle()
+    val sources by rememberMangaSources()
     val data by rememberMangaQuery(initial = HomeData()) { services, profile ->
         val library = services.repository.library(profile)
         HomeData(
@@ -80,7 +80,7 @@ internal fun MangaHome() {
             libraryCount = library.size,
         )
     }
-    val sourceCount = hostState?.sources?.size ?: 0
+    val sourceCount = sources.count { !it.isLocal && it.enabled }
     // AniList's public charts: titles to look for, not titles to read. Clicking one searches the sources.
     val popularManga by produceState(emptyList<MetadataMatch>(), manga.profileId) {
         value = withContext(Dispatchers.IO) { runCatching { manga.services.metadata.popular(MediaType.MANGA) }.getOrDefault(emptyList()) }

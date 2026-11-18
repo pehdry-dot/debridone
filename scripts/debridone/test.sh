@@ -2,9 +2,9 @@
 # Runs DebridOne's own test suites (storage, accounts, cloud accounts and downloads, Music, Manga, module isolation).
 # The Music playback tests need libmpv (apt install libmpv2 / brew install mpv); without it they
 # are skipped, unless DEBRIDONE_REQUIRE_LIBMPV=1 is set.
-# The Manga extension-host tests need Node.js: run ./scripts/debridone/fetch-node-runtime.sh once
-# (the pinned build the app bundles), or have `node` 22.13+ on PATH. Without it they are skipped,
-# unless DEBRIDONE_REQUIRE_NODE=1 is set.
+# The Manga tests start the real Suwayomi-Server: run ./scripts/debridone/fetch-suwayomi-runtime.sh
+# once (the pinned server and Java 21 runtime the app bundles). Without them those tests are
+# skipped, unless DEBRIDONE_REQUIRE_SUWAYOMI=1 is set.
 #   ./scripts/debridone/test.sh          fast suites
 #   ./scripts/debridone/test.sh --all    also Nuvio's desktop tests
 set -euo pipefail

@@ -1043,49 +1043,44 @@ tasks.withType<Jar>().configureEach {
     }
 }
 
-// ---- DebridOne: Manga's extension host ----
-// Houdoku's extensions are JavaScript, so the app carries a Node.js runtime and DebridOne's host
-// script for them. Both go into the bundle's resources (Contents/app/resources/manga-host): the
-// packaged app uses this copy only and never a Node.js found on the computer.
-// The runtime is the pinned official build fetched and checksummed by
-// scripts/debridone/fetch-node-runtime.sh; the host's packages come from its lockfile.
-val mangaHostNodePlatform = if (macosPlayerBridgeArch == "arm64") "darwin-arm64" else "darwin-x64"
-val mangaModuleBuildDir = project(":debridone:modules:manga").layout.buildDirectory
-val mangaBundledNodeRuntime = mangaModuleBuildDir.dir("node-runtime/$mangaHostNodePlatform")
-val prepareMangaHostAppResources = tasks.register<Sync>("prepareMangaHostAppResources") {
+// ---- DebridOne: Manga's backend (Suwayomi-Server) ----
+// Manga's backend is Suwayomi-Server, a Java program that needs Java 21. The app's own runtime is
+// a trimmed one without a `java` launcher, so the bundle carries a second, complete runtime for
+// the server, and the server's jar. Both go into the bundle's resources
+// (Contents/app/resources/suwayomi): the packaged app uses these copies only and never a Java
+// found on the computer. They are the pinned releases fetched and checksummed by
+// scripts/debridone/fetch-suwayomi-runtime.sh.
+val suwayomiBundlePlatform = if (macosPlayerBridgeArch == "arm64") "darwin-arm64" else "darwin-x64"
+val suwayomiRuntimeDir = project(":debridone:modules:manga").layout.buildDirectory.dir("suwayomi-runtime")
+val prepareSuwayomiAppResources = tasks.register<Sync>("prepareSuwayomiAppResources") {
     enabled = isMacHost
-    dependsOn(":debridone:modules:manga:prepareMangaHost")
+    val jar = suwayomiRuntimeDir.map { it.file("Suwayomi-Server.jar") }
+    val jre = suwayomiRuntimeDir.map { it.dir("$suwayomiBundlePlatform/jre") }
     doFirst {
-        val node = mangaBundledNodeRuntime.get().file("bin/node").asFile
-        check(node.isFile) {
-            "The Node.js runtime for Manga's extension host is missing (${node.absolutePath}). " +
-                "Run ./scripts/debridone/fetch-node-runtime.sh $mangaHostNodePlatform first."
+        check(jar.get().asFile.isFile && jre.get().file("bin/java").asFile.isFile) {
+            "Suwayomi-Server or its Java runtime is missing (${suwayomiRuntimeDir.get().asFile.absolutePath}). " +
+                "Run ./scripts/debridone/fetch-suwayomi-runtime.sh $suwayomiBundlePlatform first."
         }
     }
-    from(mangaBundledNodeRuntime.map { it.dir("bin") }) {
-        include("node")
-        filePermissions { unix("rwxr-xr-x") }
+    from(jar)
+    from(jre) {
+        into("jre")
+        // Man pages and the like are of no use inside an app bundle.
+        exclude("man/**")
     }
-    from(mangaBundledNodeRuntime) {
-        include("LICENSE")
-        rename { "NODE-LICENSE.txt" }
-    }
-    from(mangaModuleBuildDir.dir("manga-host")) {
-        into("host")
-    }
-    into(macosPlayerAppResourcesRoot.map { it.dir("macos/manga-host") })
+    into(macosPlayerAppResourcesRoot.map { it.dir("macos/suwayomi") })
 }
 
 tasks.matching { it.name == "prepareAppResources" }.configureEach {
     if (isMacHost) {
         dependsOn(prepareMacosPlayerAppResources)
-        dependsOn(prepareMangaHostAppResources)
+        dependsOn(prepareSuwayomiAppResources)
     }
 }
 
 // Compose Desktop copies app resources into the bundle without their permissions, which leaves the
-// Node.js binary of Manga's extension host unable to start ("Permission denied"). Mark it as a
-// program again in the app image; the DMG is made from that image and keeps the bit.
+// bundled Java unable to start ("Permission denied"). Its programs are marked as programs again in
+// the app image; the DMG is made from that image and keeps the bits.
 listOf("createDistributable" to "main", "createReleaseDistributable" to "main-release").forEach { (taskName, distribution) ->
     val appImageDir = layout.buildDirectory.dir("compose/binaries/$distribution/app")
     val onMac = isMacHost
@@ -1095,10 +1090,15 @@ listOf("createDistributable" to "main", "createReleaseDistributable" to "main-re
             val apps = appImageDir.get().asFile.listFiles { file -> file.isDirectory && file.name.endsWith(".app") }.orEmpty()
             check(apps.isNotEmpty()) { "No app bundle in ${appImageDir.get().asFile.absolutePath}" }
             apps.forEach { app ->
-                val node = app.resolve("Contents/app/resources/manga-host/node")
-                check(node.isFile) { "The Manga extension host is missing from the app bundle (${node.absolutePath})." }
-                check(node.setExecutable(true, false) && node.canExecute()) { "Could not make ${node.absolutePath} executable." }
-                logger.lifecycle("Manga extension host runtime marked executable: ${node.absolutePath}")
+                val jre = app.resolve("Contents/app/resources/suwayomi/jre")
+                val java = jre.resolve("bin/java")
+                check(java.isFile) { "The Java runtime of Manga's server is missing from the app bundle (${java.absolutePath})." }
+                check(app.resolve("Contents/app/resources/suwayomi/Suwayomi-Server.jar").isFile) { "Suwayomi-Server is missing from the app bundle." }
+                val programs = jre.resolve("bin").listFiles().orEmpty().toList() + listOf(jre.resolve("lib/jspawnhelper")).filter { it.isFile }
+                programs.forEach { program ->
+                    check(program.setExecutable(true, false) && program.canExecute()) { "Could not make ${program.absolutePath} executable." }
+                }
+                logger.lifecycle("Manga server runtime marked executable: ${java.absolutePath} (${programs.size} programs)")
             }
         }
     }
