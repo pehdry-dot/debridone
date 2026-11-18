@@ -83,8 +83,9 @@ playback is passed to the engine and has not been tested.
 Off for every addon until you switch it on in that addon's settings. Installing an addon says
 nothing about what its provider permits, and the format has no way for a provider to say so;
 DebridOne leaves the decision to you, per addon, and asks you to switch it on only where the
-provider permits downloading and the files are yours to keep. With it on, "Save for offline" works
-for the addon's songs as for a personal server; a saved song plays without the addon.
+provider permits downloading and the files are yours to keep. With it on, "Download for offline"
+appears in the menu of the addon's songs, as for a personal server; a saved song plays without the
+addon.
 
 ## What stays as it was
 

@@ -165,7 +165,7 @@ python3 scripts/debridone/sample-music-addon.py --token my-private-token
 4. *Open in Discover*: its songs are listed; search finds them; one plays, and the mini-player
    shows it. Playing continues in other sections.
 5. Add a song to the library and to a playlist; quit and reopen: it is still there and plays.
-6. Switch on *Allow saving songs*, save a song for offline listening, stop the sample addon: the
+6. Switch on *Allow saving songs*, choose "Download for offline" in a song's menu, stop the sample addon: the
    saved song still plays; the others say the addon could not be reached.
 7. Another profile: Plugins › Music › Addons is empty there.
 8. Paste a Streaming add-on's manifest address: refused, with the reason.

@@ -644,7 +644,12 @@ internal fun RemoteCollectionScreen(item: RemoteItem) {
                     Text(item.kind.label.uppercase(), style = MaterialTheme.typography.labelLarge, color = tokens.colors.textMuted)
                     MusicPageHeading(item.title)
                     Text(
-                        details(item.subtitle, if (loaded.isNotEmpty()) plural(loaded.size, "song") else null, loaded.sumOf { it.durationMs }.takeIf { it > 0 }?.let(::formatLongDuration)),
+                        // The source may already have said how many songs there are; do not say it twice.
+                        details(
+                            item.subtitle,
+                            plural(loaded.size, "song").takeIf { loaded.isNotEmpty() && item.subtitle?.contains(it) != true },
+                            loaded.sumOf { it.durationMs }.takeIf { it > 0 }?.let(::formatLongDuration),
+                        ),
                         style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textSecondary,
                     )
                     item.description?.takeIf { it.isNotBlank() }?.let {

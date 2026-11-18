@@ -140,6 +140,10 @@ internal object MusicPickers {
 @Composable
 internal fun TrackMenu(track: Track, dismiss: () -> Unit, extra: @Composable (() -> Unit)? = null) {
     val actions = LocalMusicActions.current
+    val music = LocalMusic.current
+    // Whether this song's source lets it be saved: a personal server does, an open catalogue does
+    // not, and an addon does only where the listener switched that on for it.
+    val savable = remember(track.id, track.sourceId) { !track.isLocal && runCatching { music.services.sources.canDownload(music.profileId, track) }.getOrDefault(false) }
     fun run(block: () -> Unit) {
         dismiss()
         block()
@@ -160,12 +164,10 @@ internal fun TrackMenu(track: Track, dismiss: () -> Unit, extra: @Composable (()
     if (track.isLocal && track.path != null && !track.missing) {
         MenuItem("Show in folder", Icons.Rounded.FolderOpen) { run { actions.revealInFileManager(track) } }
     }
-    if (!track.isLocal && !track.missing && track.durationMs > 0) {
-        if (track.offlinePath == null) {
-            MenuItem("Download for offline", Icons.Rounded.DownloadForOffline) { run { actions.download(listOf(track)) } }
-        } else {
-            MenuItem("Remove the download", Icons.Rounded.DownloadDone) { run { actions.removeDownload(track) } }
-        }
+    if (!track.isLocal && track.offlinePath != null) {
+        MenuItem("Remove the download", Icons.Rounded.DownloadDone) { run { actions.removeDownload(track) } }
+    } else if (savable && !track.missing) {
+        MenuItem("Download for offline", Icons.Rounded.DownloadForOffline) { run { actions.download(listOf(track)) } }
     }
     extra?.let {
         MenuDivider()

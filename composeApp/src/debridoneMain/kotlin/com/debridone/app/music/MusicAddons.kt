@@ -338,7 +338,7 @@ private fun AddonSettingsDialog(connection: SourceConnection, onDismiss: () -> U
                     Text("Allow saving songs from this addon", style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary)
                     Text(
                         "Off by default. Installing an addon does not mean its provider lets you keep copies. Switch this on only if the provider permits downloading " +
-                            "and the files are yours to keep; \"Save for offline\" then becomes available for its songs.",
+                            "and the files are yours to keep; \"Download for offline\" then appears in the menu of its songs.",
                         style = small(), color = tokens.colors.textMuted,
                     )
                 }
