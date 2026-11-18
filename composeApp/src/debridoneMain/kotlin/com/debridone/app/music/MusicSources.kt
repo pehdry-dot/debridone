@@ -22,6 +22,7 @@ import com.debridone.music.sources.AudiusAdapter
 import com.debridone.music.sources.EclipseAddonAdapter
 import com.debridone.music.sources.HttpCatalogAdapter
 import com.debridone.music.sources.IntegrationKind
+import com.debridone.music.sources.RealDebridAdapter
 import com.debridone.music.sources.JellyfinAdapter
 import com.debridone.music.sources.MusicPluginManifest
 import com.debridone.music.sources.SubsonicAdapter
@@ -115,6 +116,7 @@ private fun MusicSourcesContent() {
     }
     var adding by remember { mutableStateOf<MusicSourceAdapter?>(null) }
     var connectingPlugin by remember { mutableStateOf<MusicPluginManifest?>(null) }
+    var signingInToRealDebrid by remember { mutableStateOf(false) }
     var removingPlugin by remember { mutableStateOf<MusicPluginManifest?>(null) }
     var importText by remember { mutableStateOf("") }
     var importing by remember { mutableStateOf(false) }
@@ -260,6 +262,18 @@ private fun MusicSourcesContent() {
                     "The music libraries of your own Jellyfin server: albums, artists, songs, playlists, search, covers, playback.",
                     status = data.connections.count { it.adapter == JellyfinAdapter.ID }.takeIf { it > 0 }?.let { plural(it, "connection") to PillTone.SUCCESS },
                 ) { MusicButton("Connect", { adding = adapter(JellyfinAdapter.ID) }, primary = false) }
+                val clouds = data.connections.filter { it.adapter == RealDebridAdapter.ID }
+                IntegrationCard(
+                    Icons.Rounded.Cloud, "Real-Debrid", IntegrationKind.PERSONAL_CLOUD,
+                    "The audio files already in your own Real-Debrid cloud: play them and save them. Read-only, signed in on Real-Debrid's own page, and separate from addons.",
+                    status = when {
+                        clouds.isEmpty() -> null
+                        clouds.any { it.lastTestOk == false } -> "Needs attention" to PillTone.DANGER
+                        else -> plural(clouds.size, "account") to PillTone.SUCCESS
+                    },
+                    note = clouds.firstOrNull { it.lastTestOk == false }?.lastError,
+                    noteIsError = true,
+                ) { MusicButton(if (clouds.isEmpty()) "Sign in" else "Add an account", { signingInToRealDebrid = true }, primary = false) }
                 providers.filter { it.id != "embedded-tags" }.forEach { provider ->
                     val state = health[provider.id]
                     IntegrationCard(
@@ -377,6 +391,7 @@ private fun MusicSourcesContent() {
     }
 
     adding?.let { adapter -> AddServerDialog(adapter, onDismiss = { adding = null }) }
+    if (signingInToRealDebrid) RealDebridSignInDialog(onDismiss = { signingInToRealDebrid = false })
     connectingPlugin?.let { manifest -> AddServerDialog(adapter(manifest.adapter), plugin = manifest, onDismiss = { connectingPlugin = null }) }
     removingPlugin?.let { manifest ->
         ConfirmDialog(

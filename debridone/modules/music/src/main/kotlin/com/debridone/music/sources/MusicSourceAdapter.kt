@@ -43,6 +43,16 @@ data class SourceSession(
 
 class SourceException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/**
+ * What an adapter may remember about one connection between two listings of it: facts about the
+ * source's content that do not change (what a finished download contains). Never a secret: it is
+ * kept in the database.
+ */
+interface ListingMemory {
+    fun get(key: String): String?
+    fun put(key: String, value: String)
+}
+
 /** A track as a source describes it. */
 data class RemoteTrack(
     val remoteId: String,
@@ -110,6 +120,18 @@ interface MusicSourceAdapter {
     val addressIsSecret: Boolean get() = false
 
     /**
+     * True when a song's address must be asked from the source at the moment it plays (it expires,
+     * or costs a request each): the queue then holds a promise, not an address.
+     */
+    val resolvesAtPlayTime: Boolean get() = addressIsSecret
+
+    /**
+     * For sign-ins that expire (an access token with a refresh token): the secret to store in place
+     * of [secret] when it had to be renewed, else null. Called before the secret is used.
+     */
+    fun renewedSecret(connection: SourceConnection, secret: String): String? = null
+
+    /**
      * Settings to keep after a successful [test], when the source describes itself anew each time
      * (an addon's manifest). Null: nothing changes.
      */
@@ -126,6 +148,13 @@ interface MusicSourceAdapter {
 
     /** Lists every track of the library, a page at a time, calling [onPage] for each page. */
     fun listTracks(connection: SourceConnection, secret: String, onPage: (List<RemoteTrack>) -> Unit)
+
+    /**
+     * The same, for sources that would otherwise ask the same questions at every listing: [memory]
+     * is kept for the connection between listings and across restarts, and is erased with it.
+     */
+    fun listTracks(connection: SourceConnection, secret: String, memory: ListingMemory, onPage: (List<RemoteTrack>) -> Unit) =
+        listTracks(connection, secret, onPage)
 
     /** A URL the audio engine can open. It carries credentials and must never be stored or logged. */
     fun streamUrl(connection: SourceConnection, secret: String, remoteId: String): String
@@ -149,6 +178,7 @@ interface MusicSourceAdapter {
 enum class IntegrationKind(val label: String) {
     PLAYBACK_SOURCE("Playback source"),
     PERSONAL_SERVER("Personal music server"),
+    PERSONAL_CLOUD("Personal cloud"),
     METADATA_PROVIDER("Metadata provider"),
     LYRICS_PROVIDER("Lyrics provider"),
     LOCAL_LIBRARY("Local library"),

@@ -57,6 +57,8 @@ unheard. A song a source will not stream is listed as unavailable and is not pla
 - Audius, an open catalogue of independent artists (no account),
 - Navidrome and other Subsonic / OpenSubsonic servers,
 - Jellyfin servers,
+- the audio files already in your own Real-Debrid cloud (read-only; see
+  [MUSIC_REAL_DEBRID.md](MUSIC_REAL_DEBRID.md)),
 - internet radio and other direct stream addresses,
 - plugins: a manifest that names one of these adapters, or a server that speaks the Music Catalog
   protocol. See [MUSIC_PLUGINS.md](MUSIC_PLUGINS.md).

@@ -87,6 +87,10 @@ provider permits downloading and the files are yours to keep. With it on, "Downl
 appears in the menu of the addon's songs, as for a personal server; a saved song plays without the
 addon.
 
+Your own Real-Debrid cloud is a different thing and has nothing to do with addons
+([MUSIC_REAL_DEBRID.md](MUSIC_REAL_DEBRID.md)): an addon is never given that sign-in, and having
+it connected does not make an addon's songs downloadable.
+
 ## What stays as it was
 
 Songs from an addon behave like any other song of Music: they can be added to the library, to

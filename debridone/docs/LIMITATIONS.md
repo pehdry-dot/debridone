@@ -164,6 +164,19 @@ Music
   playback, a second profile seeing nothing, restart). **No third-party addon was tested**, and
   nothing about addons has been run on a Mac yet. HLS and DASH streams from an addon are handed to
   the engine untested. Rows of albums, artists and playlists are not shown.
+- Music addons inside the packaged macOS app: the build with addon support (commit `e3390ce6c`,
+  CI run 44208118939) passed on every machine (Linux tests including the addon tests, the Keychain
+  test, and the unsigned DMGs for Apple Silicon on `macos-15` and `macos-26` and for Intel, each
+  with the Music and Manga self-tests inside the packaged app). The self-tests do not install an
+  addon, so on a Mac addons are covered by the Linux tests only.
+- **Real-Debrid in Music was never run against Real-Debrid.** It follows the public API
+  documentation and is tested against a local server answering in the documented format (sign-in
+  with a code and with an API token, listing, playback through libmpv, saving, renewal of the
+  sign-in, profiles, independence from addons), and by hand in the running app on Linux against
+  the same kind of server. No Real-Debrid account was available where DebridOne is built; the
+  first real sign-in will be the user's. See `MUSIC_REAL_DEBRID.md`.
+- Real-Debrid has no tags or covers to give: titles, artists and albums of cloud files are read
+  from file and folder names, and a song's length is known only after it has played once.
 - Switching a source off marks its songs unavailable rather than hiding them.
 
 Manga

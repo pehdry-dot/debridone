@@ -512,7 +512,7 @@ internal fun TrackRow(
                 Spacer(Modifier.width(30.dp))
             }
         }
-        Text(formatDuration(track.durationMs), style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted, modifier = Modifier.width(48.dp))
+        Text(if (track.durationMs > 0) formatDuration(track.durationMs) else "—", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted, modifier = Modifier.width(48.dp))
         Box {
             MusicIconButton(Icons.Rounded.MoreHoriz, "More actions for ${track.title}", { menuOpen = true }, size = 30.dp)
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {

@@ -53,7 +53,7 @@ class MusicSourceManager(
     private val offlineDirectory: Path,
     private val clock: () -> Long = System::currentTimeMillis,
     /** The kinds of source this build can talk to. Each is a tested adapter; nothing else is accepted. */
-    val adapters: List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter(), EclipseAddonAdapter()),
+    val adapters: List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter(), EclipseAddonAdapter(), RealDebridAdapter()),
     /** Where covers shown while browsing a catalogue are kept. Null: they are fetched each time. */
     private val artworkCacheDirectory: Path? = null,
 ) {
@@ -106,7 +106,7 @@ class MusicSourceManager(
         // An address that may carry a token is never written down: what is saved in its place is
         // the part the adapter says may be shown, and the addon's id tells two of them apart.
         val baseUrl = if (adapter.addressIsSecret) session.publicAddress.orEmpty() else MusicHttp.normalizeBaseUrl(address)
-        val username = if (adapter.addressIsSecret) session.account.orEmpty() else draft.username.trim()
+        val username = session.account ?: draft.username.trim()
         val name = draft.name.trim().ifEmpty { session.serverName ?: adapter.displayName }.take(80)
         val now = clock()
         val id = database.transaction {
@@ -149,7 +149,7 @@ class MusicSourceManager(
         val trackIds = library.tracks(profileId, TrackFilter(sourceId = sourceId)).map { it.id }
         library.removeTracks(profileId, trackIds)
         database.execute("DELETE FROM music_sources WHERE profile_id = ? AND id = ?", profileId, sourceId)
-        database.execute("DELETE FROM music_metadata_cache WHERE provider = ?", artworkCacheName(sourceId))
+        database.execute("DELETE FROM music_metadata_cache WHERE provider IN (?, ?)", artworkCacheName(sourceId), listingCacheName(sourceId))
         runCatching { profileSecrets(profileId).delete(secretName(existing.id)) }
         runCatching { offlineFolder(profileId, sourceId).toFile().deleteRecursively() }
         library.notifyChanged()
@@ -231,7 +231,7 @@ class MusicSourceManager(
             val artworkKeys = LinkedHashMap<String, MutableList<Long>>()
             val cachedArtwork = cachedArtworkIds(profileId, sourceId)
             var added = 0
-            adapter.listTracks(existing, secret) { page ->
+            adapter.listTracks(existing, secret, listingMemory(sourceId)) { page ->
                 library.batch {
                     with(library) {
                         for (remote in page) {
@@ -596,6 +596,33 @@ class MusicSourceManager(
         return null
     }
 
+    // ---------------------------------------------------------------- Real-Debrid (the user's own cloud)
+
+    private val realDebrid: RealDebridAdapter? get() = adapters.filterIsInstance<RealDebridAdapter>().firstOrNull()
+
+    /** Starts a sign-in: the code to enter on Real-Debrid's own page. Nothing is saved yet. */
+    fun beginRealDebridSignIn(baseUrl: String = RealDebridAdapter.DEFAULT_BASE_URL): RealDebridSignIn =
+        (realDebrid ?: throw SourceException("Real-Debrid is not supported by this build.")).beginSignIn(baseUrl)
+
+    /**
+     * Asks whether the code of [signIn] was approved. Null while it is still waiting; once approved
+     * the cloud is connected for [profileId] and the connection is returned.
+     */
+    fun finishRealDebridSignIn(profileId: Long, signIn: RealDebridSignIn): SourceConnection? {
+        val adapter = realDebrid ?: throw SourceException("Real-Debrid is not supported by this build.")
+        val credentials = adapter.pollSignIn(signIn) ?: return null
+        return add(profileId, RealDebridAdapter.ID, SourceDraft(name = "", baseUrl = signIn.baseUrl, username = "", secret = credentials))
+    }
+
+    /**
+     * Connects the cloud with the private API token of the user's Real-Debrid account instead of the
+     * code sign-in. The token is checked against Real-Debrid first and kept only in the credential store.
+     */
+    fun addRealDebridWithToken(profileId: Long, apiToken: String, baseUrl: String = RealDebridAdapter.DEFAULT_BASE_URL): SourceConnection {
+        val adapter = realDebrid ?: throw SourceException("Real-Debrid is not supported by this build.")
+        return add(profileId, RealDebridAdapter.ID, SourceDraft(name = "", baseUrl = baseUrl, username = "", secret = adapter.tokenCredentials(apiToken)))
+    }
+
     // ---------------------------------------------------------------- playback and offline copies
 
     /**
@@ -611,7 +638,7 @@ class MusicSourceManager(
         val adapter = adapter(source.adapter) ?: return null
         // An addon is asked for a song's address when the song starts, not when it is queued:
         // such addresses expire, and a queue of fifty songs must not mean fifty requests.
-        if (adapter.addressIsSecret) return DEFERRED_SCHEME + track.id
+        if (adapter.resolvesAtPlayTime) return DEFERRED_SCHEME + track.id
         val secret = runCatching { profileSecrets(profileId).get(secretName(source.id)) }.getOrNull()
             ?: if (adapter.needsCredentials) return null else ""
         return adapter.streamUrl(source, secret, remoteId)
@@ -624,7 +651,7 @@ class MusicSourceManager(
     fun resolveAtPlayTime(profileId: Long, trackId: Long): String {
         val track = library.track(profileId, trackId) ?: throw SourceException("This song is no longer in the library.")
         track.offlinePath?.takeIf { Files.isRegularFile(Paths.get(it)) }?.let { return it }
-        val source = connection(profileId, track.sourceId) ?: throw SourceException("The addon this song came from was removed.")
+        val source = connection(profileId, track.sourceId) ?: throw SourceException("The source this song came from was removed.")
         if (!source.enabled) throw SourceException("${source.name} is switched off.")
         val adapter = adapter(source.adapter) ?: throw SourceException("This kind of source is not supported.")
         val remoteId = track.remoteId ?: throw SourceException("This song has no address.")
@@ -798,10 +825,24 @@ class MusicSourceManager(
 
     private fun secretName(sourceId: Long) = "source-$sourceId"
 
-    private fun requireSecret(profileId: Long, connection: SourceConnection): String =
-        runCatching { profileSecrets(profileId).get(secretName(connection.id)) }.getOrNull()
-            ?: if (adapter(connection.adapter)?.needsCredentials == false) "" else
-                throw SourceException("The saved sign-in for ${connection.name} is missing. Remove the connection and add it again.")
+    private val renewals = java.util.concurrent.ConcurrentHashMap<Long, Any>()
+
+    /**
+     * The stored sign-in of a connection, renewed first when it is of the kind that expires. One
+     * renewal at a time per connection: two songs starting together must not both spend the same
+     * refresh token.
+     */
+    private fun requireSecret(profileId: Long, connection: SourceConnection): String {
+        val adapter = adapter(connection.adapter)
+        synchronized(renewals.computeIfAbsent(connection.id) { Any() }) {
+            val stored = runCatching { profileSecrets(profileId).get(secretName(connection.id)) }.getOrNull()
+                ?: if (adapter?.needsCredentials == false) return "" else
+                    throw SourceException("The saved sign-in for ${connection.name} is missing. Remove the connection and add it again.")
+            val renewed = adapter?.renewedSecret(connection, stored) ?: return stored
+            runCatching { profileSecrets(profileId).put(secretName(connection.id), renewed) }
+            return renewed
+        }
+    }
 
     private fun offlineFolder(profileId: Long, sourceId: Long): Path = offlineDirectory.resolve(profileId.toString()).resolve(sourceId.toString())
 
@@ -840,6 +881,23 @@ class MusicSourceManager(
                 "ON CONFLICT(provider, cache_key) DO UPDATE SET value = excluded.value, fetched_at = excluded.fetched_at",
             artworkCacheName(sourceId), key, artworkId.toString(), clock(),
         )
+    }
+
+    private fun listingCacheName(sourceId: Long) = "source-listing:$sourceId"
+
+    /** What the adapter of a connection remembers between listings, kept with Music's other cached answers. */
+    private fun listingMemory(sourceId: Long) = object : ListingMemory {
+        override fun get(key: String): String? = database.queryOne(
+            "SELECT value FROM music_metadata_cache WHERE provider = ? AND cache_key = ?", listingCacheName(sourceId), key,
+        ) { it.getString(1) }
+
+        override fun put(key: String, value: String) {
+            database.execute(
+                "INSERT INTO music_metadata_cache (provider, cache_key, value, fetched_at) VALUES (?, ?, ?, ?) " +
+                    "ON CONFLICT(provider, cache_key) DO UPDATE SET value = excluded.value, fetched_at = excluded.fetched_at",
+                listingCacheName(sourceId), key, value, clock(),
+            )
+        }
     }
 
     private fun toJson(config: Map<String, String>): String = buildJsonObject { config.forEach { (key, value) -> put(key, value) } }.toString()

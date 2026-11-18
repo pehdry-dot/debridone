@@ -75,9 +75,20 @@ internal object MusicHttp {
      * A GET whose error answers are returned instead of thrown, with the `Retry-After` header: for
      * protocols that put a message for the user in the body of a 4xx or 5xx answer.
      */
-    fun exchange(url: String, headers: Map<String, String> = emptyMap(), maxBytes: Int = 8 * 1024 * 1024): HttpAnswer {
-        val connection = open(url, headers)
+    fun exchange(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        maxBytes: Int = 8 * 1024 * 1024,
+        /** When given, the request is a POST with these fields as a form. */
+        form: List<Pair<String, String>>? = null,
+    ): HttpAnswer {
+        val connection = open(url, if (form == null) headers else headers + ("Content-Type" to "application/x-www-form-urlencoded"))
         try {
+            if (form != null) {
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.outputStream.use { it.write(query(form).toByteArray(StandardCharsets.UTF_8)) }
+            }
             val status = connection.responseCode
             val stream: InputStream? = if (status >= 400) connection.errorStream else connection.inputStream
             val bytes = stream?.use { readLimited(it, maxBytes) } ?: ByteArray(0)

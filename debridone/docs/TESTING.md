@@ -169,3 +169,25 @@ python3 scripts/debridone/sample-music-addon.py --token my-private-token
    saved song still plays; the others say the addon could not be reached.
 7. Another profile: Plugins › Music › Addons is empty there.
 8. Paste a Streaming add-on's manifest address: refused, with the reason.
+
+## Music: Real-Debrid cloud
+
+Automated: `./gradlew :debridone:modules:music:test --tests "*MusicRealDebridTest"` (9 tests against
+a local server that answers as Real-Debrid's API documentation describes; the real service is not
+contacted). `SourceBoundaryTest.musicAddonsAndTheRealDebridCloudDoNotMix` checks that addon code
+knows nothing of Real-Debrid and that the adapter contains no method that adds, selects or deletes.
+
+By hand, with your own account (this has **not** been done yet by anyone):
+
+1. Plugins › Music › Catalogue › Real-Debrid › *Sign in*. A code appears; *Open
+   real-debrid.com/device*, sign in there, type the code, allow. The dialog closes by itself.
+2. Under *Connected for this profile*: Real-Debrid, your user name, a number of songs.
+3. Music › Library: the audio files of your finished torrents and generated links are there. Play
+   one; choose "Download for offline" on another, disconnect the network, play it.
+4. On Real-Debrid's website nothing has changed: no torrent added, selected or deleted.
+5. Another profile: no Real-Debrid connection and none of its songs.
+6. Withdraw DebridOne's access on Real-Debrid's website, then *Check the sign-in*: DebridOne says
+   the sign-in is no longer accepted.
+
+For development, `DEBRIDONE_REAL_DEBRID_API=http://127.0.0.1:<port>` points the app at a local
+test server (loopback addresses only; the dialog shows a red notice).
