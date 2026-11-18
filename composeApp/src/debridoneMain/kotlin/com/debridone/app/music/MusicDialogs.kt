@@ -31,6 +31,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material3.MaterialTheme
@@ -144,10 +145,13 @@ internal fun TrackMenu(track: Track, dismiss: () -> Unit, extra: @Composable (()
     // Whether this song's source lets it be saved: a personal server does, an open catalogue does
     // not, and an addon does only where the listener switched that on for it.
     val savable = remember(track.id, track.sourceId) { !track.isLocal && runCatching { music.services.sources.canDownload(music.profileId, track) }.getOrDefault(false) }
+    // A song of a cloud account is listed whether or not it is in the library.
+    val listedOutside = remember(track.id, track.sourceId) { runCatching { music.services.sources.listsOutsideLibrary(music.profileId, track) }.getOrDefault(false) }
     fun run(block: () -> Unit) {
         dismiss()
         block()
     }
+    if (track.hidden) MenuItem("Add to library", Icons.Rounded.LibraryAdd) { run { actions.keep(listOf(track)) } }
     if (!track.missing) {
         MenuItem("Play next", Icons.Rounded.SkipNext) { run { actions.playNext(listOf(track)) } }
         MenuItem("Add to queue", Icons.AutoMirrored.Rounded.QueueMusic) { run { actions.addToQueue(listOf(track)) } }
@@ -164,7 +168,10 @@ internal fun TrackMenu(track: Track, dismiss: () -> Unit, extra: @Composable (()
     if (track.isLocal && track.path != null && !track.missing) {
         MenuItem("Show in folder", Icons.Rounded.FolderOpen) { run { actions.revealInFileManager(track) } }
     }
-    if (!track.isLocal && track.offlinePath != null) {
+    if (listedOutside && track.offlinePath != null) {
+        // The copy of a cloud song is in the user's own download folder and is managed in Downloads, not deleted from here.
+        MenuItem("Show in folder", Icons.Rounded.FolderOpen) { run { actions.revealInFileManager(track) } }
+    } else if (!track.isLocal && track.offlinePath != null) {
         MenuItem("Remove the download", Icons.Rounded.DownloadDone) { run { actions.removeDownload(track) } }
     } else if (savable && !track.missing) {
         MenuItem("Download for offline", Icons.Rounded.DownloadForOffline) { run { actions.download(listOf(track)) } }
@@ -173,8 +180,11 @@ internal fun TrackMenu(track: Track, dismiss: () -> Unit, extra: @Composable (()
         MenuDivider()
         it()
     }
-    MenuDivider()
-    MenuItem("Remove from library", Icons.Rounded.Delete, danger = true) { run { MusicNav.dialog = MusicDialog.RemoveTracks(listOf(track.id), "“${track.title}”") } }
+    // A cloud song that was never added has nothing to be removed from.
+    if (!(listedOutside && track.hidden)) {
+        MenuDivider()
+        MenuItem("Remove from library", Icons.Rounded.Delete, danger = true) { run { MusicNav.dialog = MusicDialog.RemoveTracks(listOf(track.id), "“${track.title}”") } }
+    }
 }
 
 /** Standard row actions for a track inside the list [tracks]. */

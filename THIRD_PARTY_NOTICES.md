@@ -134,10 +134,12 @@ Only when asked, and each can be switched off in Plugins › Music:
 Navidrome, other Subsonic-compatible servers and Jellyfin are reached through their public APIs;
 no code from those projects is included.
 
-## Real-Debrid
+## Real-Debrid and TorBox
 
-Music can read the user's own Real-Debrid account through Real-Debrid's public REST API
-(https://api.real-debrid.com/), signing in with the method and the client identifier that
-documentation publishes for open-source applications. No Real-Debrid code is included, DebridOne
-is not affiliated with or endorsed by Real-Debrid, and a Real-Debrid subscription is a matter
-between the user and Real-Debrid.
+DebridOne can read the user's own Real-Debrid and TorBox accounts through the providers' public
+REST APIs (https://api.real-debrid.com/ and https://api-docs.torbox.app/). For Real-Debrid it
+signs in with the method and the client identifier that documentation publishes for open-source
+applications, or with the user's own API token; for TorBox with the user's own API key. No code
+from either provider or from their SDKs is included. DebridOne is not affiliated with or endorsed
+by Real-Debrid or TorBox, their names are used only to say which service an account belongs to,
+and a subscription is a matter between the user and the provider.

@@ -26,6 +26,8 @@ import com.debridone.music.playback.MusicPlaybackEngine
 import com.debridone.music.playlists.PlaylistRepository
 import com.debridone.music.sources.IntegrationKind
 import com.debridone.music.sources.MusicPluginManifest
+import com.debridone.music.sources.CloudAudioSource
+import com.debridone.music.sources.CloudLibraryAdapter
 import com.debridone.music.sources.MusicSourceManager
 import com.debridone.music.sources.RemotePlaylist
 import com.debridone.music.sources.RemoteTrack
@@ -41,6 +43,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -69,6 +74,8 @@ class MusicModule(
     private val engineFactory: () -> MusicPlaybackEngine = { MpvAudioEngine() },
     /** Where the online metadata providers are reached; tests use a local stand-in. */
     private val metadataEndpoints: MetadataEndpoints = MetadataEndpoints(),
+    /** Audio of the user's connected cloud accounts, offered by the application. Null: there is no such thing. */
+    private val cloudAudio: CloudAudioSource? = null,
 ) : SqliteBackedModule(ModuleId.MUSIC, storage, clock) {
 
     private val _services = MutableStateFlow<MusicServices?>(null)
@@ -92,6 +99,7 @@ class MusicModule(
         val library = MusicLibraryRepository(database, artwork, clock)
         val sources = MusicSourceManager(
             database, library, storage.secrets, storage.dataDir.resolve("offline"), clock,
+            adapters = MusicSourceManager.builtInAdapters() + listOfNotNull(cloudAudio?.let(::CloudLibraryAdapter)),
             artworkCacheDirectory = storage.cacheDir.resolve("catalogue-art"),
         )
         val player = MusicPlayer(library, database, engineFactory, moduleScope, sources::resolveUri, sources::resolveAtPlayTime, clock)
@@ -112,6 +120,40 @@ class MusicModule(
         )
         // The kinds of source Music can use, listed in Music's own plugin registry.
         runBlocking { builtInSources.forEach { runCatching { registerPlugin(it) } } }
+        // When the application's cloud accounts change, Music's view of them follows.
+        cloudAudio?.let { cloud ->
+            moduleScope.launch(Dispatchers.IO) {
+                cloud.revision.collectLatest {
+                    // A listing being read changes many times in a row: Music reads it once it has settled.
+                    delay(CLOUD_SETTLE_MS)
+                    try {
+                        refreshCloud()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // The next change is read again; a failed reading leaves what was listed.
+                    }
+                }
+            }
+        }
+    }
+
+    private val cloudMutex = Mutex()
+
+    /**
+     * Brings the active profile's cloud connections in line with the accounts the application
+     * offers it, and reads their audio listings again (from the application's own cache: nothing
+     * is asked from a provider here).
+     */
+    suspend fun refreshCloud() {
+        val cloud = cloudAudio ?: return
+        val profileId = _activeProfile.value ?: return
+        val services = _services.value ?: return
+        cloudMutex.withLock {
+            val connections = services.sources.reconcileCloud(profileId, cloud.accounts(profileId))
+            for (connection in connections) runCatching { sourceMutex.withLock { services.sources.sync(profileId, connection.id) } }
+        }
+        services.player.removeDeletedFromQueue()
     }
 
     override fun onActiveProfileChanged(profileId: Long?) {
@@ -124,7 +166,10 @@ class MusicModule(
         _activeProfile.value = profileId
         // Catalogue songs that were played once, never added and not heard for a month are forgotten.
         if (changed && profileId != null) {
-            moduleScope.launch(Dispatchers.IO) { runCatching { services.library.purgeHidden(profileId, clock() - HIDDEN_RETENTION_MS) } }
+            moduleScope.launch(Dispatchers.IO) {
+                runCatching { refreshCloud() }
+                runCatching { services.library.purgeHidden(profileId, clock() - HIDDEN_RETENTION_MS, services.sources.cloudConnections(profileId).map { it.id }) }
+            }
         }
         if (changed && profileId != null && services.preferences.boolean(MusicPreferences.RESCAN_ON_START, true)) {
             rescan()
@@ -380,6 +425,7 @@ class MusicModule(
 
     private companion object {
         const val HIDDEN_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+        private const val CLOUD_SETTLE_MS = 400L
     }
 
     override val appearanceOptions: List<AppearanceOption> = listOf(

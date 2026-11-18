@@ -65,6 +65,7 @@ import com.debridone.music.library.Track
 import com.debridone.music.library.TrackFilter
 import com.debridone.music.library.TrackSort
 import com.debridone.music.playlists.Playlist
+import com.debridone.music.sources.CloudLibraryAdapter
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,7 +81,8 @@ internal fun MusicLibrary(tab: LibraryTab) {
             contentPadding = PaddingValues(horizontal = 28.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(LibraryTab.entries) { entry ->
+            // Cloud Music exists only where the application offers connected accounts.
+            items(LibraryTab.entries.filter { it != LibraryTab.CLOUD || music.services.sources.adapter(CloudLibraryAdapter.ID) != null }) { entry ->
                 MusicChip(entry.label, entry == tab) {
                     music.services.preferences.set(MusicPreferences.LIBRARY_TAB, entry.key)
                     MusicNav.root(MusicRoute.Library(entry))
@@ -88,6 +90,7 @@ internal fun MusicLibrary(tab: LibraryTab) {
             }
         }
         when {
+            tab == LibraryTab.CLOUD -> CloudMusicTab()
             stats == 0 && tab != LibraryTab.PLAYLISTS -> EmptyLibrary()
             tab == LibraryTab.SONGS -> SongsTab(TrackFilter())
             tab == LibraryTab.ALBUMS -> AlbumsTab()

@@ -169,14 +169,9 @@ Music
   test, and the unsigned DMGs for Apple Silicon on `macos-15` and `macos-26` and for Intel, each
   with the Music and Manga self-tests inside the packaged app). The self-tests do not install an
   addon, so on a Mac addons are covered by the Linux tests only.
-- **Real-Debrid in Music was never run against Real-Debrid.** It follows the public API
-  documentation and is tested against a local server answering in the documented format (sign-in
-  with a code and with an API token, listing, playback through libmpv, saving, renewal of the
-  sign-in, profiles, independence from addons), and by hand in the running app on Linux against
-  the same kind of server. No Real-Debrid account was available where DebridOne is built; the
-  first real sign-in will be the user's. See `MUSIC_REAL_DEBRID.md`.
-- Real-Debrid has no tags or covers to give: titles, artists and albums of cloud files are read
-  from file and folder names, and a song's length is known only after it has played once.
+- Cloud Music knows files, not tags: titles, artists and albums of cloud songs are read from file
+  and folder names, and a song's length is known only after it has played once. Its own tags and
+  cover are used once the song is saved to this computer.
 - Switching a source off marks its songs unavailable rather than hiding them.
 
 Manga

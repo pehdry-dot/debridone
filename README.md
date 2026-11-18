@@ -12,7 +12,8 @@ software under the GPL-3.0. There are no subscriptions, tiers or paywalls.
 | Section | State |
 |---|---|
 | Streaming | Working. It is Nuvio Desktop, running on DebridOne's on-device accounts. |
-| Music | Working: local library, player, playlists, Discover with Audius and your Navidrome/OpenSubsonic or Jellyfin server, radio streams, importable plugins, addons in the Eclipse Music / BeatBoss manifest format, the audio in your own Real-Debrid cloud (untested against the real service), MusicBrainz, Cover Art Archive and LRCLIB. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md), [MUSIC_PLUGINS.md](debridone/docs/MUSIC_PLUGINS.md) and [MUSIC_ADDONS.md](debridone/docs/MUSIC_ADDONS.md). |
+| Music | Working: local library, player, playlists, Discover with Audius and your Navidrome/OpenSubsonic or Jellyfin server, radio streams, importable plugins, addons in the Eclipse Music / BeatBoss manifest format, Cloud Music (the audio in your connected Real-Debrid and TorBox accounts), MusicBrainz, Cover Art Archive and LRCLIB. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md), [MUSIC_PLUGINS.md](debridone/docs/MUSIC_PLUGINS.md) and [MUSIC_ADDONS.md](debridone/docs/MUSIC_ADDONS.md). |
+| Connected accounts and Downloads | Working: your own Real-Debrid and TorBox accounts, connected once in Settings; their files browsed, played, read and downloaded from the Downloads section; cloud video in the Streaming player, cloud audio in Music, cloud comic archives in the Manga reader. Nothing is added to or searched for at a provider. See [debridone/docs/CLOUD.md](debridone/docs/CLOUD.md). |
 | Games | Not part of the app for now. Its module is kept dormant in the repository; saved data is left untouched. |
 | Manga | Working: a reader for manga and manhwa (paged and continuous webtoon modes), search and discovery through Houdoku's unmodified Tiyo extensions, local CBZ/ZIP/folders, library, downloads, AniList / MangaDex / MyAnimeList metadata. See [debridone/docs/MANGA.md](debridone/docs/MANGA.md) and [MANGA_PLUGINS.md](debridone/docs/MANGA_PLUGINS.md). |
 
@@ -49,7 +50,8 @@ Run the tests:
 - [Installing on a Mac](debridone/docs/INSTALL.md)
 - [Building](debridone/docs/BUILD.md)
 - [Testing](debridone/docs/TESTING.md)
-- [Music](debridone/docs/MUSIC.md), [Music plugins](debridone/docs/MUSIC_PLUGINS.md) and [Music addons (Eclipse Music / BeatBoss format)](debridone/docs/MUSIC_ADDONS.md), [Real-Debrid in Music](debridone/docs/MUSIC_REAL_DEBRID.md)
+- [Music](debridone/docs/MUSIC.md), [Music plugins](debridone/docs/MUSIC_PLUGINS.md) and [Music addons (Eclipse Music / BeatBoss format)](debridone/docs/MUSIC_ADDONS.md)
+- [Connected accounts (Real-Debrid, TorBox) and Downloads](debridone/docs/CLOUD.md)
 - [Manga](debridone/docs/MANGA.md) and [Manga extensions (Houdoku / Tiyo compatibility)](debridone/docs/MANGA_PLUGINS.md)
 - [Architecture](debridone/docs/ARCHITECTURE.md)
 - [Upstream projects and how to merge them](debridone/docs/UPSTREAM.md)

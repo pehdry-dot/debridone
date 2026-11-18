@@ -3,6 +3,8 @@ package com.debridone.music.sources
 import com.debridone.music.library.ArtworkStore
 import com.debridone.music.library.MusicLibraryRepository
 import com.debridone.music.library.Track
+import com.debridone.music.library.AudioTagReader
+import com.debridone.music.library.TrackField
 import com.debridone.music.library.TrackFilter
 import com.debridone.music.library.TrackInput
 import com.debridone.platform.db.SqliteDatabase
@@ -37,6 +39,8 @@ data class SourceActivity(
     val downloading: Int = 0,
     val downloadTitle: String? = null,
     val lastDownloadError: String? = null,
+    /** What the application said when it was handed songs to save ("3 downloads queued"). */
+    val downloadNote: String? = null,
 )
 
 /**
@@ -53,7 +57,7 @@ class MusicSourceManager(
     private val offlineDirectory: Path,
     private val clock: () -> Long = System::currentTimeMillis,
     /** The kinds of source this build can talk to. Each is a tested adapter; nothing else is accepted. */
-    val adapters: List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter(), EclipseAddonAdapter(), RealDebridAdapter()),
+    val adapters: List<MusicSourceAdapter> = builtInAdapters(),
     /** Where covers shown while browsing a catalogue are kept. Null: they are fetched each time. */
     private val artworkCacheDirectory: Path? = null,
 ) {
@@ -146,8 +150,10 @@ class MusicSourceManager(
     /** Removes the connection with its songs, covers, offline copies and stored password. */
     fun remove(profileId: Long, sourceId: Long) {
         val existing = connection(profileId, sourceId) ?: return
-        val trackIds = library.tracks(profileId, TrackFilter(sourceId = sourceId)).map { it.id }
-        library.removeTracks(profileId, trackIds)
+        val trackIds = library.tracks(profileId, TrackFilter(sourceId = sourceId, includeHidden = true)).map { it.id }
+        // What the listener added and saved from a cloud account stays, as the files it was saved as.
+        val kept = if (adapter(existing.adapter)?.listsOutsideLibrary == true || existing.adapter == CloudLibraryAdapter.ID) library.adoptSavedCopies(profileId, trackIds) else emptySet()
+        library.removeTracks(profileId, trackIds - kept)
         database.execute("DELETE FROM music_sources WHERE profile_id = ? AND id = ?", profileId, sourceId)
         database.execute("DELETE FROM music_metadata_cache WHERE provider IN (?, ?)", artworkCacheName(sourceId), listingCacheName(sourceId))
         runCatching { profileSecrets(profileId).delete(secretName(existing.id)) }
@@ -226,7 +232,12 @@ class MusicSourceManager(
         setSyncing(sourceId, "Reading the library…")
         try {
             val secret = requireSecret(profileId, existing)
-            val known = library.tracks(profileId, TrackFilter(sourceId = sourceId)).associate { it.remoteId to it.id }
+            // Songs listed outside the library are known too: they must be recognised, and removed when they are gone.
+            val knownTracks = library.tracks(profileId, TrackFilter(sourceId = sourceId, includeHidden = true))
+            val known = knownTracks.associate { it.remoteId to it.id }
+            // A song saved to this computer is described by its file's own tags from then on: what its
+            // source guesses from a file name does not replace them.
+            val describedByFile = if (adapter.listsOutsideLibrary) knownTracks.filter { it.offlinePath != null }.mapNotNullTo(HashSet()) { it.remoteId } else emptySet()
             val seen = HashSet<String>()
             val artworkKeys = LinkedHashMap<String, MutableList<Long>>()
             val cachedArtwork = cachedArtworkIds(profileId, sourceId)
@@ -235,9 +246,10 @@ class MusicSourceManager(
                 library.batch {
                     with(library) {
                         for (remote in page) {
-                            if (!seen.add(remote.remoteId)) continue
+                            if (!seen.add(remote.remoteId) || remote.remoteId in describedByFile) continue
                             val artworkId = remote.artworkKey?.let { cachedArtwork[it] }
-                            val id = upsertInTransaction(profileId, remote.toInput(sourceId, artworkId), existingId = known[remote.remoteId])
+                            // A song the user already added stays added; a new one starts where its source lists it.
+                            val id = upsertInTransaction(profileId, remote.toInput(sourceId, artworkId).copy(hidden = adapter.listsOutsideLibrary), existingId = known[remote.remoteId])
                             if (remote.remoteId !in known) added++
                             if (remote.artworkKey != null && artworkId == null) artworkKeys.getOrPut(remote.artworkKey) { ArrayList() } += id
                         }
@@ -247,7 +259,9 @@ class MusicSourceManager(
                 library.notifyChanged()
             }
             val gone = known.filterKeys { it !in seen }.values
-            library.removeTracks(profileId, gone)
+            // A cloud entry that was deleted takes its listing with it, not the songs the listener added and saved.
+            val kept = if (adapter.listsOutsideLibrary) library.adoptSavedCopies(profileId, gone) else emptySet()
+            library.removeTracks(profileId, gone - kept)
 
             var fetched = 0
             for ((key, trackIds) in artworkKeys) {
@@ -596,31 +610,100 @@ class MusicSourceManager(
         return null
     }
 
-    // ---------------------------------------------------------------- Real-Debrid (the user's own cloud)
+    // ---------------------------------------------------------------- the connected cloud accounts
 
-    private val realDebrid: RealDebridAdapter? get() = adapters.filterIsInstance<RealDebridAdapter>().firstOrNull()
-
-    /** Starts a sign-in: the code to enter on Real-Debrid's own page. Nothing is saved yet. */
-    fun beginRealDebridSignIn(baseUrl: String = RealDebridAdapter.DEFAULT_BASE_URL): RealDebridSignIn =
-        (realDebrid ?: throw SourceException("Real-Debrid is not supported by this build.")).beginSignIn(baseUrl)
+    /** The profile's connections to cloud accounts. */
+    fun cloudConnections(profileId: Long): List<SourceConnection> = connections(profileId).filter { it.adapter == CloudLibraryAdapter.ID }
 
     /**
-     * Asks whether the code of [signIn] was approved. Null while it is still waiting; once approved
-     * the cloud is connected for [profileId] and the connection is returned.
+     * Brings the profile's cloud connections in line with the accounts the application offers it:
+     * one connection per account, made when the account appears and removed (with its songs) when
+     * the profile may no longer use it. Returns the connections that exist afterwards.
      */
-    fun finishRealDebridSignIn(profileId: Long, signIn: RealDebridSignIn): SourceConnection? {
-        val adapter = realDebrid ?: throw SourceException("Real-Debrid is not supported by this build.")
-        val credentials = adapter.pollSignIn(signIn) ?: return null
-        return add(profileId, RealDebridAdapter.ID, SourceDraft(name = "", baseUrl = signIn.baseUrl, username = "", secret = credentials))
+    fun reconcileCloud(profileId: Long, accounts: List<CloudAudioSource.Account>): List<SourceConnection> {
+        // The first version of cloud access kept a Real-Debrid sign-in inside Music; it is gone, and so is what it left.
+        connections(profileId).filter { it.adapter == "real-debrid" }.forEach { remove(profileId, it.id) }
+        if (adapter(CloudLibraryAdapter.ID) == null) return emptyList()
+        val existing = cloudConnections(profileId)
+        existing.filter { connection -> accounts.none { it.key == connection.username } }.forEach { remove(profileId, it.id) }
+        val now = clock()
+        for (account in accounts) {
+            val known = existing.firstOrNull { it.username == account.key }
+            if (known != null) {
+                if (known.name != account.label) database.execute("UPDATE music_sources SET name = ?, updated_at = ? WHERE id = ?", account.label.take(80), now, known.id)
+                continue
+            }
+            val priority = (database.queryOne("SELECT COALESCE(MAX(priority), 0) FROM music_sources WHERE profile_id = ?", profileId) { it.getInt(1) } ?: 0) + 1
+            database.insert(
+                """
+                INSERT INTO music_sources (profile_id, adapter, name, base_url, username, config, enabled, priority, created_at, updated_at, last_test_at, last_test_ok)
+                VALUES (?, ?, ?, '', ?, ?, 1, ?, ?, ?, ?, 1)
+                """.trimIndent(),
+                profileId, CloudLibraryAdapter.ID, account.label.take(80), account.key, toJson(mapOf(CloudLibraryAdapter.PROFILE to profileId.toString())), priority, now, now, now,
+            )
+        }
+        library.notifyChanged()
+        return cloudConnections(profileId)
     }
 
     /**
-     * Connects the cloud with the private API token of the user's Real-Debrid account instead of the
-     * code sign-in. The token is checked against Real-Debrid first and kept only in the credential store.
+     * A cloud song was saved to this computer by the application: from now on it plays from that
+     * file and counts as available offline, and it joins the library. Returns false when Music has
+     * no such cloud song (the file can then be added as a local file instead).
      */
-    fun addRealDebridWithToken(profileId: Long, apiToken: String, baseUrl: String = RealDebridAdapter.DEFAULT_BASE_URL): SourceConnection {
-        val adapter = realDebrid ?: throw SourceException("Real-Debrid is not supported by this build.")
-        return add(profileId, RealDebridAdapter.ID, SourceDraft(name = "", baseUrl = baseUrl, username = "", secret = adapter.tokenCredentials(apiToken)))
+    fun cloudFileSaved(profileId: Long, accountKey: String, fileKey: String, path: Path?, addToLibrary: Boolean = true): Boolean {
+        val track = cloudTracks(profileId, accountKey, listOf(fileKey)).firstOrNull() ?: return false
+        library.setOfflinePath(profileId, track.id, path?.toString())
+        if (path != null) {
+            // The file knows what a file name can only suggest: its tags and its cover are used from now on.
+            readSavedFile(profileId, track.id, path)
+            if (addToLibrary) library.keepTracks(profileId, listOf(track.id))
+        }
+        library.notifyChanged()
+        return true
+    }
+
+    /** The songs Music lists for these files of a cloud account, in the order asked. Files it does not list are left out. */
+    fun cloudTracks(profileId: Long, accountKey: String, fileKeys: Collection<String>): List<Track> {
+        val connection = cloudConnections(profileId).firstOrNull { it.username == accountKey } ?: return emptyList()
+        val byKey = library.tracks(profileId, TrackFilter(sourceId = connection.id, includeHidden = true)).associateBy { it.remoteId }
+        return fileKeys.mapNotNull { byKey[it] }
+    }
+
+    /** True for a song whose source lists it outside the library until the listener adds it (a cloud account). */
+    fun listsOutsideLibrary(profileId: Long, track: Track): Boolean =
+        !track.isLocal && connection(profileId, track.sourceId)?.let { adapter(it.adapter)?.listsOutsideLibrary } == true
+
+    /**
+     * "Remove from library". A song of a source that lists outside the library goes back to being
+     * only listed there; any other song is forgotten. Files and cloud entries are never touched.
+     */
+    fun removeFromLibrary(profileId: Long, trackIds: Collection<Long>) {
+        val outside = connections(profileId).filter { adapter(it.adapter)?.listsOutsideLibrary == true }.mapTo(HashSet()) { it.id }
+        val (listed, others) = library.tracksByIds(profileId, trackIds.toList()).partition { it.sourceId in outside }
+        library.unkeepTracks(profileId, listed.map { it.id })
+        library.removeTracks(profileId, others.map { it.id })
+    }
+
+    private fun readSavedFile(profileId: Long, trackId: Long, path: Path) {
+        if (!Files.isRegularFile(path) || !AudioTagReader.isSupported(path)) return
+        val tags = runCatching { AudioTagReader.read(path) }.getOrNull()?.takeIf { it.readable } ?: return
+        library.applyProviderMetadata(
+            profileId, trackId,
+            mapOf(
+                TrackField.TITLE to tags.title, TrackField.ARTIST to tags.artist, TrackField.ALBUM to tags.album, TrackField.ALBUM_ARTIST to tags.albumArtist,
+                TrackField.GENRE to tags.genre, TrackField.COMPOSER to tags.composer, TrackField.YEAR to tags.year?.toString(),
+                TrackField.TRACK_NO to tags.trackNo?.toString(), TrackField.TRACK_TOTAL to tags.trackTotal?.toString(),
+                TrackField.DISC_NO to tags.discNo?.toString(), TrackField.DISC_TOTAL to tags.discTotal?.toString(),
+            ),
+        )
+        library.setAudioDetails(profileId, trackId, tags.durationMs, tags.format.uppercase(), tags.codec, tags.bitrateKbps, tags.sampleRate, tags.channels, tags.bitDepth)
+        val locked = library.track(profileId, trackId)?.lockedFields.orEmpty()
+        if (TrackField.ARTWORK !in locked) {
+            tags.artwork?.let { cover ->
+                runCatching { library.artwork.store(profileId, cover.bytes, ArtworkStore.ORIGIN_EMBEDDED) }.getOrNull()?.let { library.setTrackArtwork(profileId, trackId, it, custom = false) }
+            }
+        }
     }
 
     // ---------------------------------------------------------------- playback and offline copies
@@ -671,8 +754,19 @@ class MusicSourceManager(
     /** Saves copies of remote songs so they play without the server. Returns how many were saved. */
     fun download(profileId: Long, trackIds: List<Long>): Int {
         var saved = 0
-        val tracks = library.tracksByIds(profileId, trackIds).filter { !it.isLocal && it.offlinePath == null }
-        _activity.update { it.copy(downloading = tracks.size, lastDownloadError = null) }
+        _activity.update { it.copy(lastDownloadError = null, downloadNote = null) }
+        val wanted = library.tracksByIds(profileId, trackIds).filter { !it.isLocal && it.offlinePath == null }
+        // Songs of a source whose files the application fetches are handed to it; the rest Music saves itself.
+        val handed = HashSet<Long>()
+        wanted.groupBy { it.sourceId }.forEach { (sourceId, group) ->
+            val source = connection(profileId, sourceId)?.takeIf { it.enabled } ?: return@forEach
+            val message = runCatching { adapter(source.adapter)?.saveThroughApplication(source, group.mapNotNull { it.remoteId }) }
+                .getOrElse { failure -> _activity.update { it.copy(lastDownloadError = failure.message) }; handed += group.map { it.id }; null } ?: return@forEach
+            handed += group.map { it.id }
+            _activity.update { it.copy(downloadNote = message) }
+        }
+        val tracks = wanted.filter { it.id !in handed }
+        _activity.update { it.copy(downloading = tracks.size) }
         try {
             for (track in tracks) {
                 _activity.update { it.copy(downloadTitle = track.title) }
@@ -847,7 +941,7 @@ class MusicSourceManager(
     private fun offlineFolder(profileId: Long, sourceId: Long): Path = offlineDirectory.resolve(profileId.toString()).resolve(sourceId.toString())
 
     private fun markAvailability(profileId: Long, sourceId: Long, available: Boolean) {
-        val ids = library.tracks(profileId, TrackFilter(sourceId = sourceId)).map { it.id }
+        val ids = library.tracks(profileId, TrackFilter(sourceId = sourceId, includeHidden = true)).map { it.id }
         library.setMissing(ids, !available)
         library.notifyChanged()
     }
@@ -924,6 +1018,9 @@ class MusicSourceManager(
     companion object {
         /** Direct stream addresses (internet radio). Not a server sign-in, so not one of [adapters]. */
         const val STREAM_ADAPTER = "stream-url"
+
+        /** The kinds of source Music itself knows; the application adds the cloud adapter when it has accounts to offer. */
+        fun builtInAdapters(): List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter(), EclipseAddonAdapter())
 
         private val PLAYLIST_TYPES = setOf(
             "audio/x-mpegurl", "audio/mpegurl", "application/x-mpegurl", "application/vnd.apple.mpegurl",

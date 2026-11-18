@@ -4,6 +4,7 @@ import com.debridone.cloud.CloudFileRow
 import com.debridone.cloud.CloudServices
 import com.debridone.cloud.Download
 import com.debridone.cloud.DownloadState
+import com.debridone.cloud.MediaClass
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,9 +23,10 @@ internal object CloudAutomation {
     private val readWhenDone = ConcurrentHashMap.newKeySet<Long>()
     private val seen = ConcurrentHashMap<Long, DownloadState>()
 
-    fun start(cloud: CloudServices) {
+    fun start(cloud: CloudServices, music: MusicCloudSource?) {
         // Each section is reached through its own narrow bridge; none of them sees the accounts.
         StreamingCloudBridge(cloud).install()
+        music?.install()
         MangaBridgeImpl(cloud).install()
         scope.launch {
             cloud.downloads.downloads.collect { downloads ->
@@ -43,8 +45,14 @@ internal object CloudAutomation {
             runCatching { manga.read(download.profileId, download) }.fold({ it?.let(CloudApp::say) }, { CloudApp.say("${download.fileName} was downloaded but could not be opened: ${it.message}") })
             return
         }
+        val music = CloudBridges.music
+        if (download.mediaClass == MediaClass.MUSIC && music != null) {
+            // Music is always told about the copy (its song then plays from the file); whether the song joins the library is the profile's setting.
+            runCatching { music.downloadFinished(download, cloud.downloads.settings.autoImport(download.profileId, MediaClass.MUSIC)) }.getOrNull()?.let(CloudApp::say)
+            return
+        }
         val importer = CloudBridges.importer(download.mediaClass, download.fileName) ?: return
-        if (!cloud.downloads.settings.autoImport(download.profileId, if (importer === manga) com.debridone.cloud.MediaClass.COMIC else download.mediaClass)) return
+        if (!cloud.downloads.settings.autoImport(download.profileId, if (importer === manga) MediaClass.COMIC else download.mediaClass)) return
         runCatching { importer.addToLibrary(download.profileId, download) }.onSuccess(CloudApp::say)
     }
 

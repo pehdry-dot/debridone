@@ -207,13 +207,14 @@ class SourceBoundaryTest {
 
     /**
      * Music has two ways to something that is not the user's own disk, and they do not mix: addons
-     * (a manifest address the user pastes) and the user's own Real-Debrid cloud. The addon code
-     * knows nothing of Real-Debrid, so installing an addon can never reach the cloud or its
-     * credentials; and the cloud code only reads: it contains none of Real-Debrid's methods that
-     * add, select or delete.
+     * (a manifest address the user pastes) and the audio of the accounts connected in Settings.
+     * The addon code knows nothing of the cloud, so installing an addon can never reach an account
+     * or its files. Music as a whole holds no sign-in for those accounts: it is handed names and
+     * one address at a time through the one interface it defines (`CloudAudioSource`), and the only code that
+     * implements that interface is the application's.
      */
     @Test
-    fun musicAddonsAndTheRealDebridCloudDoNotMix() {
+    fun musicAddonsNeverSeeTheCloud() {
         val sources = File(root, "debridone/modules/music/src/main/kotlin/com/debridone/music/sources")
         fun code(name: String): List<String> = File(sources, name).readLines()
             .map { it.trim() }
@@ -221,20 +222,32 @@ class SourceBoundaryTest {
             .map { it.substringBefore(" // ") }
 
         val addonFiles = listOf("EclipseAddonAdapter.kt", "AddonManifest.kt", "MusicPluginManifest.kt")
-        val cloudInAddons = addonFiles.flatMap { name -> code(name).filter { Regex("RealDebrid|real-debrid|realdebrid", RegexOption.IGNORE_CASE).containsMatchIn(it) }.map { "$name: $it" } }
-        assertTrue(cloudInAddons.isEmpty(), "addon code must not know Real-Debrid:\n" + cloudInAddons.joinToString("\n"))
+        val cloudWords = Regex("CloudAudioSource|CloudLibraryAdapter|RealDebrid|real-debrid|realdebrid|TorBox|torbox", RegexOption.IGNORE_CASE)
+        val cloudInAddons = addonFiles.flatMap { name -> code(name).filter(cloudWords::containsMatchIn).map { "$name: $it" } }
+        assertTrue(cloudInAddons.isEmpty(), "addon code must not know the cloud accounts:\n" + cloudInAddons.joinToString("\n"))
 
-        val cloud = code("RealDebridAdapter.kt")
-        val addonsInCloud = cloud.filter { Regex("EclipseAddon|AddonManifest|MusicPluginManifest|manifest\\.json").containsMatchIn(it) }
-        assertTrue(addonsInCloud.isEmpty(), "the Real-Debrid adapter must not know addons:\n" + addonsInCloud.joinToString("\n"))
-        val changing = cloud.filter { Regex("addMagnet|addTorrent|selectFiles|/delete|instantAvailability|/hosts|/settings|/streaming|\"DELETE\"|\"PUT\"").containsMatchIn(it) }
-        assertTrue(changing.isEmpty(), "the Real-Debrid adapter only reads the cloud:\n" + changing.joinToString("\n"))
+        val cloudFiles = listOf("CloudAudioSource.kt", "CloudLibraryAdapter.kt")
+        val addonsInCloud = cloudFiles.flatMap { name -> code(name).filter { Regex("EclipseAddon|AddonManifest|MusicPluginManifest|manifest\\.json").containsMatchIn(it) }.map { "$name: $it" } }
+        assertTrue(addonsInCloud.isEmpty(), "Music's cloud source must not know addons:\n" + addonsInCloud.joinToString("\n"))
 
-        // The only screens that may sign in to it are Music's own.
-        val elsewhere = (kotlinFiles(File(root, "composeApp/src/debridoneMain")) + kotlinFiles(File(root, "debridone")))
-            .filter { "/build/" !in it.invariantSeparatorsPath && "/modules/music/" !in it.invariantSeparatorsPath && "/app/music/" !in it.invariantSeparatorsPath && "/architecture-tests/" !in it.invariantSeparatorsPath }
-            .filter { file -> imports(file).any { it.startsWith("com.debridone.music.sources.RealDebrid") } }
-        assertTrue(elsewhere.isEmpty(), "only Music may use its Real-Debrid integration: ${elsewhere.map { it.name }}")
+        // What Music can ask of the cloud is this and nothing more: none of it is a credential or a way to change an account.
+        val asked = Regex("""^\s*(?:fun|val)\s+(\w+)""", RegexOption.MULTILINE)
+            .findAll(File(sources, "CloudAudioSource.kt").readText().substringAfter("interface CloudAudioSource")).map { it.groupValues[1] }.toSet()
+        assertEquals(setOf("revision", "accounts", "audioFiles", "address", "download"), asked, "what Music may ask of the connected accounts")
+
+        // Music's own Real-Debrid sign-in is gone: no provider API, token or device code anywhere in the engine or its screens.
+        val provider = Regex("api\\.real-debrid\\.com|api\\.torbox\\.app|/oauth/v2|device/code|unrestrict/link|requestdl")
+        val leftovers = (kotlinFiles(File(root, "debridone/modules/music/src/main")) + kotlinFiles(File(root, "composeApp/src/debridoneMain/kotlin/com/debridone/app/music")))
+            .flatMap { file -> file.readLines().filter(provider::containsMatchIn).map { "${file.name}: ${it.trim()}" } }
+        assertTrue(leftovers.isEmpty(), "Music must not talk to a debrid provider itself:\n" + leftovers.joinToString("\n"))
+
+        // The interface is implemented by the application's cloud bridge and by nothing else.
+        val implements = Regex("""(?:class|object)\s+\w+(?:\([^)]*\))?\s*:[^{]*\bCloudAudioSource\b""")
+        val implementers = (kotlinFiles(File(root, "composeApp/src/debridoneMain")) + kotlinFiles(File(root, "debridone")))
+            .filter { "/build/" !in it.invariantSeparatorsPath && "/src/test/" !in it.invariantSeparatorsPath && "/architecture-tests/" !in it.invariantSeparatorsPath }
+            .filter { implements.containsMatchIn(it.readText()) }
+            .map { it.invariantSeparatorsPath.substringAfter(root.invariantSeparatorsPath + "/") }
+        assertEquals(listOf("composeApp/src/debridoneMain/kotlin/com/debridone/app/cloud/MusicCloudSource.kt"), implementers, "who may give Music cloud audio")
     }
 
     /**

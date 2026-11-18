@@ -57,11 +57,20 @@ unheard. A song a source will not stream is listed as unavailable and is not pla
 - Audius, an open catalogue of independent artists (no account),
 - Navidrome and other Subsonic / OpenSubsonic servers,
 - Jellyfin servers,
-- the audio files already in your own Real-Debrid cloud (read-only; see
-  [MUSIC_REAL_DEBRID.md](MUSIC_REAL_DEBRID.md)),
 - internet radio and other direct stream addresses,
 - plugins: a manifest that names one of these adapters, or a server that speaks the Music Catalog
   protocol. See [MUSIC_PLUGINS.md](MUSIC_PLUGINS.md).
+
+**Cloud Music** (Library › Cloud Music). The audio files in the Real-Debrid and TorBox accounts
+connected in Settings › Connected Accounts are listed here as songs, albums and artists. They are
+listed, not in the library: "Add to library" keeps a song, "Remove from library" only un-keeps it.
+A cloud song plays from the cloud with an address asked when it starts; "Download for offline"
+saves it through DebridOne's one download manager (Downloads shows it, with its folder), after
+which it plays from the file and its own tags and cover replace what its file name suggested. A
+song you added **and** saved stays in your library, as that file, even if its cloud entry is
+deleted or the account is disconnected; one you only added goes with them, since there is nothing
+left to play it from. Music holds no sign-in for these accounts and is told only which audio files
+exist; addons and plugins are never shown them. See [CLOUD.md](CLOUD.md).
 
 A source is a connection DebridOne makes itself. It is saved only if the sign-in works; a
 stream address is added only if it really answers with audio. A personal server's library joins

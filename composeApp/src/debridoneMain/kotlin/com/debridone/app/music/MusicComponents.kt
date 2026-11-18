@@ -376,7 +376,7 @@ internal fun ArtistCard(artist: Artist, onClick: () -> Unit, modifier: Modifier 
 
 /** Square artwork with a title and a subtitle; a play button appears on hover. */
 @Composable
-private fun MediaCard(
+internal fun MediaCard(
     title: String,
     subtitle: String,
     onClick: () -> Unit,

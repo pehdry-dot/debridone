@@ -8,6 +8,7 @@ import com.debridone.module.ModuleId
 import com.debridone.module.storage.ModuleStorage
 import com.debridone.module.storage.SqliteBackedModule
 import com.debridone.music.MusicModule
+import com.debridone.music.sources.CloudAudioSource
 import com.debridone.platform.AppPaths
 import com.debridone.platform.secrets.SecretStore
 import kotlinx.coroutines.CoroutineScope
@@ -27,8 +28,9 @@ import kotlinx.coroutines.launch
  * another: each is constructed with its own [ModuleStorage] and started in its own coroutine, so a
  * module that fails to start is reported as failed while the others keep working.
  */
-class ModuleHost(paths: AppPaths, secrets: SecretStore) {
-    val music: MusicModule = MusicModule(ModuleStorage(ModuleId.MUSIC, paths, secrets), engineFactory = MusicAudio::createEngine)
+class ModuleHost(paths: AppPaths, secrets: SecretStore, cloudAudio: CloudAudioSource? = null) {
+    /** [cloudAudio] is Music's own narrow view of the connected accounts' audio files; Music is given nothing else of them. */
+    val music: MusicModule = MusicModule(ModuleStorage(ModuleId.MUSIC, paths, secrets), engineFactory = MusicAudio::createEngine, cloudAudio = cloudAudio)
     val manga: MangaModule = MangaModule(ModuleStorage(ModuleId.MANGA, paths, secrets))
 
     private val engines: List<SqliteBackedModule> = listOf(music, manga)

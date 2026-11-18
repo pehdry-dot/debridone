@@ -145,6 +145,8 @@ data class TrackFilter(
     val artistId: Long? = null,
     val albumId: Long? = null,
     val sourceId: Long? = null,
+    /** Only songs of these source connections. An empty list matches nothing. */
+    val sourceIds: Collection<Long>? = null,
     val missingOnly: Boolean = false,
     val offlineOnly: Boolean = false,
     val format: String? = null,

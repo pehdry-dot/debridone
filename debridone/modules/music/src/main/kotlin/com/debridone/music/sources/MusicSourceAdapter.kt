@@ -126,6 +126,18 @@ interface MusicSourceAdapter {
     val resolvesAtPlayTime: Boolean get() = addressIsSecret
 
     /**
+     * True when the songs of this source are listed outside the library until the user adds them
+     * (a cloud account can hold thousands of files; the library is the user's own selection).
+     */
+    val listsOutsideLibrary: Boolean get() = false
+
+    /**
+     * For sources whose files are fetched by the application rather than by Music: asks for these
+     * songs to be saved and returns what to tell the user; null when Music saves them itself.
+     */
+    fun saveThroughApplication(connection: SourceConnection, remoteIds: List<String>): String? = null
+
+    /**
      * For sign-ins that expire (an access token with a refresh token): the secret to store in place
      * of [secret] when it had to be renewed, else null. Called before the secret is used.
      */

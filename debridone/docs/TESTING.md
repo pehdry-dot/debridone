@@ -170,24 +170,52 @@ python3 scripts/debridone/sample-music-addon.py --token my-private-token
 7. Another profile: Plugins › Music › Addons is empty there.
 8. Paste a Streaming add-on's manifest address: refused, with the reason.
 
-## Music: Real-Debrid cloud
+## Connected accounts, Downloads and cloud files
 
-Automated: `./gradlew :debridone:modules:music:test --tests "*MusicRealDebridTest"` (9 tests against
-a local server that answers as Real-Debrid's API documentation describes; the real service is not
-contacted). `SourceBoundaryTest.musicAddonsAndTheRealDebridCloudDoNotMix` checks that addon code
-knows nothing of Real-Debrid and that the adapter contains no method that adds, selects or deletes.
+Automated, all against local stand-in servers that answer in the providers' documented formats
+(`debridone/cloud/src/testFixtures`); no provider is contacted:
 
-By hand, with your own account (this has **not** been done yet by anyone):
+- `./gradlew :debridone:cloud:test`: sign-in with a code and with a token / key, renewal, a
+  withdrawn sign-in, profiles and sharing, the listings of both providers (paging, Real-Debrid's
+  100-per-page limit, duplicates, packed torrents, a failed listing), the classifier, download
+  addresses made on demand and again after they expire, deletion (stand-in only), and the download
+  manager (resume, retry with a new address, pause / cancel, name conflicts, disk space, checksum,
+  unsafe names, restart).
+- `./gradlew :debridone:modules:music:test --tests "*MusicCloudTest"`: Cloud Music with an
+  in-memory cloud (listed outside the library until added, profiles, playback through libmpv with
+  an address asked when the song starts, saving through the application, tags from the saved
+  file, a saved song outliving its cloud entry and its account).
+- `./gradlew :debridone:modules:manga:test`: includes a `.cbr` that is really a ZIP.
+- `SourceBoundaryTest`: `theCloudLayerOnlyReadsExceptForTheConfirmedDeletion`,
+  `musicAddonsNeverSeeTheCloud`, and the import rules that keep the cloud layer out of the
+  sections' engines and screens.
 
-1. Plugins › Music › Catalogue › Real-Debrid › *Sign in*. A code appears; *Open
-   real-debrid.com/device*, sign in there, type the code, allow. The dialog closes by itself.
-2. Under *Connected for this profile*: Real-Debrid, your user name, a number of songs.
-3. Music › Library: the audio files of your finished torrents and generated links are there. Play
-   one; choose "Download for offline" on another, disconnect the network, play it.
-4. On Real-Debrid's website nothing has changed: no torrent added, selected or deleted.
-5. Another profile: no Real-Debrid connection and none of its songs.
-6. Withdraw DebridOne's access on Real-Debrid's website, then *Check the sign-in*: DebridOne says
-   the sign-in is no longer accepted.
+Against your real accounts (optional, read-only, prints counts and types, never names):
+`DEBRIDONE_LIVE_CLOUD=1 ./gradlew :debridone:cloud:test --tests "*CloudLiveAccountsTest"` with
+`DEBRIDONE_LIVE_RD_TOKEN` and `DEBRIDONE_LIVE_TORBOX_KEY` set. It reads the account,
+the lists and one download address; it reuses an existing Real-Debrid link unless
+`DEBRIDONE_LIVE_CLOUD_UNRESTRICT=1` (which adds one "generated link" record to the account).
 
-For development, `DEBRIDONE_REAL_DEBRID_API=http://127.0.0.1:<port>` points the app at a local
-test server (loopback addresses only; the dialog shows a red notice).
+By hand:
+
+1. Settings › Connected Accounts › Real-Debrid › *Connect*: a code appears; open
+   real-debrid.com/device, type it, allow. The card shows your user name, plan and expiry.
+   TorBox › *Connect*: paste your API key.
+2. Downloads: *All*, *Real-Debrid*, *TorBox*, *Local*; the shelves; search; sort; grid and list;
+   open an entry with several files.
+3. Play a video (it opens in the Streaming player; leave it and find it under Continue Watching),
+   an audio file (Music's mini-player shows it), and "Download and read" a CBZ.
+4. Download a file; pause and resume it; quit while one is running and reopen: it continues.
+   *Local* shows the file and its folder; *Reveal in Finder* opens that folder.
+5. Music › Library › Cloud Music: songs, albums, artists; add one to the library; "Download for
+   offline"; it appears under *Available offline* with its own cover.
+6. A second profile: an account marked *This profile only* and its files are not there; one
+   marked *All profiles* is.
+7. On the providers' websites nothing has changed, except the "generated link" records
+   Real-Debrid keeps for files you played or downloaded.
+8. "Delete from …" on an entry you no longer want: a confirmation naming the provider; after it,
+   the entry is gone from the provider's website too. Local copies are still on the computer.
+
+For development, `DEBRIDONE_REAL_DEBRID_API=http://127.0.0.1:<port>` and
+`DEBRIDONE_TORBOX_API=http://127.0.0.1:<port>` point the app at local test servers (loopback
+addresses only; the cards show a red notice). See `CLOUD.md`.

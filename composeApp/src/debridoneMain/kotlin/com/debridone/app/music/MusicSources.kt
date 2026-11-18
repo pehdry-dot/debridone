@@ -22,7 +22,7 @@ import com.debridone.music.sources.AudiusAdapter
 import com.debridone.music.sources.EclipseAddonAdapter
 import com.debridone.music.sources.HttpCatalogAdapter
 import com.debridone.music.sources.IntegrationKind
-import com.debridone.music.sources.RealDebridAdapter
+import com.debridone.music.sources.CloudLibraryAdapter
 import com.debridone.music.sources.JellyfinAdapter
 import com.debridone.music.sources.MusicPluginManifest
 import com.debridone.music.sources.SubsonicAdapter
@@ -116,7 +116,6 @@ private fun MusicSourcesContent() {
     }
     var adding by remember { mutableStateOf<MusicSourceAdapter?>(null) }
     var connectingPlugin by remember { mutableStateOf<MusicPluginManifest?>(null) }
-    var signingInToRealDebrid by remember { mutableStateOf(false) }
     var removingPlugin by remember { mutableStateOf<MusicPluginManifest?>(null) }
     var importText by remember { mutableStateOf("") }
     var importing by remember { mutableStateOf(false) }
@@ -169,7 +168,8 @@ private fun MusicSourcesContent() {
     var addingStream by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<SourceConnection?>(null) }
     val addons = data.connections.filter { it.adapter == EclipseAddonAdapter.ID }
-    val servers = data.connections.filter { it.adapter != MusicSourceManager.STREAM_ADAPTER && it.adapter != EclipseAddonAdapter.ID }
+    // Cloud accounts are listed with their own card: they come and go with Settings › Connected Accounts, not from here.
+    val servers = data.connections.filter { it.adapter != MusicSourceManager.STREAM_ADAPTER && it.adapter != EclipseAddonAdapter.ID && it.adapter != CloudLibraryAdapter.ID }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -262,18 +262,24 @@ private fun MusicSourcesContent() {
                     "The music libraries of your own Jellyfin server: albums, artists, songs, playlists, search, covers, playback.",
                     status = data.connections.count { it.adapter == JellyfinAdapter.ID }.takeIf { it > 0 }?.let { plural(it, "connection") to PillTone.SUCCESS },
                 ) { MusicButton("Connect", { adding = adapter(JellyfinAdapter.ID) }, primary = false) }
-                val clouds = data.connections.filter { it.adapter == RealDebridAdapter.ID }
-                IntegrationCard(
-                    Icons.Rounded.Cloud, "Real-Debrid", IntegrationKind.PERSONAL_CLOUD,
-                    "The audio files already in your own Real-Debrid cloud: play them and save them. Read-only, signed in on Real-Debrid's own page, and separate from addons.",
-                    status = when {
-                        clouds.isEmpty() -> null
-                        clouds.any { it.lastTestOk == false } -> "Needs attention" to PillTone.DANGER
-                        else -> plural(clouds.size, "account") to PillTone.SUCCESS
-                    },
-                    note = clouds.firstOrNull { it.lastTestOk == false }?.lastError,
-                    noteIsError = true,
-                ) { MusicButton(if (clouds.isEmpty()) "Sign in" else "Add an account", { signingInToRealDebrid = true }, primary = false) }
+                // Cloud accounts belong to the application (Settings › Connected Accounts): Music lists their audio and holds no sign-in.
+                if (sources.adapter(CloudLibraryAdapter.ID) != null) {
+                    val clouds = data.connections.filter { it.adapter == CloudLibraryAdapter.ID }
+                    IntegrationCard(
+                        Icons.Rounded.Cloud, "Cloud Music", IntegrationKind.PERSONAL_CLOUD,
+                        "The audio files already in your connected Real-Debrid and TorBox accounts, under Library › Cloud Music. Accounts are connected in Settings › Connected Accounts, not here: " +
+                            "Music holds no sign-in for them, and addons never see them.",
+                        status = if (clouds.isEmpty()) null else plural(clouds.size, "account") to PillTone.SUCCESS,
+                    ) {
+                        MusicCloudBridge.openConnectedAccounts?.let { open -> MusicButton("Connected Accounts", open, primary = false) }
+                        if (clouds.isNotEmpty()) {
+                            MusicButton("Open Cloud Music", {
+                                ShellState.select(ShellSection.MUSIC)
+                                MusicNav.root(MusicRoute.Library(LibraryTab.CLOUD))
+                            }, primary = false)
+                        }
+                    }
+                }
                 providers.filter { it.id != "embedded-tags" }.forEach { provider ->
                     val state = health[provider.id]
                     IntegrationCard(
@@ -391,7 +397,6 @@ private fun MusicSourcesContent() {
     }
 
     adding?.let { adapter -> AddServerDialog(adapter, onDismiss = { adding = null }) }
-    if (signingInToRealDebrid) RealDebridSignInDialog(onDismiss = { signingInToRealDebrid = false })
     connectingPlugin?.let { manifest -> AddServerDialog(adapter(manifest.adapter), plugin = manifest, onDismiss = { connectingPlugin = null }) }
     removingPlugin?.let { manifest ->
         ConfirmDialog(

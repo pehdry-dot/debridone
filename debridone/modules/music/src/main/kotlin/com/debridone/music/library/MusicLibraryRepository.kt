@@ -353,13 +353,93 @@ class MusicLibraryRepository(
     }
 
     /**
+     * The opposite of [keepTracks], for songs whose source lists them outside the library (a cloud
+     * account): they leave the library, its albums, the favourites and the playlists, and stay
+     * listed where their source shows them. Nothing is deleted anywhere else.
+     */
+    fun unkeepTracks(profileId: Long, trackIds: Collection<Long>): Int {
+        if (trackIds.isEmpty()) return 0
+        var hidden = 0
+        database.transaction {
+            trackIds.distinct().forEach { id ->
+                val changed = execute(
+                    "UPDATE music_tracks SET hidden = 1, favorite_at = NULL, updated_at = ? WHERE profile_id = ? AND id = ? AND hidden = 0 AND source_id <> 0",
+                    clock(), profileId, id,
+                )
+                if (changed > 0) {
+                    execute("DELETE FROM music_playlist_items WHERE track_id = ?", id)
+                    link(profileId, id)
+                    hidden += 1
+                }
+            }
+            if (hidden > 0) prune(profileId)
+        }
+        if (hidden > 0) {
+            artwork.deleteUnreferenced(profileId)
+            changed()
+        }
+        return hidden
+    }
+
+    /**
+     * Songs of a source that is going away (a cloud entry was deleted, an account disconnected),
+     * for those the listener added to the library **and** saved to this computer: each becomes the
+     * file it was saved as, keeping its place in playlists, its favourite mark and its history.
+     * Returns the ids that were kept this way; the rest are the caller's to remove.
+     */
+    fun adoptSavedCopies(profileId: Long, trackIds: Collection<Long>): Set<Long> {
+        if (trackIds.isEmpty()) return emptySet()
+        val adopted = HashSet<Long>()
+        database.transaction {
+            trackIds.distinct().forEach { id ->
+                val saved = queryOne(
+                    "SELECT offline_path FROM music_tracks WHERE profile_id = ? AND id = ? AND source_id <> 0 AND hidden = 0 AND offline_path IS NOT NULL", profileId, id,
+                ) { it.getString(1) } ?: return@forEach
+                val file = java.nio.file.Paths.get(saved)
+                if (!java.nio.file.Files.isRegularFile(file)) return@forEach
+                // The same file may already be in the library as a file of a folder the listener added.
+                if (queryOne("SELECT 1 FROM music_tracks WHERE profile_id = ? AND source_id = 0 AND path = ?", profileId, saved) { true } == true) return@forEach
+                execute(
+                    """
+                    UPDATE music_tracks SET source_id = 0, remote_id = NULL, folder_id = NULL, path = ?, offline_path = NULL, missing = 0,
+                        file_size = ?, file_mtime = 0, fingerprint = NULL, updated_at = ?
+                    WHERE id = ?
+                    """.trimIndent(),
+                    saved, runCatching { java.nio.file.Files.size(file) }.getOrDefault(0L), clock(), id,
+                )
+                adopted += id
+            }
+        }
+        if (adopted.isNotEmpty()) changed()
+        return adopted
+    }
+
+    /** The song that is the file at [path] on this computer, when the library has it. */
+    fun localTrack(profileId: Long, path: String): Track? =
+        database.queryOne("$TRACK_SELECT WHERE t.profile_id = ? AND t.source_id = 0 AND t.path = ?", profileId, path, map = ::mapTrack)
+
+    /** What the file itself says about its sound, for a song whose source could not know. */
+    fun setAudioDetails(profileId: Long, trackId: Long, durationMs: Long, format: String?, codec: String?, bitrateKbps: Int?, sampleRate: Int?, channels: Int?, bitDepth: Int?) {
+        database.execute(
+            """
+            UPDATE music_tracks SET duration_ms = CASE WHEN ? > 0 THEN ? ELSE duration_ms END, format = COALESCE(?, format), codec = COALESCE(?, codec),
+                bitrate_kbps = COALESCE(?, bitrate_kbps), sample_rate = COALESCE(?, sample_rate), channels = COALESCE(?, channels), bit_depth = COALESCE(?, bit_depth)
+            WHERE profile_id = ? AND id = ?
+            """.trimIndent(),
+            durationMs, durationMs, format, codec, bitrateKbps, sampleRate, channels, bitDepth, profileId, trackId,
+        )
+    }
+
+    /**
      * Forgets catalogue songs that were never added to the library, are in no playlist, and were
      * last played (or first seen) before [before]. Returns how many were removed.
      */
-    fun purgeHidden(profileId: Long, before: Long): Int {
+    fun purgeHidden(profileId: Long, before: Long, exceptSourceIds: Collection<Long> = emptyList()): Int {
+        // Songs of a source that lists outside the library on purpose (a cloud account) are that source's listing, not leftovers.
+        val kept = if (exceptSourceIds.isEmpty()) "" else " AND t.source_id NOT IN (${exceptSourceIds.joinToString(",")})"
         val ids = database.query(
             """
-            SELECT id FROM music_tracks t WHERE t.profile_id = ? AND t.hidden = 1 AND COALESCE(t.last_played_at, t.added_at) < ?
+            SELECT id FROM music_tracks t WHERE t.profile_id = ? AND t.hidden = 1 AND COALESCE(t.last_played_at, t.added_at) < ?$kept
               AND NOT EXISTS (SELECT 1 FROM music_playlist_items i WHERE i.track_id = t.id)
             """.trimIndent(),
             profileId, before,
@@ -874,6 +954,9 @@ class MusicLibraryRepository(
             where.append(" AND t.source_id = ?")
             args += it
         }
+        filter.sourceIds?.let { ids ->
+            where.append(if (ids.isEmpty()) " AND 0" else " AND t.source_id IN (${ids.joinToString(",")})")
+        }
         if (filter.missingOnly) where.append(" AND t.missing = 1")
         if (filter.offlineOnly) where.append(" AND (t.source_id = 0 OR t.offline_path IS NOT NULL) AND t.missing = 0")
         filter.format?.let {
@@ -889,8 +972,9 @@ class MusicLibraryRepository(
         val albumOrder = "COALESCE(t.disc_no, 1), COALESCE(t.track_no, 9999), t.title_key"
         return when (sort) {
             TrackSort.TITLE -> "t.title_key $direction, t.id"
-            TrackSort.ARTIST -> "COALESCE(ar.sort_key, '~') $direction, COALESCE(al.title_key, '~'), $albumOrder"
-            TrackSort.ALBUM -> "COALESCE(al.title_key, '~') $direction, $albumOrder"
+            // A song that is only listed (not in the library) has no album or artist of its own: its text is used.
+            TrackSort.ARTIST -> "COALESCE(ar.sort_key, LOWER(t.artist), '~') $direction, COALESCE(al.title_key, LOWER(t.album), '~'), $albumOrder"
+            TrackSort.ALBUM -> "COALESCE(al.title_key, LOWER(t.album), '~') $direction, $albumOrder"
             TrackSort.RECENTLY_ADDED -> "t.added_at $reverse, COALESCE(al.title_key, '~'), $albumOrder"
             TrackSort.YEAR -> "COALESCE(t.year, 0) $reverse, COALESCE(al.title_key, '~'), $albumOrder"
             TrackSort.DURATION -> "t.duration_ms $reverse, t.title_key"

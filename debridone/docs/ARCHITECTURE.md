@@ -66,6 +66,21 @@ The modules share the window, the account and low-level utilities. They share no
 
 The shell's Home screen is a launch dashboard. It has no cross-module search and lists no content.
 
+### Connected accounts are the application's, not a module's
+
+The Real-Debrid and TorBox accounts (`:debridone:cloud`, see `CLOUD.md`) sit beside the modules
+as shared infrastructure, like accounts and profiles: one sign-in per provider, one cached file
+listing, one download manager. They do not make the modules share anything:
+
+- No module's engine may import `com.debridone.cloud`, and no module's screens may import it or
+  the app's cloud pages (`com.debridone.app.cloud`). `SourceBoundaryTest` enforces both.
+- Each module is reached through one narrow bridge that lives with the cloud pages and hands over
+  only that module's kind of file: a playback request for one video (`AppShellHost`), the
+  `CloudAudioSource` interface that Music itself defines (account names, audio file names, one
+  address when a song starts, "save these"), a downloaded archive for Manga's own importer.
+- No sign-in, key or file list reaches a plugin, an addon or an extension of any module, and the
+  Downloads section is a file browser: it has no covers, no metadata and no library of its own.
+
 ## Storage
 
 macOS locations (`AppPaths`):

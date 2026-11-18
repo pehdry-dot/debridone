@@ -115,11 +115,12 @@ class MusicTestEnvironment : AutoCloseable {
     fun open(
         profileId: Long? = PROFILE_A,
         metadataEndpoints: com.debridone.music.metadata.MetadataEndpoints = com.debridone.music.metadata.MetadataEndpoints(),
+        cloudAudio: com.debridone.music.sources.CloudAudioSource? = null,
         engineFactory: () -> com.debridone.music.playback.MusicPlaybackEngine = { com.debridone.music.playback.FakePlaybackEngine() },
     ): MusicServices {
         module?.close()
         val storage = com.debridone.module.storage.ModuleStorage(com.debridone.module.ModuleId.MUSIC, paths, secrets)
-        val opened = MusicModule(storage, engineFactory = engineFactory, metadataEndpoints = metadataEndpoints)
+        val opened = MusicModule(storage, engineFactory = engineFactory, metadataEndpoints = metadataEndpoints, cloudAudio = cloudAudio)
         module = opened
         kotlinx.coroutines.runBlocking {
             opened.start()
@@ -145,6 +146,16 @@ class MusicTestEnvironment : AutoCloseable {
     /** Reads a secret Music stored for [profileId], straight from the secret store. */
     fun storedSecret(profileId: Long, name: String): String? =
         com.debridone.platform.secrets.ScopedSecretStore(secrets, "module.music.profile.$profileId").get(name)
+
+    /** Puts a secret where Music keeps its own for [profileId], as an earlier version of it would have. */
+    fun storeSecret(profileId: Long, name: String, value: String) =
+        com.debridone.platform.secrets.ScopedSecretStore(secrets, "module.music.profile.$profileId").put(name, value)
+
+    /** Runs [sql] on Music's database file directly, to leave behind what an earlier version would have. */
+    fun rawSql(sql: String) {
+        val file = Files.walk(root.resolve("data")).use { files -> files.filter { it.fileName.toString() == "music.db" }.findFirst().get() }
+        java.sql.DriverManager.getConnection("jdbc:sqlite:$file").use { connection -> connection.createStatement().use { it.executeUpdate(sql) } }
+    }
 
     /** Every byte Music wrote under its data folder, to prove a password is not among them. */
     fun dataFolderContains(text: String): Boolean {

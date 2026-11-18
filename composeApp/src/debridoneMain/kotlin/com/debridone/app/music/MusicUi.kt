@@ -91,6 +91,9 @@ internal enum class LibraryTab(val key: String, val label: String) {
     PLAYLISTS("playlists", "Playlists"),
     FAVOURITES("favourites", "Favourites"),
     OFFLINE("offline", "Available offline"),
+
+    /** The audio of the accounts connected in Settings: listed, not in the library until added. */
+    CLOUD("cloud", "Cloud Music"),
     ;
 
     companion object {
@@ -237,8 +240,14 @@ internal class MusicActions(private val services: MusicServices, private val pro
         if (open) MusicNav.open(MusicRoute.PlaylistPage(playlist.id)) else MusicNav.message = "Created ${playlist.name}"
     }
 
+    /** Adds songs that are only listed (a catalogue's, a cloud account's) to the library. */
+    fun keep(tracks: List<Track>) = io {
+        val kept = services.library.keepTracks(profileId, tracks.map { it.id })
+        MusicNav.message = if (kept == 0) "Already in your library." else "Added ${plural(kept, "song")} to your library."
+    }
+
     fun removeTracks(trackIds: List<Long>) = io {
-        services.library.removeTracks(profileId, trackIds)
+        services.sources.removeFromLibrary(profileId, trackIds)
         services.player.removeDeletedFromQueue()
         MusicNav.message = "${plural(trackIds.size, "song")} removed from the library"
     }
@@ -246,8 +255,14 @@ internal class MusicActions(private val services: MusicServices, private val pro
     fun download(tracks: List<Track>) {
         MusicNav.message = if (tracks.size == 1) "Downloading ${tracks[0].title}…" else "Downloading ${tracks.size} songs…"
         com.debridone.app.DebridOneRuntime.modules.music.download(tracks.map { it.id }) { saved ->
-            val error = services.sources.activity.value.lastDownloadError
-            MusicNav.message = if (saved == tracks.size) "${plural(saved, "song")} saved for offline listening" else "Saved $saved of ${tracks.size}. ${error.orEmpty()}"
+            val activity = services.sources.activity.value
+            val error = activity.lastDownloadError
+            MusicNav.message = when {
+                // Songs of a cloud account are fetched by the application's download manager, which says what it did.
+                activity.downloadNote != null -> listOfNotNull(activity.downloadNote, if (saved > 0) "${plural(saved, "song")} saved for offline listening." else null, error).joinToString(" ")
+                saved == tracks.size -> "${plural(saved, "song")} saved for offline listening"
+                else -> "Saved $saved of ${tracks.size}. ${error.orEmpty()}"
+            }
         }
     }
 
@@ -255,7 +270,7 @@ internal class MusicActions(private val services: MusicServices, private val pro
 
     /** Opens the folder that holds [track] in the system file manager. */
     fun revealInFileManager(track: Track) = io {
-        val path = track.path ?: return@io
+        val path = track.path ?: track.offlinePath ?: return@io
         val file = java.io.File(path)
         val os = System.getProperty("os.name").orEmpty().lowercase()
         when {

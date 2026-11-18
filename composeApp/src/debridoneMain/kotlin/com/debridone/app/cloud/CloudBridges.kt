@@ -60,6 +60,16 @@ internal interface MusicBridge : LibraryImporter {
 
     /** Adds cloud songs to the Music library without downloading them. */
     suspend fun addCloudFilesToLibrary(profileId: Long, files: List<CloudFileRow>): String
+
+    /**
+     * An audio file finished downloading. Music plays its song from the file from now on; with
+     * [addToLibrary] (or when the download was asked for from inside Music) the song joins the
+     * library. Returns a sentence for the user when something was added.
+     */
+    suspend fun downloadFinished(download: Download, addToLibrary: Boolean): String?
+
+    /** The local copy of an audio file was deleted: its song plays from the cloud again. */
+    suspend fun localCopyDeleted(profileId: Long, download: Download)
 }
 
 internal interface MangaBridge : LibraryImporter {

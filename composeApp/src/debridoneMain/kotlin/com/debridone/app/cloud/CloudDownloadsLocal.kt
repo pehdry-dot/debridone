@@ -448,6 +448,7 @@ internal fun DownloadsDialogs(cloud: CloudServices, profileId: Long?) {
                 CloudApp.background {
                     if (profileId != null && download.importedInto != null) runCatching { CloudBridges.importer(download.mediaClass, download.fileName)?.removeFromLibrary(profileId, download) }
                     cloud.downloads.deleteLocalCopy(download.id)
+                    if (profileId != null && download.mediaClass == MediaClass.MUSIC) runCatching { CloudBridges.music?.localCopyDeleted(profileId, download) }
                     CloudApp.say("The local copy of ${download.fileName} was deleted. Your cloud was not touched.")
                 }
             }

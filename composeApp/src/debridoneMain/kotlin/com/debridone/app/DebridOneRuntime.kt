@@ -4,6 +4,7 @@ import co.touchlab.kermit.Logger
 import com.debridone.accounts.AccountsDatabase
 import com.debridone.cloud.CloudServices
 import com.debridone.app.cloud.CloudAutomation
+import com.debridone.app.cloud.MusicCloudSource
 import com.debridone.accounts.SettingsScope
 import com.debridone.app.accounts.AvatarImages
 import com.debridone.app.accounts.DesktopLocalAccountBackend
@@ -107,16 +108,19 @@ object DebridOneRuntime {
             LocalAccounts.backend = DesktopLocalAccountBackend(database, ::eraseProfileData)
             LocalAvatarImporter.pickImage = { AvatarImages.pickAndImport(paths) }
 
-            val host = ModuleHost(paths, secrets)
-            moduleHost = host
-            host.start()
             // The connected accounts are the application's own: opened beside the sections, never inside one.
             try {
-                cloudServices = CloudServices.open(paths, secrets).also(CloudAutomation::start)
+                cloudServices = CloudServices.open(paths, secrets)
             } catch (t: Throwable) {
                 log.e(t) { "The cloud layer could not be opened" }
                 cloudError = t.message ?: t::class.simpleName
             }
+            // Music is built with its one narrow view of them (audio files, by name); the other sections are reached file by file.
+            val cloudMusic = cloudServices?.let(::MusicCloudSource)
+            val host = ModuleHost(paths, secrets, cloudMusic)
+            moduleHost = host
+            host.start()
+            cloudServices?.let { CloudAutomation.start(it, cloudMusic) }
             // Quitting the app saves each section's state (Music: queue and position), stops playback
             // and leaves unfinished downloads to continue at the next start.
             Runtime.getRuntime().addShutdownHook(Thread({ runCatching { host.close() }; runCatching { cloudServices?.close() } }, "debridone-shutdown"))
