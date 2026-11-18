@@ -218,6 +218,36 @@ By hand:
 8. "Delete from …" on an entry you no longer want: a confirmation naming the provider; after it,
    the entry is gone from the provider's website too. Local copies are still on the computer.
 
+### The acceptance list, and how each point was checked
+
+"Stand-ins" means the running app (from source, on Linux, virtual display) against the local
+stand-in servers; "real" means the owner's own accounts, read-only.
+
+| # | Point | Checked |
+|---|---|---|
+| 1 | Connect a Real-Debrid account | Stand-ins: with a code, and "Sign in again". Real: the service issued a code (not completed: it needs the owner's browser); connected with an API token |
+| 2 | Connect a TorBox account at the same time | Stand-ins and real (API key) |
+| 3 | Account information | Stand-ins: shown as served. Real: user, plan and expiry were read; not compared with the websites |
+| 4 | Browse the files of each account | Stand-ins: both. Real: Real-Debrid (17 torrents, 221 files); TorBox's lists were empty |
+| 5 | Transfers and download records | Stand-ins: torrents, usenet, web downloads, generated links. Real: Real-Debrid torrents and generated links |
+| 6 | Filter by provider | Stand-ins (tabs, and TorBox's kinds) |
+| 7 | Search by name | Stand-ins, and a unit test |
+| 8 | Download a sample audio file | Stand-ins. Not real |
+| 9 | Play it in the Music player | Stand-ins, through libmpv with silent output (nobody heard it) |
+| 10 | Import a sample comic archive | Stand-ins (CBZ) |
+| 11 | Read it in the Manga reader | Stand-ins |
+| 12 | Open a video in the video player | Stand-ins, including resume from Continue Watching. Not real |
+| 13 | Reveal a downloaded file in Finder | **Not run**: needs a Mac |
+| 14 | Restart | Stand-ins, several times |
+| 15 | Connections and download history persist | Stand-ins: accounts, listings, history, settings, and an unfinished download that went on by itself |
+| 16 | Profile permissions | Stand-ins: a second profile sees only the shared account, its own downloads and its own Cloud Music; unit tests |
+| 17 | Streaming, Music and Manga stay independent | `SourceBoundaryTest` (imports, registries, who may give Music cloud audio); separate databases |
+| 18 | Expired credentials and dead links | Unit tests (withdrawn sign-in, expired address made again, missing file); in the app against stand-ins: "Sign in again" shown and recovered, songs of an expired sign-in reported instead of played. Not provoked on the real accounts |
+
+Also checked against stand-ins: grid and list, sort, details, pause / resume / cancel, the
+settings page, "Delete from TorBox…" with its confirmation, Cloud Music (songs, albums, add to
+library, download for offline, play from Downloads), Streaming › Library › Connected Accounts.
+
 For development, `DEBRIDONE_REAL_DEBRID_API=http://127.0.0.1:<port>` and
 `DEBRIDONE_TORBOX_API=http://127.0.0.1:<port>` point the app at local test servers (loopback
 addresses only; the cards show a red notice). See `CLOUD.md`.

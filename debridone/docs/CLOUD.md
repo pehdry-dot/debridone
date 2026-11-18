@@ -62,8 +62,8 @@ RAR and 7-Zip archives (true CBR, CB7) are not read. See [LIMITATIONS.md](LIMITA
 **Deleting.** "Delete local copy" removes the file from this computer and says that the cloud is
 not touched. "Delete from Real-Debrid / TorBox…" is a separate, red action with its own
 confirmation that names the provider and says the entry cannot be brought back; it does not delete
-your local copies. Removing something from a library, or disconnecting an account, never deletes
-anything in the cloud.
+your local copies or what you imported from them. Removing something from a library, or
+disconnecting an account, never deletes anything in the cloud.
 
 ## Downloading to this computer
 

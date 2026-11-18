@@ -544,6 +544,13 @@ class DownloadManager internal constructor(
         } finally {
             connections.remove(id)
             runCatching { connection.disconnect() }
+            // However the transfer ended (paused, dropped), what is on disk is what was received.
+            runCatching {
+                if (Files.isRegularFile(part)) {
+                    database.execute("UPDATE downloads SET received_bytes = ? WHERE id = ? AND state IN ('QUEUED', 'RUNNING', 'PAUSED', 'FAILED')", Files.size(part), id)
+                    publish()
+                }
+            }
         }
     }
 

@@ -14,7 +14,8 @@ import java.nio.file.Paths
  * A file `sample.<extension>` in the folder of samples is served for every stand-in file of that
  * extension (so that a player or a reader has something real to open); other files are made-up
  * bytes. Allow the Real-Debrid code with `curl http://127.0.0.1:8791/__approve`; the TorBox key is
- * [StandInTorBox.API_KEY].
+ * [StandInTorBox.API_KEY]. `curl "http://127.0.0.1:8792/__slow?ms=300"` makes that server hand files
+ * out slowly (per 16 KiB), to try pausing and cancelling a download; `ms=0` ends it.
  */
 fun main(arguments: Array<String>) {
     val samples = arguments.getOrNull(2)?.let { Paths.get(it) }

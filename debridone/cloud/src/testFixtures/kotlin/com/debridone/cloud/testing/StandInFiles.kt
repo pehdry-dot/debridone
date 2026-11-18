@@ -80,6 +80,11 @@ abstract class StandInServer(port: Int = 0) : AutoCloseable {
     init {
         server.createContext("/") { exchange ->
             runCatching {
+                // For trying the app by hand: `/__slow?ms=300` slows file answers down so that a transfer can be paused or cancelled.
+                if (exchange.requestURI.rawPath == "/__slow") {
+                    slowMs = Regex("ms=(\\d+)").find(exchange.requestURI.rawQuery.orEmpty())?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                    return@runCatching send(exchange, 200, "application/json", """{"slowMs":$slowMs}""".toByteArray())
+                }
                 requests += "${exchange.requestMethod} ${exchange.requestURI.rawPath.let { if (it.startsWith("/files/")) "/files" else it }}"
                 if (exchange.requestURI.rawPath.startsWith("/files/")) serveFile(exchange) else handle(exchange)
             }.onFailure { runCatching { send(exchange, 500, "application/json", """{"error":"internal_error"}""".toByteArray()) } }

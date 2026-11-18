@@ -416,7 +416,8 @@ internal fun DownloadsDialogs(cloud: CloudServices, profileId: Long?) {
             CloudConfirmDialog(
                 title = "Delete from $name?",
                 message = "\"${item.name}\" will be removed from your $name account, permanently. This cannot be undone from DebridOne.\n\n" +
-                    "Copies you already downloaded stay on this computer, and nothing changes in your Streaming, Music or Manga libraries.",
+                    "Copies you already downloaded stay on this computer, and so does what you imported from them into Music or Manga. " +
+                    "Songs from it that you added to your Music library without downloading them go with it: there would be nothing left to play them from.",
                 confirm = "Delete from $name", danger = true, onDismiss = close,
             ) {
                 CloudApp.background {

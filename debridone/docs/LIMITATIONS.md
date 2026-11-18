@@ -141,10 +141,48 @@ Streaming integrations
 
 Shell
 - Cmd+F opens search in Streaming and in Music; in Manga, use Search in its navigation.
-- The Downloads section has a tab per section: Streaming downloads continue in Streaming, Music's
-  are under Music › Library › Available offline, Manga's are listed and managed there.
+- The Downloads section is the file browser of the connected accounts (`CLOUD.md`). Its *Local*
+  tab also points to what each section downloads by itself: Streaming's downloads continue in
+  Streaming, Music's are under Music › Library › Available offline, Manga's chapters are listed
+  and managed there.
 - macOS menu-bar items for the modules and notifications are not implemented. Media keys and
   Now Playing are implemented for Music (and by Nuvio for video).
+
+Connected accounts (Real-Debrid, TorBox) and Downloads
+- **What was run against the real services** (the owner's own accounts, read-only, counts only):
+  Real-Debrid's code sign-in was started (the real service issued a code) but not completed, since
+  that takes the owner's browser; both accounts were connected in the running app with an API
+  token / key; account, plan and expiry were read; Real-Debrid's torrents and generated links were
+  listed (17 torrents, 221 files in them, 30 generated links of which 24 are files of those
+  torrents and are shown once) and shown in Downloads and in Streaming › Library; one download
+  address was made and a second request reused it.
+- **What was not run against the real services:** playing or downloading a real file (the
+  providers' download hosts were not reachable from where DebridOne is built, and each Real-Debrid
+  address adds a "generated link" record to the account); deleting anything; TorBox's lists (the
+  account's three lists were empty, so the reading of real TorBox entries rests on TorBox's
+  documentation, its official SDK and the stand-in server); TorBox's download-address request
+  (it carries the key in the address). Everything else was run against local stand-in servers
+  that answer in the providers' documented formats.
+- Finding from the real service, built in: Real-Debrid leaves a torrent's links out of listings
+  asked with more than 100 entries per page (not in its documentation). Pages are 100.
+- Nothing about connected accounts was run on a Mac: the Keychain store has its own test on
+  macOS, but the pages, "Reveal in Finder", "Open with the default app" and sound were not tried
+  there. The packaged app's self-tests cover Music and Manga, not the cloud pages.
+- RAR and 7-Zip archives (true CBR, CB7) are not read: the only Java reader for RAR is under the
+  UnRAR licence, which does not fit this project's GPL-3. A `.cbr` that is really a ZIP is read.
+- Videos are sorted into *TV Shows* only by markers in their names; everything else is *Movies*.
+  There are no posters, synopses or episode titles for cloud files, in Downloads or in Streaming.
+- Streaming keeps no watch progress for videos shorter than about two minutes (Nuvio's rule for
+  placeholder clips), so those never appear under Continue Watching.
+- In Nuvio's sync mode (a sync server connected), watch progress of cloud videos, with their file
+  names, is synced by Nuvio like any other progress.
+- One account per provider for a profile: a profile that already sees an account of a provider
+  (its own, or one shared with all profiles) is not offered a second one there.
+- Provider marks are plain monograms (RD, TB), not the providers' logos.
+- Playing or downloading a Real-Debrid torrent file adds a "generated link" record to the
+  account. That is how its API hands out addresses; DebridOne reuses an existing one.
+- A cloud song that was added to the Music library but not saved leaves the library when its
+  cloud entry is deleted or its account is disconnected.
 
 Music
 - No gapless playback, crossfade or equaliser; there is a short gap between songs.
