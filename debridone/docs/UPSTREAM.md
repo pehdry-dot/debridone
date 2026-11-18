@@ -56,6 +56,14 @@ Changes for Play Next, the Streaming navigation and Games removal:
 | `core/ui/FloatingNavigationBar.kt`, `core/ui/jelly/JellyTabs.kt`, `MainTabsDestination.kt` | An item can be icon-only with a tooltip; on desktop, Settings is a cogwheel |
 | `composeResources/values*/strings.xml` | New keys appended (English, pt, pt-BR); no existing string changed |
 
+Changes for the connected accounts (see `CLOUD.md`):
+
+| Upstream file | Change |
+|---|---|
+| `AppShellHost.kt` (DebridOne's own seam file) | `requestPlayback` / `streamingPlaybackRequests`: the shell asks Streaming to play one video file; `resumeShellContent`: Continue Watching on such a file asks the shell for a new address; `librarySource`: a list the shell adds to the Library |
+| `MainAppContent.kt` | Collects playback requests and builds the player launch like Nuvio's own cloud files do (content type `cloud`); Continue Watching items whose id starts with `debridone:` go to the hook |
+| `features/library/LibraryScreen.kt` | One more chip in the source switch ("Connected Accounts") when the shell contributes a list, and one branch that lets the shell add its rows. Nuvio's own Saved, Cloud and Servers views and its debrid settings are unchanged |
+
 New upstream-side files: `features/streams/StreamSimilarity.kt`; tests `NextEpisodeRootCauseTest`,
 `NextEpisodeTransitionTest`, `StreamSimilarityTest`. Also: `AppShellHost.kt`, `core/auth/LocalAccountBackend.kt`,
 `features/profiles/LocalAvatarImporter.kt`.

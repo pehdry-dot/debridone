@@ -203,8 +203,10 @@ By hand:
    TorBox › *Connect*: paste your API key.
 2. Downloads: *All*, *Real-Debrid*, *TorBox*, *Local*; the shelves; search; sort; grid and list;
    open an entry with several files.
-3. Play a video (it opens in the Streaming player; leave it and find it under Continue Watching),
-   an audio file (Music's mini-player shows it), and "Download and read" a CBZ.
+3. Play a video (it opens in the Streaming player; leave a video longer than two minutes part of
+   the way through and find it under Continue Watching), an audio file (Music's mini-player shows
+   it), and "Download and read" a CBZ. Streaming › Library › Connected Accounts lists the same
+   videos.
 4. Download a file; pause and resume it; quit while one is running and reopen: it continues.
    *Local* shows the file and its folder; *Reveal in Finder* opens that folder.
 5. Music › Library › Cloud Music: songs, albums, artists; add one to the library; "Download for

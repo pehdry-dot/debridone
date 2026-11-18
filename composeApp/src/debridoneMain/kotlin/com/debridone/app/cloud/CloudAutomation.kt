@@ -26,6 +26,7 @@ internal object CloudAutomation {
     fun start(cloud: CloudServices, music: MusicCloudSource?) {
         // Each section is reached through its own narrow bridge; none of them sees the accounts.
         StreamingCloudBridge(cloud).install()
+        StreamingCloudLibrary(cloud).install()
         music?.install()
         MangaBridgeImpl(cloud).install()
         scope.launch {

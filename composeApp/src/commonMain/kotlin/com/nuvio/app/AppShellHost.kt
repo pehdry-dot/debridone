@@ -1,5 +1,6 @@
 package com.nuvio.app
 
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,13 +12,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 
-/**
- * DebridOne seam between Nuvio (the Streaming module) and the application shell around it.
- *
- * Nuvio's main content is everything shown after sign-in and profile selection. When a shell is
- * installed, that content is handed to it as one composable slot; Nuvio keeps owning its own
- * navigation inside the slot and reports when it needs the whole window (video playback).
- */
 /**
  * A video file the shell hands to Streaming's player: an address made for the moment (or a local
  * file), and how to recognise the same file again for resuming. Streaming keeps the player, the
@@ -36,6 +30,16 @@ data class ShellPlaybackRequest(
     val startFromBeginning: Boolean = false,
 )
 
+/** See [AppShellHost.librarySource]. [label] names the chip; [content] adds the rows to the Library's list. */
+class ShellLibrarySource(val label: String, val content: LazyListScope.() -> Unit)
+
+/**
+ * DebridOne seam between Nuvio (the Streaming module) and the application shell around it.
+ *
+ * Nuvio's main content is everything shown after sign-in and profile selection. When a shell is
+ * installed, that content is handed to it as one composable slot; Nuvio keeps owning its own
+ * navigation inside the slot and reports when it needs the whole window (video playback).
+ */
 object AppShellHost {
     /** Installed once at start-up by the desktop app. Null on platforms without a shell. */
     @Volatile
@@ -79,6 +83,14 @@ object AppShellHost {
      */
     @Volatile
     var resumeShellContent: ((contentId: String, videoId: String, startFromBeginning: Boolean) -> Boolean)? = null
+
+    /**
+     * A list the shell adds to Streaming's Library, beside "Saved" and "Cloud". Streaming draws
+     * the chip and hands over the list; the rows, and what happens when one is chosen, are the
+     * shell's. Null: there is no such list.
+     */
+    @Volatile
+    var librarySource: ShellLibrarySource? = null
 
     /** Content ids of what the shell plays start with this, so they are never mistaken for Streaming's own. */
     const val SHELL_CONTENT_PREFIX = "debridone:"

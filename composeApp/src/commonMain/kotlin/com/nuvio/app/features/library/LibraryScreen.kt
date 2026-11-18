@@ -79,6 +79,7 @@ import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.core.ui.shimmer
 import com.nuvio.app.core.ui.LocalVerticalBarPadding
 import com.nuvio.app.core.ui.nuvioHorizontalScrollBleed
+import com.nuvio.app.AppShellHost
 import com.nuvio.app.features.cloud.CloudLibraryFile
 import com.nuvio.app.features.cloud.CloudLibraryItem
 import com.nuvio.app.features.cloud.CloudLibraryItemType
@@ -154,9 +155,12 @@ fun LibraryScreen(
     }.collectAsStateWithLifecycle()
     val hasServers = serversUiState.connections.any { it.enabled }
     var sourceModeName by rememberSaveable { mutableStateOf(LibraryViewMode.Saved.name) }
-    val sourceMode = remember(sourceModeName, hasServers) {
+    // DebridOne: a list the shell contributes (the files of the connected accounts), when there is one.
+    val shellSource = AppShellHost.librarySource
+    val sourceMode = remember(sourceModeName, hasServers, shellSource != null) {
         runCatching { LibraryViewMode.valueOf(sourceModeName) }.getOrDefault(LibraryViewMode.Saved)
             .takeUnless { it == LibraryViewMode.Servers && !hasServers }
+            ?.takeUnless { it == LibraryViewMode.Shell && shellSource == null }
             ?: LibraryViewMode.Saved
     }
     var serverShelves by remember { mutableStateOf<List<LibraryServerShelf>?>(null) }
@@ -386,6 +390,7 @@ fun LibraryScreen(
                         LibrarySourceSwitch(
                             selectedMode = sourceMode,
                             showServers = hasServers,
+                            shellLabel = shellSource?.label,
                             onModeSelected = { mode ->
                                 sourceModeName = mode.name
                             },
@@ -438,6 +443,8 @@ fun LibraryScreen(
                     onPosterLongClick = onPreviewLongClick,
                     onRetry = { serverShelvesRequest++ },
                 )
+            } else if (sourceMode == LibraryViewMode.Shell) {
+                shellSource?.content?.invoke(this)
             } else {
                 when {
                     !uiState.isLoaded || (uiState.isLoading && uiState.sections.isEmpty()) -> {
@@ -751,6 +758,7 @@ private fun LibrarySourceSwitch(
     showServers: Boolean,
     onModeSelected: (LibraryViewMode) -> Unit,
     modifier: Modifier = Modifier,
+    shellLabel: String? = null,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -771,6 +779,13 @@ private fun LibrarySourceSwitch(
                 label = stringResource(Res.string.library_source_servers),
                 selected = selectedMode == LibraryViewMode.Servers,
                 onClick = { onModeSelected(LibraryViewMode.Servers) },
+            )
+        }
+        if (shellLabel != null) {
+            LibraryChip(
+                label = shellLabel,
+                selected = selectedMode == LibraryViewMode.Shell,
+                onClick = { onModeSelected(LibraryViewMode.Shell) },
             )
         }
     }
@@ -1237,6 +1252,9 @@ private enum class LibraryViewMode {
     Saved,
     Cloud,
     Servers,
+
+    /** DebridOne: the list the shell contributes ([AppShellHost.librarySource]). */
+    Shell,
 }
 
 private fun LazyListScope.librarySections(

@@ -100,9 +100,12 @@ and settings.
   when its own tags and embedded cover are used; covers and details can otherwise be looked up
   with Music's own providers as for any song. Music holds no sign-in for the accounts, and its
   addons (Eclipse Music / BeatBoss format) and plugins are never shown them.
-- **Streaming**: cloud videos play in the Streaming player and resume from Continue Watching.
-  Streaming's own debrid settings (Nuvio's, used to resolve add-on streams) are a different thing:
-  they are not changed, and the connected accounts are never copied into them.
+- **Streaming › Library › Connected Accounts** lists the video files of the profile's accounts,
+  by entry, with a search field. They play in the Streaming player and resume from Continue
+  Watching (Streaming keeps no progress for clips shorter than about two minutes: its own rule
+  for placeholder videos). Streaming's "Cloud" chip and its debrid settings (Nuvio's, used to
+  resolve add-on streams) are a different thing: they are not changed, and the connected accounts
+  are never copied into them.
 - **Manga**: "From your cloud…" in Manga's Library opens the comics shelf. A downloaded archive
   is imported into Manga's own library and read with its own reader. Houdoku's Tiyo extensions
   are untouched and never see the accounts.
@@ -129,9 +132,9 @@ anyone else; there is no analytics.
   `DebridAccountManager`, `CloudFileRepository` (the cached listing, in `cloud/cloud.db`),
   `MediaFileClassifier`, `DownloadManager`. It depends only on `debridone/platform`.
 - The app side is `composeApp/src/debridoneMain/kotlin/com/debridone/app/cloud`. Sections are
-  reached through three bridges: `StreamingCloudBridge` (one seam in `AppShellHost`),
-  `MusicCloudSource` (implements the `CloudAudioSource` interface that Music defines) and
-  `MangaBridgeImpl`.
+  reached through three bridges: `StreamingCloudBridge` and `StreamingCloudLibrary` (the seam in
+  `AppShellHost`), `MusicCloudSource` (implements the `CloudAudioSource` interface that Music
+  defines) and `MangaBridgeImpl`.
 - Enforced by `SourceBoundaryTest`: no section's engine or screens import the cloud layer; the
   layer contains no request that adds or searches at a provider, and its removal requests are
   reached from one confirmed action only; Music's addon code knows nothing of the accounts.
