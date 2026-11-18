@@ -40,14 +40,47 @@ object SuwayomiRuntimeLocator {
         if (!java.isNullOrBlank() && !jar.isNullOrBlank()) return checked(Paths.get(java), Paths.get(jar))
         val resources = System.getProperty("compose.application.resources.dir")
             ?: throw SuwayomiUnavailable("The manga server is not part of this build. Run scripts/debridone/fetch-suwayomi-runtime.sh, or use a packaged DebridOne.")
-        val root = Paths.get(resources, "suwayomi")
+        return bundled(Paths.get(resources))
+    }
+
+    /**
+     * The copies inside a packaged app, whose resources folder is [resources]:
+     * `suwayomi/jre/bin/java` and `suwayomi/server/Suwayomi-Server.jar`. The jar has a folder of
+     * its own on purpose, see [layoutProblem].
+     */
+    fun bundled(resources: Path): SuwayomiRuntime {
+        val root = resources.resolve("suwayomi")
         val launcher = if (System.getProperty("os.name").orEmpty().lowercase().contains("win")) "java.exe" else "java"
-        return checked(root.resolve("jre").resolve("bin").resolve(launcher), root.resolve("Suwayomi-Server.jar"))
+        return checked(root.resolve("jre").resolve("bin").resolve(launcher), root.resolve("server").resolve("Suwayomi-Server.jar"))
+    }
+
+    /**
+     * Why Suwayomi-Server cannot start from where its jar is, or null. Suwayomi finds its own
+     * classes by scanning the classpath, and that scan leaves out jars it takes for part of the
+     * Java runtime: jars lying directly in the runtime's folder, in its `lib`, or in the folder
+     * above a runtime folder that is named `jre`. A server jar in one of those places starts and
+     * then fails with "The configured packages do not contain any valid classes".
+     */
+    fun layoutProblem(java: Path, jar: Path): String? {
+        val home = runCatching { java.toAbsolutePath().normalize().parent?.parent }.getOrNull() ?: return null
+        val folder = jar.toAbsolutePath().normalize().parent ?: return null
+        val taken = buildList {
+            add(home)
+            add(home.resolve("lib"))
+            add(home.resolve("jre"))
+            if (home.fileName?.toString() == "jre") home.parent?.let { add(it); add(it.resolve("lib")) }
+        }
+        return if (taken.any { it == folder }) {
+            "Suwayomi-Server's file (${jar.fileName}) is in a folder of the Java runtime ($folder), where the server cannot find its own parts. It needs a folder of its own."
+        } else {
+            null
+        }
     }
 
     private fun checked(java: Path, jar: Path): SuwayomiRuntime {
         if (!Files.isRegularFile(java)) throw SuwayomiUnavailable("The Java runtime for the manga server is missing (${java.fileName} was expected in ${java.parent}).")
         if (!Files.isRegularFile(jar)) throw SuwayomiUnavailable("Suwayomi-Server is missing (${jar.fileName} was expected in ${jar.parent}).")
+        layoutProblem(java, jar)?.let { throw SuwayomiUnavailable(it) }
         // Packaging can drop the executable bit; the file is ours, so it is put back.
         if (!Files.isExecutable(java)) runCatching { java.toFile().setExecutable(true) }
         return SuwayomiRuntime(java, jar)
@@ -142,6 +175,8 @@ class SuwayomiServerManager(
 
     private fun launch(profile: Long): ServerEndpoint {
         val runtime = runtime()
+        // A jar the server cannot start from is said so now, not after a start that never finishes.
+        SuwayomiRuntimeLocator.layoutProblem(runtime.java, runtime.jar)?.let { throw SuwayomiUnavailable(it) }
         val directory = directory(profile)
         Files.createDirectories(directory)
         ownerOnly(directory, "rwx------")

@@ -172,7 +172,7 @@ jobs:
         run: |
           app="$(find composeApp/build/compose/binaries/main-release/app -maxdepth 1 -name '*.app' | head -n 1)"
           suwayomi="${app}/Contents/app/resources/suwayomi"
-          ls -l "${suwayomi}/" || { echo "Manga's server is not in the app bundle." >&2; exit 1; }
+          ls -l "${suwayomi}/" "${suwayomi}/server/" || { echo "Manga's server is not in the app bundle." >&2; exit 1; }
           "${suwayomi}/jre/bin/java" -version
           codesign -dv "${suwayomi}/jre/bin/java" 2>&1 | sed 's/^/  /' || true
           "${app}/Contents/MacOS/DebridOne" --manga-self-test 2>&1 | tee "${RUNNER_TEMP}/manga-self-test.log"
@@ -200,7 +200,7 @@ jobs:
           test -x "${java}" || { echo "The Java runtime inside the DMG is not executable." >&2; exit 1; }
           "${java}" -version
           test -x "${app}/Contents/app/resources/suwayomi/jre/lib/jspawnhelper" || { echo "jspawnhelper inside the DMG is not executable." >&2; exit 1; }
-          test -f "${app}/Contents/app/resources/suwayomi/Suwayomi-Server.jar" || { echo "Suwayomi-Server is missing from the DMG." >&2; exit 1; }
+          test -f "${app}/Contents/app/resources/suwayomi/server/Suwayomi-Server.jar" || { echo "Suwayomi-Server is missing from the DMG." >&2; exit 1; }
           ls -lh "${dmg}"
 
       # Imports the test audio files into a temporary library and plays one file of every format

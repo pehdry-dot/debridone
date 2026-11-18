@@ -93,8 +93,9 @@ class MigrationException(message: String, cause: Throwable? = null) : Exception(
  * Carries the library of the earlier, Houdoku-based version of Manga over to the manga server.
  *
  * The earlier library lives in tables of Manga's own database. They are only ever read here: the
- * database, the chapters it had downloaded and the covers people chose are copied to a dated
- * backup folder first, the copy is checked, and only then is anything carried over. What was
+ * database and the covers people chose are copied to a dated backup folder first, the copy is
+ * checked, and only then is anything carried over. (Chapters the earlier version had downloaded
+ * are left where they are, untouched; they can be large, and nothing here changes them.) What was
  * done with each series is kept in a table of its own, so the migration can be repeated safely
  * and reported at any time.
  *
@@ -245,8 +246,8 @@ class MangaMigration(
     // ---- backup ------------------------------------------------------------------------------------
 
     /**
-     * Copies the earlier library (the whole database, the chapters it had downloaded, the covers
-     * people chose) to a dated folder beside it and checks the copy. Done once; afterwards the
+     * Copies the earlier library (the whole database and the covers people chose) to a dated
+     * folder beside it and checks the copy. Done once; afterwards the
      * same folder is returned. Throws, having carried nothing over, when the copy cannot be made
      * or does not check out.
      */
@@ -267,17 +268,19 @@ class MangaMigration(
                 }
                 if (original != copied) throw MigrationException("The copy of the earlier library does not match it ($table: $copied of $original rows).")
             }
-            for (name in listOf("downloads", "covers")) {
-                val source = dataDir.resolve(name)
-                if (!Files.isDirectory(source)) continue
-                val target = folder.resolve(name)
-                copyTree(source, target)
-                if (measure(source) != measure(target)) throw MigrationException("The copy of the earlier $name does not match the original.")
+            // The covers people chose are few and small: they are copied too. The chapters the earlier
+            // version had downloaded can be many gigabytes; they are not copied, because nothing here
+            // changes, moves or deletes them: they stay where they are, and the report says where.
+            val covers = dataDir.resolve("covers")
+            if (Files.isDirectory(covers)) {
+                copyTree(covers, folder.resolve("covers"))
+                if (measure(covers) != measure(folder.resolve("covers"))) throw MigrationException("The copy of the covers you chose does not match the original.")
             }
             Files.writeString(
                 folder.resolve("READ ME.txt"),
                 "This folder is a copy of DebridOne's Manga library as it was before Manga moved to Suwayomi-Server.\n" +
-                    "manga.db is the earlier library (series, chapters read, bookmarks, collections); downloads holds the chapters the earlier version had saved; covers holds covers you chose.\n" +
+                    "manga.db is the earlier library (series, chapters read, bookmarks, collections); covers holds covers you chose.\n" +
+                    "Chapters the earlier version had downloaded were not copied: they are still in ${dataDir.resolve("downloads")}, untouched.\n" +
                     "DebridOne does not read this folder again. Keep it for as long as you like; deleting it changes nothing in DebridOne.\n",
             )
         } catch (failure: Exception) {
@@ -498,9 +501,12 @@ class MangaMigration(
         val notes = buildList {
             if (backup != null) add("The earlier library was copied to $backup before anything was done, and is still in DebridOne's own database too. Nothing of it was deleted.")
             if (downloaded > 0) {
+                val folder = dataDir.resolve("downloads")
+                val size = if (Files.isDirectory(folder)) runCatching { measure(folder).second }.getOrDefault(0L) else 0L
                 add(
                     "$downloaded chapter${if (downloaded == 1) "" else "s"} the earlier version had saved for offline reading cannot be used by the new manga server. " +
-                        "The files are in the backup folder; save the chapters again from their new source.",
+                        "The files are still in $folder" + (if (size > 0) " (${megabytes(size)})" else "") +
+                        ", untouched: save the chapters again from their new source, and delete that folder when you no longer want it.",
                 )
             }
             if (entries.any { !it.local && it.outcome != MigrationOutcome.CARRIED_OVER }) {
@@ -510,6 +516,8 @@ class MangaMigration(
         }
         return MigrationReport(profileId, backup, entries, notes)
     }
+
+    private fun megabytes(bytes: Long): String = if (bytes < 1024 * 1024) "${maxOf(1, bytes / 1024)} KB" else "${bytes / (1024 * 1024)} MB"
 
     /** Saves the report as a text file beside the backup, for reading outside DebridOne. */
     private fun writeReport(report: MigrationReport) {

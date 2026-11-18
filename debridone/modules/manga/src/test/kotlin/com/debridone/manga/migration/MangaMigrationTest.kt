@@ -182,8 +182,10 @@ class MangaMigrationTest {
         DriverManager.getConnection("jdbc:sqlite:${backup.resolve("manga.db")}").use { copy ->
             before.forEach { (table, rows) -> assertEquals(rows, copy.count(table), "$table in the backup") }
         }
-        assertTrue(Files.isRegularFile(backup.resolve("downloads/2001/7/9/001.jpg")))
         assertTrue(Files.isRegularFile(backup.resolve("covers/chosen.png")))
+        // What the earlier version had downloaded can be large: it is not copied, because it is never touched.
+        assertFalse(Files.exists(backup.resolve("downloads")))
+        assertTrue(Files.readString(backup.resolve("READ ME.txt")).contains(storage.dataDir.resolve("downloads").toString()))
         assertTrue(Files.isRegularFile(backup.resolve("READ ME.txt")))
 
         // The series read from her own files is back, with everything that was known about it.
@@ -221,7 +223,7 @@ class MangaMigrationTest {
         assertEquals("2", waiting.lastChapterRead)
         assertNull(waiting.candidateSeriesId)
         assertTrue(report.needsAttention)
-        assertTrue(report.notes.any { it.contains("1 chapter the earlier version had saved") }, report.notes.toString())
+        assertTrue(report.notes.any { it.contains("1 chapter the earlier version had saved") && it.contains(storage.dataDir.resolve("downloads").toString()) }, report.notes.toString())
         val written = Files.readString(backup.resolve("migration-report-profile-$alice.txt"))
         assertTrue(written.contains("[TO ADD AGAIN] Solo Quest — MangaDex") && written.contains("[FILES MISSING] Moved Away") && written.contains("[CARRIED OVER] My Title For It"), written)
 

@@ -1062,7 +1062,10 @@ val prepareSuwayomiAppResources = tasks.register<Sync>("prepareSuwayomiAppResour
                 "Run ./scripts/debridone/fetch-suwayomi-runtime.sh $suwayomiBundlePlatform first."
         }
     }
-    from(jar)
+    // The jar has a folder of its own. Lying beside the folder named "jre" it would be taken for a
+    // part of the Java runtime by the classpath scan Suwayomi finds its own classes with, and the
+    // server would start and then fail (see SuwayomiRuntimeLocator.layoutProblem).
+    from(jar) { into("server") }
     from(jre) {
         into("jre")
         // Man pages and the like are of no use inside an app bundle.
@@ -1093,7 +1096,7 @@ listOf("createDistributable" to "main", "createReleaseDistributable" to "main-re
                 val jre = app.resolve("Contents/app/resources/suwayomi/jre")
                 val java = jre.resolve("bin/java")
                 check(java.isFile) { "The Java runtime of Manga's server is missing from the app bundle (${java.absolutePath})." }
-                check(app.resolve("Contents/app/resources/suwayomi/Suwayomi-Server.jar").isFile) { "Suwayomi-Server is missing from the app bundle." }
+                check(app.resolve("Contents/app/resources/suwayomi/server/Suwayomi-Server.jar").isFile) { "Suwayomi-Server is missing from the app bundle." }
                 val programs = jre.resolve("bin").listFiles().orEmpty().toList() + listOf(jre.resolve("lib/jspawnhelper")).filter { it.isFile }
                 programs.forEach { program ->
                     check(program.setExecutable(true, false) && program.canExecute()) { "Could not make ${program.absolutePath} executable." }
