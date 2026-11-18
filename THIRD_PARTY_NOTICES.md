@@ -72,10 +72,13 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FO
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Eclipse Music
+## Eclipse Music and BeatBoss
 
-Eclipse Music is a feature reference for the Music module only. No Eclipse Music source code,
-assets or protocol implementation is included.
+Eclipse Music is a feature reference for the Music module. Music also implements, as a client, the
+addon format that Eclipse Music documents publicly (its Addon Developer Guide) and that
+BeatBoss (https://github.com/TheVolecitor/BeatBoss, MIT, by TheVolecitor) documents and implements
+as well. The format was read from those descriptions and from BeatBoss's client code; no source
+code, asset or text of either project is included in DebridOne.
 
 ## Libraries added by DebridOne
 

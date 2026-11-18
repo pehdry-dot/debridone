@@ -105,5 +105,5 @@ Only `http(s)` addresses are taken from a catalogue's answers; anything else is 
 
 - Plugins that contain code to run (scripts, binaries, WebAssembly).
 - Streaming (Stremio-style) add-on manifests and Manga extensions.
-- Eclipse Music add-ons: their format is not published.
+- Program code of any kind. (Eclipse Music / BeatBoss addons are a different thing from plugins and *are* supported: see [MUSIC_ADDONS.md](MUSIC_ADDONS.md).)
 - Services whose terms or copy protection do not allow another player to stream their catalogue.

@@ -8,8 +8,9 @@ Its screens follow Streaming's layout: one navigation pill at the top (Home, Dis
 Library, a cogwheel for the settings), large page headings, a prominent search field, filter chips
 and grids of square covers.
 
-Eclipse Music was the feature reference. No Eclipse code, asset or protocol is used; its source
-and add-on format are not published.
+Eclipse Music was the feature reference. No Eclipse code or asset is used. Music does speak the
+published addon format that Eclipse Music and BeatBoss share, as a client: see
+[MUSIC_ADDONS.md](MUSIC_ADDONS.md).
 
 ## What it does
 
@@ -168,7 +169,7 @@ sound device.
 
 - Spotify, Apple Music, Tidal, Deezer, YouTube Music and similar services. Their terms and copy
   protection do not allow another player to stream their catalogues.
-- Plugins that carry code, and Eclipse add-ons. A plugin is a manifest for one of Music's adapters.
+- Plugins that carry code. A plugin is a manifest for one of Music's adapters; an addon (Eclipse Music / BeatBoss format) is a server Music talks to. Addons that answer the Eclipse app only, and protected streams, are not played.
 - Gapless playback, crossfade and an equaliser. There is a short gap between songs.
 - Writing tags back into audio files.
 - Compilations without an album-artist tag are split into one album per track artist.

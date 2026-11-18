@@ -86,6 +86,11 @@ class MusicMetadataService(
     private val previewDirectory: Path? = null,
     /** The first pause after MusicBrainz says it is busy; the following ones are multiples of it. */
     private val busyRetryDelayMs: Long = 2_000,
+    /**
+     * Lyrics from the profile's own sources (an addon that offers them), asked before LRCLIB:
+     * the text, plain or LRC, or null. Supplied by the module; Music's sources stay out of here.
+     */
+    private val sourceLyrics: (profileId: Long, track: Track) -> String? = { _, _ -> null },
 ) {
     private val rateLock = Any()
     private var lastMusicBrainzRequest = 0L
@@ -204,7 +209,10 @@ class MusicMetadataService(
             val embedded = runCatching { AudioTagReader.read(Paths.get(track.path)).lyrics }.getOrNull()
             if (!embedded.isNullOrBlank()) return save(profileId, trackId, embedded, ORIGIN_EMBEDDED)
         }
-        if (!online || !providerEnabled(LRCLIB)) return null
+        if (!online) return null
+        // An addon the listener installed that offers lyrics is asked first: it knows its own songs.
+        runCatching { sourceLyrics(profileId, track) }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return save(profileId, trackId, it, ORIGIN_ADDON) }
+        if (!providerEnabled(LRCLIB)) return null
         val found = fetchFromLrclib(track) ?: return null
         store(profileId, trackId, found)
         return found
@@ -863,6 +871,9 @@ class MusicMetadataService(
         private const val MINIMUM_PAIRING = 4.0
 
         const val ORIGIN_EMBEDDED = "embedded"
+
+        /** Lyrics an installed addon supplied. */
+        const val ORIGIN_ADDON = "addon"
         const val ORIGIN_LRCLIB = "lrclib"
         const val ORIGIN_MANUAL = "manual"
 

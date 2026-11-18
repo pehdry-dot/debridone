@@ -12,7 +12,7 @@ software under the GPL-3.0. There are no subscriptions, tiers or paywalls.
 | Section | State |
 |---|---|
 | Streaming | Working. It is Nuvio Desktop, running on DebridOne's on-device accounts. |
-| Music | Working: local library, player, playlists, Discover with Audius and your Navidrome/OpenSubsonic or Jellyfin server, radio streams, importable plugins, MusicBrainz, Cover Art Archive and LRCLIB. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md) and [MUSIC_PLUGINS.md](debridone/docs/MUSIC_PLUGINS.md). |
+| Music | Working: local library, player, playlists, Discover with Audius and your Navidrome/OpenSubsonic or Jellyfin server, radio streams, importable plugins, addons in the Eclipse Music / BeatBoss manifest format, MusicBrainz, Cover Art Archive and LRCLIB. See [debridone/docs/MUSIC.md](debridone/docs/MUSIC.md), [MUSIC_PLUGINS.md](debridone/docs/MUSIC_PLUGINS.md) and [MUSIC_ADDONS.md](debridone/docs/MUSIC_ADDONS.md). |
 | Games | Not part of the app for now. Its module is kept dormant in the repository; saved data is left untouched. |
 | Manga | Working: a reader for manga and manhwa (paged and continuous webtoon modes), search and discovery through Houdoku's unmodified Tiyo extensions, local CBZ/ZIP/folders, library, downloads, AniList / MangaDex / MyAnimeList metadata. See [debridone/docs/MANGA.md](debridone/docs/MANGA.md) and [MANGA_PLUGINS.md](debridone/docs/MANGA_PLUGINS.md). |
 
@@ -49,7 +49,7 @@ Run the tests:
 - [Installing on a Mac](debridone/docs/INSTALL.md)
 - [Building](debridone/docs/BUILD.md)
 - [Testing](debridone/docs/TESTING.md)
-- [Music](debridone/docs/MUSIC.md) and [Music plugins](debridone/docs/MUSIC_PLUGINS.md)
+- [Music](debridone/docs/MUSIC.md), [Music plugins](debridone/docs/MUSIC_PLUGINS.md) and [Music addons (Eclipse Music / BeatBoss format)](debridone/docs/MUSIC_ADDONS.md)
 - [Manga](debridone/docs/MANGA.md) and [Manga extensions (Houdoku / Tiyo compatibility)](debridone/docs/MANGA_PLUGINS.md)
 - [Architecture](debridone/docs/ARCHITECTURE.md)
 - [Upstream projects and how to merge them](debridone/docs/UPSTREAM.md)

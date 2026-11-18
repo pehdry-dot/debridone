@@ -322,7 +322,7 @@ class MusicAddonTest {
         val checks = music.sources.diagnoseAddon(PROFILE_A, connection.id, "test")
         assertEquals(listOf("Manifest", "Search", "Browsing rows", "Stream address", "Audio"), checks.map { it.step })
         assertTrue(checks.all { it.ok }, checks.toString())
-        assertTrue(checks[1].detail.contains("4 songs, 1 albums, 1 artists, 1 playlists"))
+        assertTrue(checks[1].detail.contains("4 songs, 1 album, 1 artist, 1 playlist"), checks[1].detail)
         assertTrue(checks[4].detail.contains("MP3"), "the audio is identified from its first bytes, whatever the server calls it: ${checks[4].detail}")
         assertTrue(checks.none { it.detail.contains(StandInAddon.TOKEN) || it.detail.contains("127.0.0.1") })
         assertEquals(true, music.sources.connection(PROFILE_A, connection.id)!!.lastTestOk)

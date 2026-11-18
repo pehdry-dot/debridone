@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Storage
 import com.debridone.module.PluginActionResult
 import com.debridone.music.sources.AudiusAdapter
+import com.debridone.music.sources.EclipseAddonAdapter
 import com.debridone.music.sources.HttpCatalogAdapter
 import com.debridone.music.sources.IntegrationKind
 import com.debridone.music.sources.JellyfinAdapter
@@ -127,6 +128,17 @@ private fun MusicSourcesContent() {
         importing = true
         importError = null
         scope.launch {
+            // An address may be an Eclipse Music / BeatBoss addon rather than a DebridOne plugin
+            // manifest: it is then reviewed and installed as an addon.
+            if (isWebAddress(location)) {
+                val addon = withContext(Dispatchers.IO) { runCatching { sources.previewAddon(location.trim()) }.getOrNull() }
+                if (addon != null) {
+                    importing = false
+                    importText = ""
+                    AddonUi.review = AddonReview(location.trim(), addon)
+                    return@launch
+                }
+            }
             val result = module.plugins.importFromLocation(location.trim())
             importing = false
             when (result) {
@@ -154,7 +166,8 @@ private fun MusicSourcesContent() {
     }
     var addingStream by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<SourceConnection?>(null) }
-    val servers = data.connections.filter { it.adapter != MusicSourceManager.STREAM_ADAPTER }
+    val addons = data.connections.filter { it.adapter == EclipseAddonAdapter.ID }
+    val servers = data.connections.filter { it.adapter != MusicSourceManager.STREAM_ADAPTER && it.adapter != EclipseAddonAdapter.ID }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -170,6 +183,8 @@ private fun MusicSourcesContent() {
                 )
             }
         }
+
+        item("addons") { AddonsCard(addons, onRemove = { removing = it }) }
 
         item("import") {
             SettingsCard("Import a plugin", "The https address or the file of a DebridOne Music plugin manifest. A manifest names one of Music's adapters and its settings; it carries no code.") {
@@ -353,8 +368,8 @@ private fun MusicSourcesContent() {
                     style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
                 )
                 Text(
-                    "A plugin is a manifest: data that names one of Music's adapters. Plugins that carry program code, Streaming add-ons and Manga extensions are refused, " +
-                        "because nothing from a plugin is run inside DebridOne. Eclipse Music add-ons are not supported; their format is not published.",
+                    "Plugins and addons are data and servers, never program code: Streaming add-ons and Manga extensions are refused here, and nothing from a plugin or an addon is run inside DebridOne. " +
+                        "Addons that answer the Eclipse app only (they check a token that only Eclipse can issue) will refuse DebridOne, and protected (encrypted) streams are not played.",
                     style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
                 )
             }
@@ -379,7 +394,11 @@ private fun MusicSourcesContent() {
     removing?.let { connection ->
         ConfirmDialog(
             title = "Remove ${connection.name}?",
-            message = "Its ${plural(connection.trackCount, "song")} leave this profile's library and playlists, downloaded copies are deleted, and the saved sign-in is erased. Nothing changes on the server.",
+            message = if (connection.adapter == EclipseAddonAdapter.ID) {
+                "The addon is removed from this profile: its ${plural(connection.trackCount, "song")} leave the library and playlists, saved copies are deleted, and its address is erased from the ${sources.credentialStoreName}."
+            } else {
+                "Its ${plural(connection.trackCount, "song")} leave this profile's library and playlists, downloaded copies are deleted, and the saved sign-in is erased. Nothing changes on the server."
+            },
             confirm = "Remove", onDismiss = { removing = null },
         ) {
             actions.io {

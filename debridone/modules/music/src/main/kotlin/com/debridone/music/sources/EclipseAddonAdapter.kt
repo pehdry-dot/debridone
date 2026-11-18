@@ -140,7 +140,7 @@ class EclipseAddonAdapter(private val pause: (Long) -> Unit = { Thread.sleep(it)
                 sample = results.tracks.firstOrNull { it.playable }
                 checks += AddonCheck(
                     "Search", true,
-                    "\"$query\": ${results.tracks.size} songs, ${results.albums.size} albums, ${results.artists.size} artists, ${results.playlists.size} playlists",
+                    "\"$query\": ${count(results.tracks.size, "song")}, ${count(results.albums.size, "album")}, ${count(results.artists.size, "artist")}, ${count(results.playlists.size, "playlist")}",
                 )
             } catch (e: SourceException) {
                 checks += AddonCheck("Search", false, e.message.orEmpty())
@@ -152,7 +152,7 @@ class EclipseAddonAdapter(private val pause: (Long) -> Unit = { Thread.sleep(it)
                 val items = row(current, secret, firstRow.id, 0)
                 if (sample == null) sample = items.tracks.firstOrNull { it.playable }
                 val count = items.tracks.size + items.albums.size + items.artists.size + items.playlists.size
-                checks += AddonCheck("Browsing rows", true, "\"${firstRow.name}\": $count items")
+                checks += AddonCheck("Browsing rows", true, "\"${firstRow.name}\": ${count(count, "item")}")
             } catch (e: SourceException) {
                 checks += AddonCheck("Browsing rows", false, e.message.orEmpty())
             }
@@ -179,6 +179,8 @@ class EclipseAddonAdapter(private val pause: (Long) -> Unit = { Thread.sleep(it)
         }
         return checks
     }
+
+    private fun count(number: Int, noun: String): String = if (number == 1) "1 $noun" else "$number ${noun}s"
 
     // ---------------------------------------------------------------- catalogue
 

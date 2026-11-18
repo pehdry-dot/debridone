@@ -108,6 +108,9 @@ data class MusicPluginManifest(
             val root = runCatching { Json.parseToJsonElement(trimmed) }.getOrNull() as? JsonObject
                 ?: fail("That is not a Music plugin manifest: it is not a JSON object.")
             if (!root.containsKey(FORMAT_KEY)) {
+                if (AddonManifest.parse(trimmed).isSuccess) {
+                    fail("That is a music addon in the Eclipse Music / BeatBoss format, not a DebridOne plugin manifest. Add it by its address under \"Addons\" in Plugins › Music.")
+                }
                 when {
                     root.containsKey("resources") || root.containsKey("catalogs") || root.containsKey("idPrefixes") ->
                         fail("That is a Streaming add-on manifest. Streaming add-ons are installed under Plugins › Streaming; Music cannot use them.")

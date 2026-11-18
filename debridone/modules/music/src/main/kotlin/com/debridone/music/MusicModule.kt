@@ -107,6 +107,7 @@ class MusicModule(
                 providerEnabled = { id -> metadataProviders.providers.value.firstOrNull { it.id == id }?.enabled == true },
                 endpoints = metadataEndpoints, clock = clock,
                 previewDirectory = storage.cacheDir.resolve("cover-previews"),
+                sourceLyrics = sources::addonLyrics,
             ),
         )
         // The kinds of source Music can use, listed in Music's own plugin registry.

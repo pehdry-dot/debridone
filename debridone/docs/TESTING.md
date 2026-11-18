@@ -145,3 +145,27 @@ By hand — metadata:
 
 By hand — profiles: a second profile has an empty Manga library, its own sources switched on and
 its own reading settings; the first profile's are untouched when you switch back.
+
+
+## Music addons (Eclipse Music / BeatBoss format)
+
+Automated: `./gradlew :debridone:modules:music:test --tests "*MusicAddonTest"` (11 tests against a
+local addon in that format, including playback through libmpv).
+
+By hand, with the sample addon (it serves DebridOne's own test recordings):
+
+```bash
+python3 scripts/debridone/sample-music-addon.py --token my-private-token
+```
+
+1. Plugins › Music › Addons: paste the printed address, *Add addon*. The review names the addon,
+   its server (not the token) and what DebridOne will use. *Install for this profile*.
+2. The addon is listed as Working. *Test*: all steps pass and the audio is identified.
+3. *Settings*: change "Order of All songs"; the list in Discover follows. Saving is off.
+4. *Open in Discover*: its songs are listed; search finds them; one plays, and the mini-player
+   shows it. Playing continues in other sections.
+5. Add a song to the library and to a playlist; quit and reopen: it is still there and plays.
+6. Switch on *Allow saving songs*, save a song for offline listening, stop the sample addon: the
+   saved song still plays; the others say the addon could not be reached.
+7. Another profile: Plugins › Music › Addons is empty there.
+8. Paste a Streaming add-on's manifest address: refused, with the reason.

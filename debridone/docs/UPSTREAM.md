@@ -9,7 +9,8 @@
 | [xgi/aki-plugin-manager](https://github.com/xgi/aki-plugin-manager), npm 1.3.3 | The loader Houdoku uses for Tiyo. Bundled, unmodified, inside Manga's extension host. | MIT | `a398973d` (npm 1.3.3) |
 | [xgi/houdoku-extensions](https://github.com/xgi/houdoku-extensions), npm `@houdoku/extension-*` | Houdoku's older per-source packages; run through an adapter when the user installs one. Not bundled. | MIT | `d5710c72` |
 | [Node.js](https://nodejs.org) 22.23.4 | Runtime of Manga's extension host; the official build is bundled in the macOS app. | MIT and others (see its LICENSE) | release `v22.23.4` |
-| Eclipse Music | Feature reference for Music only. No source is available or used. | proprietary | — |
+| Eclipse Music | Feature reference for Music. Its published addon format (`eclipsemusic.app/docs`) is what Music's addon support follows. No source is available or used. | proprietary | docs read 2026-11-17 |
+| [TheVolecitor/BeatBoss](https://github.com/TheVolecitor/BeatBoss) (`main`) | Second description and a client implementation of the same addon format (`ADDONS.md`, `lib/core/services/addon_service.dart`), read to match real-world field names. No code copied. | MIT | `abc1b86f5ec266d499337fa77a602a2028327e9e` |
 
 Nuvio Desktop's code is the foundation of this repository. No Hydra, Houdoku or Tiyo source file
 is copied into it: Manga's engine, reader and extension host are DebridOne code written against

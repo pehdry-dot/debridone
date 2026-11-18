@@ -217,6 +217,7 @@ internal fun LyricsPanel(track: Track?, positionMs: Long, onSeek: (Long) -> Unit
                     when (lyrics?.origin) {
                         MusicMetadataService.ORIGIN_EMBEDDED -> "From the file"
                         MusicMetadataService.ORIGIN_LRCLIB -> "From LRCLIB"
+                        MusicMetadataService.ORIGIN_ADDON -> "From an addon"
                         MusicMetadataService.ORIGIN_MANUAL -> "Entered by you"
                         else -> ""
                     },

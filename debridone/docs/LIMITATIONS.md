@@ -152,8 +152,17 @@ Music
 - Online lookups are per song; there is no bulk "fix my whole library".
 - Reordering in playlists and the queue is done with move up/down, not by dragging.
 - A live radio stream has no duration, so it cannot be seeked or downloaded.
-- Streaming services with copy protection, third-party plugin files and Eclipse add-ons are not
-  supported (see `MUSIC.md`).
+- Streaming services with copy protection and plugins that carry code are not supported (see
+  `MUSIC.md`). Addons in the Eclipse Music / BeatBoss format are (`MUSIC_ADDONS.md`), except those
+  that answer the Eclipse app only and streams marked as encrypted.
+- Music addons were tested against a local addon that follows the published format and serves
+  DebridOne's own test recordings: in automated tests (installing, the address staying out of
+  every file, search, album / artist / playlist pages, rows, settings, playback through libmpv,
+  "still preparing" answers, saving with the real file type, profiles, the step-by-step test,
+  lyrics) and by hand in the running app on Linux (review dialog, install, test, settings, Discover,
+  playback, a second profile seeing nothing, restart). **No third-party addon was tested**, and
+  nothing about addons has been run on a Mac yet. HLS and DASH streams from an addon are handed to
+  the engine untested. Rows of albums, artists and playlists are not shown.
 - Switching a source off marks its songs unavailable rather than hiding them.
 
 Manga
@@ -179,5 +188,5 @@ Manga
 Upstream compatibility notes for later phases
 - Hydra's main process depends on Electron, a Rust native addon and Hydra's hosted API, and its
   libtorrent bridge is prebuilt only for Windows and Linux. It will be ported selectively.
-- `eclipsemusic.app` could not be reached from the build environment and no public source or SDK
-  was found, so Music is original work and Eclipse addon compatibility is not claimed.
+- Eclipse Music itself is closed source. Its addon format is published (`eclipsemusic.app/docs`)
+  and is what Music's addon support follows; nothing else of Eclipse is used.
