@@ -68,6 +68,9 @@ internal object LibraryState {
     var updating by mutableStateOf(false)
     var updateNote by mutableStateOf<String?>(null)
 
+    /** The last check left every series out, by the server's own rules. */
+    var nothingChecked by mutableStateOf(false)
+
     fun reset() {
         type = null
         status = null
@@ -112,27 +115,32 @@ internal fun MangaLibrary() {
     val listed = series.orEmpty()
     val selectedIds = LibraryState.selected.filter { id -> listed.any { it.series.id == id } }
 
-    /** Asks every online series' source for new chapters, a few at a time. */
+    /** Has the manga server look for new chapters of the whole library, by its own rules. */
     fun updateAll() {
         if (LibraryState.updating) return
         LibraryState.updating = true
-        LibraryState.updateNote = null
+        LibraryState.nothingChecked = false
+        LibraryState.updateNote = "Looking for new chapters…"
         scope.launch(Dispatchers.IO) {
-            var added = 0
-            var failed = 0
-            val all = manga.services.repository.library(manga.profileId)
-            all.forEachIndexed { index, summary ->
-                LibraryState.updateNote = "Checking ${index + 1} of ${all.size}: ${summary.series.title.take(40)}"
-                try {
-                    added += if (summary.series.isLocal) manga.services.local.rescan(summary.series.id) else manga.services.sources.refresh(summary.series.id)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
-                    failed++
+            val outcome = runCatching {
+                manga.services.repository.checkForNewChapters { checked, total ->
+                    if (total > 0) LibraryState.updateNote = "Looking for new chapters: $checked of $total series"
                 }
             }
             LibraryState.updating = false
-            LibraryState.updateNote = "${plural(added, "new chapter")}" + if (failed > 0) " · $failed series could not be checked" else ""
+            LibraryState.updateNote = outcome.fold(
+                { check ->
+                    when {
+                        check.seriesChecked == 0 -> {
+                            LibraryState.nothingChecked = true
+                            "No series was checked: the manga server leaves out series with unread chapters, series not started and completed ones, unless its settings say otherwise."
+                        }
+                        !check.finished -> "The check was stopped. ${plural(check.newChapters, "new chapter")} so far."
+                        else -> "${plural(check.newChapters, "new chapter")} in ${plural(check.seriesChecked, "series", "series")} checked"
+                    }
+                },
+                { it.message ?: "The library could not be checked." },
+            )
         }
     }
 
@@ -161,7 +169,7 @@ internal fun MangaLibrary() {
                         Box {
                             MangaButton("Add", { addMenu = true }, icon = Icons.Rounded.FolderOpen, primary = false)
                             DropdownMenu(addMenu, { addMenu = false }) {
-                                MangaMenuItem("Comic archives (CBZ, ZIP)…", Icons.Rounded.InsertDriveFile) { addMenu = false; importLocal(manga, actions, MangaPickers.chooseArchives(), LibraryState.type) }
+                                MangaMenuItem("Comic archives (CBZ, ZIP, CBR, EPUB)…", Icons.Rounded.InsertDriveFile) { addMenu = false; importLocal(manga, actions, MangaPickers.chooseArchives(), LibraryState.type) }
                                 MangaMenuItem("A folder…", Icons.Rounded.FolderOpen) { addMenu = false; MangaPickers.chooseFolder()?.let { importLocal(manga, actions, listOf(it), LibraryState.type) } }
                                 MangaCloudBridge.openCloudBrowser?.let { openCloud -> MangaMenuItem("From your cloud…", Icons.Rounded.CloudDownload) { addMenu = false; openCloud() } }
                                 MangaMenuDivider()
@@ -236,6 +244,9 @@ internal fun MangaLibrary() {
                     }
                 }
                 LibraryState.updateNote?.let { Text(it, style = small(), color = tokens.colors.textMuted) }
+                if (LibraryState.nothingChecked) {
+                    MangaButton("What is left out…", { MangaNav.openSettings(MangaSettingsSections.SERVER) }, primary = false)
+                }
                 if (duplicates > 0 && !LibraryState.selecting) {
                     Notice(
                         "${plural(duplicates, "title")} in your library ${if (duplicates == 1) "appears" else "appear"} more than once (from different sources). " +

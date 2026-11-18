@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -99,6 +101,8 @@ internal fun MangaHome() {
 
     if (data.libraryCount < 0) return
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        // Somebody who used the earlier version is told first what became of their library.
+        item { MigrationCard(Modifier.padding(start = 40.dp, end = 40.dp, top = 8.dp)) }
         if (data.libraryCount == 0 && data.continueReading.isEmpty()) {
             item { HomeSetup(sourceCount) }
         } else {
@@ -195,6 +199,7 @@ private fun HomeSetup(sourceCount: Int) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SetupCard(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, text: String, modifier: Modifier = Modifier, actions: @Composable () -> Unit) {
     val tokens = MaterialTheme.nuvio
@@ -207,6 +212,7 @@ private fun SetupCard(icon: androidx.compose.ui.graphics.vector.ImageVector, tit
         }
         Text(title, style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
         Text(text, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) { actions() }
+        // The buttons go onto a second line rather than being cut off in a narrow card.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 6.dp)) { actions() }
     }
 }

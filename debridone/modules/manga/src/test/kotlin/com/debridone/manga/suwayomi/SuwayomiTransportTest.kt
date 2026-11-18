@@ -97,7 +97,8 @@ class SuwayomiTransportTest {
         val body = String(request.body, Charsets.ISO_8859_1)
         assertTrue(body.contains("name=\"operations\""))
         assertTrue(body.contains("\"extensionFile\":null"))
-        assertTrue(body.contains("""{"0":["variables.input.extensionFile"]}"""))
+        assertTrue(body.contains("""{"0":["variables.extensionFile"]}"""))
+        assertTrue(body.contains("(\$extensionFile: Upload!)"), "the file is a variable of its own, which is where Suwayomi puts an upload")
         assertTrue(body.contains("filename=\"my _ext_.apk\""))
         assertTrue(body.contains(String(bytes, Charsets.ISO_8859_1)))
     }

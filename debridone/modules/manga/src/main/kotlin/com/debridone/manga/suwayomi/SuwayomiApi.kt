@@ -526,7 +526,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
     /** Installs an extension from a package file (`.apk`) the person chose. */
     fun installExtensionFile(fileName: String, bytes: ByteArray): SwExtension {
         val payload = transport.upload(
-            INSTALL_EXTERNAL_EXTENSION, input { put("extensionFile", JsonNull) }, "variables.input.extensionFile", fileName, bytes, INSTALL_TIMEOUT,
+            INSTALL_EXTERNAL_EXTENSION, buildJsonObject { put("extensionFile", JsonNull) }, "variables.extensionFile", fileName, bytes, INSTALL_TIMEOUT,
         ).need("installExternalExtension")
         return extension(payload.need("extension"))
     }
@@ -560,8 +560,10 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
 
     // ---- looking for new chapters ------------------------------------------------------------------
 
-    fun updateLibrary() {
-        transport.execute(UPDATE_LIBRARY, input { })
+    /** Starts a check of the whole library and returns how it stands right away (it runs on in the server). */
+    fun updateLibrary(): SwLibraryUpdate {
+        val jobs = transport.execute(UPDATE_LIBRARY, input { }).need("updateLibrary").obj("updateStatus")?.obj("jobsInfo")
+        return SwLibraryUpdate(jobs?.bool("isRunning") == true, jobs?.int("finishedJobs") ?: 0, jobs?.int("totalJobs") ?: 0)
     }
 
     fun stopLibraryUpdate() {
@@ -648,7 +650,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
 
     /** Starts restoring a backup and returns the id to ask [restoreStatus] with. */
     fun restoreBackup(fileName: String, bytes: ByteArray): String =
-        transport.upload(RESTORE_BACKUP, input { put("backup", JsonNull) }, "variables.input.backup", fileName, bytes)
+        transport.upload(RESTORE_BACKUP, buildJsonObject { put("backup", JsonNull) }, "variables.backup", fileName, bytes)
             .need("restoreBackup").text("id").orEmpty()
 
     fun restoreStatus(id: String): SwRestoreStatus? =
@@ -1054,8 +1056,10 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
         val EXTENSION_SOURCES = document("query { extensions(condition: { isInstalled: true }) { nodes { pkgName source { nodes { id } } } } }")
         val FETCH_EXTENSIONS = document("mutation(^input: FetchExtensionsInput!) { fetchExtensions(input: ^input) { extensions { ...ExtensionFields } } } $EXTENSION_FIELDS")
         val UPDATE_EXTENSION = document("mutation(^input: UpdateExtensionInput!) { updateExtension(input: ^input) { extension { ...ExtensionFields } } } $EXTENSION_FIELDS")
+        // A file is a variable of its own: Suwayomi puts an uploaded file into a top-level variable only
+        // (`variables.extensionFile`), never into a field of an input object.
         val INSTALL_EXTERNAL_EXTENSION = document(
-            "mutation(^input: InstallExternalExtensionInput!) { installExternalExtension(input: ^input) { extension { ...ExtensionFields } } } $EXTENSION_FIELDS",
+            "mutation(^extensionFile: Upload!) { installExternalExtension(input: { extensionFile: ^extensionFile }) { extension { ...ExtensionFields } } } $EXTENSION_FIELDS",
         )
 
         val DOWNLOAD_STATUS = document("query { downloadStatus { ...DownloadFields } } $DOWNLOAD_FIELDS")
@@ -1070,7 +1074,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
         val STOP_DOWNLOADER = document("mutation(^input: StopDownloaderInput!) { stopDownloader(input: ^input) { downloadStatus { ...DownloadFields } } } $DOWNLOAD_FIELDS")
         val CLEAR_DOWNLOADER = document("mutation(^input: ClearDownloaderInput!) { clearDownloader(input: ^input) { downloadStatus { ...DownloadFields } } } $DOWNLOAD_FIELDS")
 
-        val UPDATE_LIBRARY = document("mutation(^input: UpdateLibraryInput!) { updateLibrary(input: ^input) { updateStatus { jobsInfo { isRunning } } } }")
+        val UPDATE_LIBRARY = document("mutation(^input: UpdateLibraryInput!) { updateLibrary(input: ^input) { updateStatus { jobsInfo { isRunning finishedJobs totalJobs } } } }")
         val UPDATE_STOP = document("mutation(^input: UpdateStopInput!) { updateStop(input: ^input) { clientMutationId } }")
         val LIBRARY_UPDATE_STATUS = document("query { libraryUpdateStatus { jobsInfo { isRunning finishedJobs totalJobs } } }")
 
@@ -1091,8 +1095,13 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
         val UPDATE_TRACK = document("mutation(^input: UpdateTrackInput!) { updateTrack(input: ^input) { trackRecord { ...TrackRecordFields } } } $TRACK_RECORD_FIELDS")
         val TRACK_PROGRESS = document("mutation(^input: TrackProgressInput!) { trackProgress(input: ^input) { clientMutationId } }")
 
-        val CREATE_BACKUP = document("mutation { createBackup(input: {}) { url } }")
-        val RESTORE_BACKUP = document("mutation(^input: RestoreBackupInput!) { restoreBackup(input: ^input) { id status { state mangaProgress totalManga } } }")
+        // Everything about the library, and never the server's own settings: those hold its address
+        // and sign-in, which belong to the server they were made for and not in a file that travels.
+        private const val BACKUP_FLAGS =
+            "{ includeManga: true, includeCategories: true, includeChapters: true, includeTracking: true, includeHistory: true, includeClientData: true, includeServerSettings: false }"
+        val CREATE_BACKUP = document("mutation { createBackup(input: { flags: $BACKUP_FLAGS }) { url } }")
+        // A backup's server settings are never applied: they would replace this server's address and sign-in.
+        val RESTORE_BACKUP = document("mutation(^backup: Upload!) { restoreBackup(input: { backup: ^backup, flags: $BACKUP_FLAGS }) { id status { state mangaProgress totalManga } } }")
         val RESTORE_STATUS = document("query(^id: String!) { restoreStatus(id: ^id) { state mangaProgress totalManga } }")
 
         /** Every document with a name, for the test that validates them against the pinned server. */

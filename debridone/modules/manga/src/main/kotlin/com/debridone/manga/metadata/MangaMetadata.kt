@@ -5,19 +5,12 @@ import com.debridone.manga.library.MediaType
 import com.debridone.manga.library.Series
 import com.debridone.manga.library.SeriesDetails
 import com.debridone.platform.secrets.ScopedSecretStore
-import java.security.SecureRandom
-import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 
-/** A tracking account connected by one profile. */
-data class TrackerAccount(val provider: String, val name: String)
-
-/** What happened when reading progress was sent to a tracking service. */
-data class TrackingResult(val provider: String, val ok: Boolean, val message: String)
-
 /**
- * Details from AniList, MangaDex and MyAnimeList, and — only when the person has connected their
- * own account — sending reading progress back to AniList or MyAnimeList.
+ * Details from AniList, MangaDex and MyAnimeList: for finding a series' description, people, tags
+ * and cover, and for the charts on Home. Reading lists (tracking) are not here: they are the
+ * manga server's, see `tracking/MangaTrackers`.
  *
  * Rules:
  *  - a field the person edited and locked is never changed by any provider;
@@ -44,7 +37,6 @@ class MangaMetadata(
     private val all: List<MetadataSource> = listOf(aniList, mangaDex, myAnimeList)
 
     private val popularCache = ConcurrentHashMap<String, Pair<Long, List<MetadataMatch>>>()
-    private val pendingVerifiers = ConcurrentHashMap<Long, String>()
 
     fun source(providerId: String): MetadataSource? = all.firstOrNull { it.id == providerId }
 
@@ -145,105 +137,21 @@ class MangaMetadata(
         if (trimmed.isEmpty()) secrets.delete(MAL_CLIENT_ID) else secrets.put(MAL_CLIENT_ID, trimmed)
     }
 
-    fun account(profileId: Long, provider: String): TrackerAccount? =
-        profile(profileId).get("tracker.$provider.name")?.let { TrackerAccount(provider, it) }
-
-    /** Connects an AniList account with a token the person obtained from AniList for their own API client. */
-    suspend fun connectAniList(profileId: Long, token: String): TrackerAccount {
-        val trimmed = token.trim()
-        if (trimmed.isEmpty()) throw MetadataException("Paste the token AniList showed you.")
-        val name = aniList.viewer(trimmed)
-        profile(profileId).put("tracker.anilist.token", trimmed)
-        profile(profileId).put("tracker.anilist.name", name)
-        return TrackerAccount(aniList.id, name)
-    }
-
-    /** The page to open for an AniList token, for the person's own API client (redirect address `https://anilist.co/api/v2/oauth/pin`). */
-    fun aniListAuthorizationUrl(clientId: String): String {
-        val id = clientId.trim()
-        if (id.toIntOrNull() == null) throw MetadataException("An AniList client ID is a number. Create a client at anilist.co › Settings › Developer.")
-        return "https://anilist.co/api/v2/oauth/authorize?client_id=$id&response_type=token"
-    }
-
-    /** The MyAnimeList sign-in page for this profile. The secret that goes with it is kept until [connectMyAnimeList]. */
-    fun myAnimeListAuthorizationUrl(profileId: Long): String {
-        val bytes = ByteArray(64).also { SecureRandom().nextBytes(it) }
-        val verifier = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-        pendingVerifiers[profileId] = verifier
-        return myAnimeList.authorizationUrl(verifier)
-    }
-
     /**
-     * Finishes the MyAnimeList sign-in. [redirected] is the address the browser ended up at after
-     * the person allowed access (it contains `code=…`), or just that code.
+     * Removes what the earlier version of Manga kept for a deleted profile: its own AniList and
+     * MyAnimeList sign-ins. (Tracker sign-ins are now the manga server's, in the profile's folder.)
      */
-    suspend fun connectMyAnimeList(profileId: Long, redirected: String): TrackerAccount {
-        val verifier = pendingVerifiers[profileId] ?: throw MetadataException("Open the MyAnimeList sign-in page first.")
-        val code = Regex("[?&]code=([^&#\\s]+)").find(redirected)?.groupValues?.get(1) ?: redirected.trim()
-        if (code.isEmpty() || code.contains(' ')) throw MetadataException("That does not contain the code MyAnimeList sent back.")
-        val (access, refresh) = myAnimeList.exchange(code, verifier)
-        val name = myAnimeList.viewer(access)
-        val store = profile(profileId)
-        store.put("tracker.myanimelist.access", access)
-        if (refresh != null) store.put("tracker.myanimelist.refresh", refresh)
-        store.put("tracker.myanimelist.name", name)
-        pendingVerifiers.remove(profileId)
-        return TrackerAccount(myAnimeList.id, name)
-    }
-
-    fun disconnect(profileId: Long, provider: String) {
-        val store = profile(profileId)
-        listOf("token", "access", "refresh", "name").forEach { store.delete("tracker.$provider.$it") }
-    }
-
-    /** Removes a deleted profile's tracking sign-ins. */
     fun deleteProfile(profileId: Long) {
-        disconnect(profileId, aniList.id)
-        disconnect(profileId, myAnimeList.id)
+        val store = profile(profileId)
+        for (provider in listOf(aniList.id, myAnimeList.id)) {
+            listOf("token", "access", "refresh", "name").forEach { store.delete("tracker.$provider.$it") }
+        }
     }
 
-    // ---- tracking -------------------------------------------------------------------------------
-
-    /**
-     * Sends how far the series has been read to the services it is tracked on. Does nothing for a
-     * series that is not tracked. Each service reports for itself; one failing does not stop the other.
-     */
-    suspend fun syncProgress(seriesId: Long): List<TrackingResult> {
-        val series = repository.series(seriesId) ?: return emptyList()
-        val tracked = repository.metadataLinks(seriesId).filter { it.tracked }
-        if (tracked.isEmpty()) return emptyList()
-        val chapters = repository.chapters(seriesId, allLanguages = true)
-        val read = chapters.filter { it.read }
-        val progress = read.mapNotNull { it.chapterSort }.maxOrNull()?.toInt() ?: read.size
-        val completed = series.status == "Completed" && chapters.isNotEmpty() && chapters.all { it.read }
-        val store = profile(series.profileId)
-        return tracked.map { link ->
-            try {
-                when (link.provider) {
-                    aniList.id -> {
-                        val token = store.get("tracker.anilist.token") ?: throw MetadataException("No AniList account is connected for this profile.")
-                        aniList.saveProgress(token, link.remoteId, progress, completed)
-                    }
-                    myAnimeList.id -> {
-                        val access = store.get("tracker.myanimelist.access") ?: throw MetadataException("No MyAnimeList account is connected for this profile.")
-                        try {
-                            myAnimeList.saveProgress(access, link.remoteId, progress, completed)
-                        } catch (expired: MetadataException) {
-                            // Access tokens last a month; renew once with the refresh token and try again.
-                            val refresh = store.get("tracker.myanimelist.refresh") ?: throw expired
-                            val (renewed, nextRefresh) = myAnimeList.refresh(refresh)
-                            store.put("tracker.myanimelist.access", renewed)
-                            if (nextRefresh != null) store.put("tracker.myanimelist.refresh", nextRefresh)
-                            myAnimeList.saveProgress(renewed, link.remoteId, progress, completed)
-                        }
-                    }
-                    else -> throw MetadataException("${link.provider} does not keep reading lists.")
-                }
-                TrackingResult(link.provider, true, "Chapter $progress")
-            } catch (problem: MetadataException) {
-                TrackingResult(link.provider, false, problem.message ?: "The update failed.")
-            }
-        }
+    /** True when the earlier version of Manga left a tracker sign-in of its own for this profile. */
+    fun hasLegacyTrackerSignIn(profileId: Long): Boolean {
+        val store = profile(profileId)
+        return listOf(aniList.id, myAnimeList.id).any { store.get("tracker.$it.name") != null }
     }
 
     private fun profile(profileId: Long): ScopedSecretStore = secrets.child("profile.$profileId")

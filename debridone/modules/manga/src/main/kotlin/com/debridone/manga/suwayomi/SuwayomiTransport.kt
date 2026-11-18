@@ -85,8 +85,9 @@ class SuwayomiTransport(val endpoint: ServerEndpoint) {
     }
 
     /**
-     * Runs a mutation that takes a file (GraphQL multipart request). [filePath] is where the file
-     * goes among the variables, e.g. `variables.input.extensionFile`.
+     * Runs a mutation that takes a file (GraphQL multipart request). [filePath] names the variable
+     * the file becomes, e.g. `variables.extensionFile`. Suwayomi fills top-level variables only, so
+     * the document declares the file as a variable of its own (`$extensionFile: Upload!`).
      */
     fun upload(document: String, variables: JsonObject, filePath: String, fileName: String, bytes: ByteArray, timeoutSeconds: Int = 300): JsonObject {
         val boundary = "debridone-" + UUID.randomUUID()

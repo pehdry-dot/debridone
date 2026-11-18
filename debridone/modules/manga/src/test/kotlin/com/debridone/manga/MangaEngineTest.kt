@@ -85,7 +85,7 @@ class MangaEngineTest {
             module = MangaModule(
                 ModuleStorage(ModuleId.MANGA, paths, FileSecretStore(paths.secretsDir)),
                 runtime = { runtime },
-                metadataEndpoints = MetadataEndpoints("$url/anilist", "$url/mangadex", "$url/covers", "$url/mal", "$url/malauth"),
+                metadataEndpoints = MetadataEndpoints("$url/anilist", "$url/mangadex", "$url/covers", "$url/mal"),
             )
             runBlocking {
                 module.start()
@@ -380,5 +380,292 @@ class MangaEngineTest {
         assertTrue(Files.isDirectory(module.serverDataDir.resolve("profile-$ALICE")))
         assertTrue(bobs.id > 0)
         services.local.remove(repository.library(ALICE).single { it.series.title == "Alice Only" }.series)
+    }
+
+    private fun get(address: String): Pair<Int, String> {
+        val connection = java.net.URI(address).toURL().openConnection(java.net.Proxy.NO_PROXY) as java.net.HttpURLConnection
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 90_000
+        val status = connection.responseCode
+        val body = (if (status < 400) connection.inputStream else connection.errorStream)?.readBytes()?.toString(Charsets.UTF_8).orEmpty()
+        return status to body
+    }
+
+    /** True once nothing listens at [address] any more (a listener is closed a moment after its last answer). */
+    private fun goneSoon(address: String): Boolean {
+        repeat(40) {
+            if (runCatching { get(address) }.isFailure) return true
+            Thread.sleep(100)
+        }
+        return false
+    }
+
+    @Test
+    fun trackersAreTheServersAndABrowserSignInComesBackThroughDebridOne() = runBlocking {
+        val trackers = services.trackers.list()
+        val aniList = trackers.single { it.name == "AniList" }
+        val mangaUpdates = trackers.single { it.name == "MangaUpdates" }
+        assertTrue(aniList.signsInWithBrowser && !aniList.signedIn)
+        assertFalse(mangaUpdates.signsInWithBrowser)
+        assertTrue(trackers.all { it.statuses.isNotEmpty() && it.scores.isNotEmpty() }, "each tracker brings its own statuses and scores")
+        assertTrue(trackers.any { it.name == "MyAnimeList" })
+
+        // What cannot work is refused here, with a sentence, before the server is asked.
+        assertFailsWith<IllegalArgumentException> { services.trackers.signIn(mangaUpdates.id, " ", "") }
+        assertFailsWith<IllegalArgumentException> { services.trackers.completeBrowserSignIn(aniList.id, "https://suwayomi.org/tracker-oauth") }
+        assertFailsWith<IllegalArgumentException> { services.trackers.beginBrowserSignIn(mangaUpdates.id) }
+
+        // A browser sign-in: the tracker's page is asked to send the browser back to a listener of ours.
+        val signIn = services.trackers.beginBrowserSignIn(aniList.id)
+        assertTrue(signIn.address.startsWith("https://anilist.co/api/v2/oauth/authorize?"), signIn.address)
+        val state = java.net.URLDecoder.decode(signIn.address.substringAfter("state="), Charsets.UTF_8)
+        val redirect = Regex(""""redirectUrl":"([^"]+)"""").find(state)!!.groupValues[1]
+        assertTrue(redirect.startsWith("http://127.0.0.1:"), redirect)
+        assertTrue(state.contains(""""clientName":"DebridOne""""))
+        // Only the address made for this sign-in is listened to.
+        assertEquals(404, get(redirect.substringBeforeLast('/') + "/somewhere-else?access_token=x").first)
+        assertFalse(signIn.outcome.isDone)
+        // The browser comes back without a sign-in (the person said no): the server is handed what
+        // arrived, refuses it, and the sign-in ends with the reason. Nothing is signed in.
+        val (status, page) = get("$redirect?error=access_denied&state=x")
+        assertEquals(200, status)
+        assertTrue(page.contains("did not work"), page)
+        assertTrue(signIn.outcome.isCompletedExceptionally)
+        assertFalse(services.trackers.list().single { it.id == aniList.id }.signedIn)
+        // The listener is gone once it was used.
+        assertTrue(goneSoon("$redirect?again=1"), "the sign-in address answers only once")
+
+        // Giving up closes the listener too.
+        val abandoned = services.trackers.beginBrowserSignIn(aniList.id)
+        val other = Regex(""""redirectUrl":"([^"]+)"""").find(java.net.URLDecoder.decode(abandoned.address.substringAfter("state="), Charsets.UTF_8))!!.groupValues[1]
+        assertTrue(other != redirect, "every sign-in has an address of its own")
+        abandoned.close()
+        assertTrue(abandoned.outcome.isCompletedExceptionally)
+        assertTrue(goneSoon(other))
+
+        // A series nobody linked has no entries.
+        val series = services.local.import(ALICE, comic("Untracked", chapters = 1))
+        assertTrue(services.trackers.entries(series.id).isEmpty())
+        services.local.remove(series)
+    }
+
+    @Test
+    fun theServersOwnSettingsAreChangedThroughItAndKeptByIt() = runBlocking {
+        val settings = services.serverSettings
+        val before = settings.read()
+        assertFalse(before.downloadAsCbz)
+        assertFalse(before.autoDownloadNewChapters)
+        assertFalse(before.proxyEnabled)
+        assertFalse(before.proxyHasPassword)
+        assertEquals(12.0, before.updateIntervalHours)
+
+        val wanted = before.copy(
+            downloadAsCbz = true, autoDownloadNewChapters = true, autoDownloadLimit = 3, updateIntervalHours = 2.0, sourcesInParallel = 99,
+            proxyHost = " proxy.example ", proxyPort = "1080", proxyVersion = 4, flareSolverrTimeoutSeconds = 1,
+        )
+        val after = settings.save(before, wanted, proxyPassword = "s3cret")
+        assertTrue(after.downloadAsCbz && after.autoDownloadNewChapters)
+        assertEquals(3, after.autoDownloadLimit)
+        assertEquals(6.0, after.updateIntervalHours, "the server checks no more often than every six hours")
+        assertEquals(20, after.sourcesInParallel)
+        assertEquals("proxy.example", after.proxyHost)
+        assertEquals(4, after.proxyVersion)
+        assertEquals(5, after.flareSolverrTimeoutSeconds)
+        assertTrue(after.proxyHasPassword)
+        assertFalse(after.proxyEnabled, "what was not changed stays as it was")
+
+        // The server keeps them itself: they are there after DebridOne and the server were closed.
+        module.close()
+        open(ALICE)
+        assertEquals(after, services.serverSettings.read())
+        // And what DebridOne decides for a server it starts is still what it decided.
+        val conf = Files.readAllLines(module.serverDataDir.resolve("profile-$ALICE/server.conf")).map { it.replace(" ", "") }
+        assertTrue(conf.any { it.startsWith("server.ip=\"127.0.0.1\"") }, conf.toString())
+        assertTrue(conf.any { it.startsWith("server.webUIEnabled=false") })
+        assertTrue(conf.any { it.startsWith("server.authMode=") && it.contains("basic_auth", ignoreCase = true) })
+
+        val restored = services.serverSettings.save(after, before, proxyPassword = "")
+        assertEquals(before, restored)
+    }
+
+    @Test
+    fun aBackupCarriesTheLibraryWithDebridOnesExtrasAndNeverTheServersSettings() = runBlocking {
+        val carol = 1003L
+        val folder = comic("Carried Over", chapters = 2)
+        val series = services.local.import(ALICE, folder, MediaType.MANHWA)
+        val chapters = repository.chapters(series.id)
+        repository.setLibraryStatus(series.id, LibraryStatus.COMPLETED)
+        repository.setFavorite(series.id, true)
+        repository.setRead(listOf(chapters[0].id), true)
+        repository.editSeries(series.id, SeriesEdit(title = "Carried Over (my edition)", customTags = listOf("keep")))
+        assertTrue(repository.toggleBookmark(chapters[1].id, 1, "here"))
+        val shelf = repository.createCollection(ALICE, "Shelf")
+        repository.setInCollection(shelf.id, series.id, true)
+
+        val backup = dir.resolve("library.tachibk")
+        assertTrue(repository.exportBackup(backup) >= 1)
+        assertTrue(Files.size(backup) > 0)
+        // The file is the library, not the server: the sign-in DebridOne made for it is not in it.
+        val password = Files.readAllLines(module.serverDataDir.resolve("profile-$ALICE/server.conf"))
+            .first { it.replace(" ", "").startsWith("server.authPassword=") }.substringAfter('=').substringBefore('#').trim().trim('"')
+        assertTrue(password.length >= 16)
+        val content = java.util.zip.GZIPInputStream(Files.newInputStream(backup)).use { it.readBytes() }.toString(Charsets.ISO_8859_1)
+        assertFalse(content.contains(password), "a backup must not carry the server's password")
+
+        // Another profile restores it: a server of its own, started with its own address and password.
+        module.onProfileChanged(carol)
+        awaitReady(carol)
+        try {
+        assertTrue(repository.library(carol).isEmpty())
+        val confBefore = Files.readAllLines(module.serverDataDir.resolve("profile-$carol/server.conf")).filter { it.contains("auth") || it.contains("server.port") || it.contains("server.ip") }
+        // Her copy of the files is linked first, as a restored series reads from the profile's own Local source.
+        services.local.import(carol, folder, MediaType.MANHWA)
+        val restoredCount = repository.restoreBackup(backup)
+        assertTrue(restoredCount >= 1)
+        val restored = repository.library(carol).single { it.series.title == "Carried Over (my edition)" }.series
+        assertEquals(LibraryStatus.COMPLETED, restored.libraryStatus)
+        assertTrue(restored.favorite)
+        assertEquals(MediaType.MANHWA, restored.mediaType)
+        assertEquals(listOf("keep"), restored.customTags)
+        val restoredChapters = repository.chapters(restored.id)
+        assertEquals(listOf(true, false), restoredChapters.map { it.read })
+        assertEquals("here", repository.bookmarks(restored.id).single().note)
+        assertEquals(listOf("Shelf"), repository.collections(carol).filter { restored.id in repository.library(carol, LibraryFilter(collectionId = it.id)).map { s -> s.series.id } }.map { it.name })
+        assertEquals(confBefore, Files.readAllLines(module.serverDataDir.resolve("profile-$carol/server.conf")).filter { it.contains("auth") || it.contains("server.port") || it.contains("server.ip") }, "restoring never touches the server's own settings")
+
+        // Something that is not a backup is refused with a sentence.
+        val junk = Files.write(dir.resolve("not-a-backup.tachibk"), "hello".toByteArray())
+        assertFailsWith<java.io.IOException> { repository.restoreBackup(junk, timeoutMs = 60_000) }
+        } finally {
+            // The other tests of this class expect Alice.
+            module.onProfileChanged(ALICE)
+            awaitReady(ALICE)
+        }
+        module.deleteProfileData(carol)
+        repository.deleteCollection(repository.collections(ALICE).single { it.name == "Shelf" }.id)
+        services.local.remove(repository.library(ALICE).single { it.series.title == "Carried Over (my edition)" }.series)
+    }
+
+    @Test
+    fun newChaptersAreFoundByTheServersOwnCheckUnderItsOwnRules() = runBlocking {
+        val folder = comic("Still Running", chapters = 2)
+        val series = services.local.import(ALICE, folder)
+        assertEquals(2, repository.chapters(series.id).size)
+        SampleComics.cbz(folder.resolve("Chapter 03.cbz"), pages = 2)
+
+        // A server DebridOne set up looks at every series: the new chapter is found, and
+        // DebridOne's list of the series' chapters is the new one.
+        val settings = services.serverSettings
+        val before = settings.read()
+        assertFalse(before.updateSkipsNotStarted || before.updateSkipsUnread || before.updateSkipsCompleted, "a new server leaves no series out")
+        val progress = ArrayList<Pair<Int, Int>>()
+        val check = repository.checkForNewChapters { checked, total -> progress += checked to total }
+        assertTrue(check.finished)
+        assertTrue(check.seriesChecked >= 1, check.toString())
+        assertEquals(1, check.newChapters)
+        assertEquals(3, repository.chapters(series.id).size)
+        assertEquals(3, repository.summary(series.id)!!.unreadCount)
+        assertTrue(progress.all { (checked, total) -> checked <= total })
+
+        // The server's own rule, switched on in its settings, is the server's to apply: a series
+        // that still has unread chapters is then left out.
+        settings.save(before, before.copy(updateSkipsUnread = true))
+        SampleComics.cbz(folder.resolve("Chapter 04.cbz"), pages = 2)
+        val skipped = repository.checkForNewChapters()
+        assertTrue(skipped.finished)
+        assertEquals(0, skipped.newChapters)
+        assertEquals(3, repository.chapters(series.id).size)
+
+        settings.save(settings.read(), before)
+        services.local.remove(repository.series(series.id)!!)
+    }
+
+    /** Waits until the profile's connection is either usable or given up on, and returns it. */
+    private fun awaitSettled(profile: Long): MangaConnection {
+        val deadline = System.currentTimeMillis() + 120_000
+        while (System.currentTimeMillis() < deadline) {
+            val state = services.server.state.value
+            if (state is MangaConnection.Ready && state.profileId == profile) return state
+            if (state is MangaConnection.Failed && state.profileId == profile && !state.retrying) return state
+            Thread.sleep(50)
+        }
+        throw AssertionError("The connection did not settle: ${services.server.state.value}")
+    }
+
+    /** Connects afresh and returns how that ended (not how the attempt before it did). */
+    private fun reconnectAndSettle(profile: Long): MangaConnection {
+        val before = services.server.generation.value
+        services.server.reconnect()
+        val deadline = System.currentTimeMillis() + 30_000
+        while (services.server.generation.value == before && System.currentTimeMillis() < deadline) Thread.sleep(20)
+        return awaitSettled(profile)
+    }
+
+    @Test
+    fun aProfileCanReadFromAServerThePersonRunsThemselves() = runBlocking {
+        val dave = 1004L
+        val runtime = SuwayomiTestRuntime.runtimeOrSkip()
+        // Somebody's own Suwayomi server, with a library of its own. (Started here the way
+        // DebridOne starts one, which gives it an address and a password.)
+        val theirs = com.debridone.manga.suwayomi.SuwayomiServerManager(dir.resolve("their-server"), { runtime })
+        SampleComics.series(theirs.localSourceDirectory(1), "On Their Server", chapters = 1, pages = 2)
+        try {
+            val endpoint = theirs.start(1)
+            val theirApi = com.debridone.manga.suwayomi.SuwayomiApi(com.debridone.manga.suwayomi.SuwayomiTransport(endpoint))
+            val shelved = theirApi.browse("0", com.debridone.manga.suwayomi.SuwayomiApi.BrowseType.POPULAR, 1).items.single { it.title == "On Their Server" }
+            theirApi.setInLibrary(listOf(shelved.id), true)
+
+            module.onProfileChanged(dave)
+            services.preferences.set(MangaPreferences.SERVER_MODE, MangaPreferences.SERVER_MODE_REMOTE)
+            services.preferences.set(MangaPreferences.SERVER_URL, endpoint.baseUrl)
+            services.preferences.set(MangaPreferences.SERVER_USERNAME, endpoint.username)
+            try {
+                // A wrong password is said to be that, and is not tried over and over.
+                module.setRemotePassword(dave, "not-their-password")
+                assertTrue(module.hasRemotePassword(dave))
+                val refused = assertIs<MangaConnection.Failed>(reconnectAndSettle(dave))
+                assertTrue(refused.remote && !refused.retrying)
+                assertTrue(refused.message.contains("user name and password"), refused.message)
+                assertFalse(services.server.isReady)
+
+                // With the right one, the profile's library is that server's.
+                module.setRemotePassword(dave, endpoint.password)
+                val ready = assertIs<MangaConnection.Ready>(reconnectAndSettle(dave))
+                assertTrue(ready.remote)
+                assertEquals(endpoint.baseUrl, ready.address)
+                assertTrue(ready.version.startsWith("v2."), ready.version)
+                val series = repository.library(dave).single().series
+                assertEquals("On Their Server", series.title)
+                val chapter = repository.chapters(series.id).single()
+                val open = services.pages.open(chapter.id)
+                assertEquals(2, open.pageCount)
+                assertContentEquals(SampleComics.page(1), services.pages.page(open, 1))
+                repository.saveProgress(chapter.id, page = 1, pageCount = 2)
+                assertEquals(1, theirApi.chapter(chapter.id.toInt()).lastPageRead, "progress is kept by their server")
+
+                // No server of DebridOne's runs for this profile while it reads from theirs (its own
+                // folder stays, for when it goes back), and files of this computer cannot be read through theirs.
+                assertNull(services.server.manager.runningProcess, "DebridOne's own server is stopped while the profile uses another")
+                assertNull(services.server.localSourceDirectory())
+                assertFalse(services.local.available)
+                val refusal = assertFailsWith<LocalImportException> { services.local.import(dave, comic("Mine", chapters = 1)) }
+                assertTrue(refusal.message!!.contains("another computer"), refusal.message)
+
+                // The password is in the credential store only: not among the settings.
+                val database = dir.resolve("data").toFile().walkTopDown().filter { it.isFile && it.name.endsWith(".db") }.toList()
+                assertTrue(database.isNotEmpty())
+                assertTrue(database.none { it.readBytes().toString(Charsets.ISO_8859_1).contains(endpoint.password!!) }, "the remote password is not written to a database")
+            } finally {
+                services.preferences.set(MangaPreferences.SERVER_MODE, null)
+                module.setRemotePassword(dave, null)
+                module.onProfileChanged(ALICE)
+                awaitReady(ALICE)
+            }
+            // Back on Alice, DebridOne's own server again, and the other server was left running: it is not ours to stop.
+            assertFalse((services.server.state.value as MangaConnection.Ready).remote)
+            assertTrue(theirApi.about().version.startsWith("v2."))
+        } finally {
+            theirs.close()
+        }
     }
 }

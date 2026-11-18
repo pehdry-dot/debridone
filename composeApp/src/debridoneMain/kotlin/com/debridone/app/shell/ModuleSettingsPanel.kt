@@ -40,7 +40,13 @@ import com.nuvio.app.core.ui.SideDrawer
 import com.nuvio.app.core.ui.nuvio
 
 /** One page of a section's settings. */
-internal class SettingsCategory(val id: String, val label: String, val icon: ImageVector)
+internal class SettingsCategory(
+    val id: String,
+    val label: String,
+    val icon: ImageVector,
+    /** How what is on the page is kept, said under the panel's title. */
+    val saving: String = "changes are saved as you make them",
+)
 
 /**
  * The settings of one section (Music, Manga), shown inside that section: a panel on the right with
@@ -81,7 +87,7 @@ internal fun ModuleSettingsPanel(
                 Column(Modifier.weight(1f)) {
                     Text(title, style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
                     Text(
-                        "${current.label} · changes are saved as you make them",
+                        "${current.label} · ${current.saving}",
                         style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted,
                     )
                 }

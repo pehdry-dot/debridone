@@ -4,13 +4,16 @@ import com.debridone.manga.download.MangaDownloads
 import com.debridone.manga.library.MangaRepository
 import com.debridone.manga.library.MangaSchema
 import com.debridone.manga.local.LocalFiles
+import com.debridone.manga.migration.MangaMigration
 import com.debridone.manga.metadata.MangaMetadata
 import com.debridone.manga.metadata.MetadataEndpoints
 import com.debridone.manga.reader.MangaPages
 import com.debridone.manga.sources.MangaExtensions
 import com.debridone.manga.sources.MangaSources
 import com.debridone.manga.suwayomi.MangaConnection
+import com.debridone.manga.tracking.MangaTrackers
 import com.debridone.manga.suwayomi.MangaServer
+import com.debridone.manga.suwayomi.MangaServerSettings
 import com.debridone.manga.suwayomi.RemoteServer
 import com.debridone.manga.suwayomi.SuwayomiRuntime
 import com.debridone.manga.suwayomi.SuwayomiRuntimeLocator
@@ -53,6 +56,12 @@ class MangaServices internal constructor(
     val local: LocalFiles,
     val downloads: MangaDownloads,
     val metadata: MangaMetadata,
+    /** Reading lists on AniList, MyAnimeList and the others, as the manga server keeps them. */
+    val trackers: MangaTrackers,
+    /** The manga server's own settings (downloads, checks for new chapters, proxy). */
+    val serverSettings: MangaServerSettings,
+    /** What became of the library of the earlier, Houdoku-based version of Manga. */
+    val migration: MangaMigration,
     val preferences: MangaPreferences,
     val appSettings: MangaAppSettings,
     /** Where covers the person chose themselves are kept. */
@@ -95,6 +104,11 @@ class MangaModule(
     /** The profile whose library and reading state are shown. */
     val activeProfile: StateFlow<Long?> = _activeProfile.asStateFlow()
 
+    private val _migrationProblem = MutableStateFlow<String?>(null)
+
+    /** Why the earlier library could not be carried over, when that failed (nothing was changed then). */
+    val migrationProblem: StateFlow<String?> = _migrationProblem.asStateFlow()
+
     /** Where every profile's Suwayomi data folder is. */
     val serverDataDir: Path get() = storage.dataDir.resolve("suwayomi")
 
@@ -119,21 +133,40 @@ class MangaModule(
             },
             endpoints = metadataEndpoints, clock = clock,
         )
+        val localFiles = LocalFiles(server, repository, sources)
+        val migration = MangaMigration(
+            requireDatabase(), storage.dataDir, server, repository, localFiles,
+            hasLegacyTrackerSignIn = { profile -> metadata.hasLegacyTrackerSignIn(profile) }, clock = clock,
+        )
         _services.value = MangaServices(
             server = server,
             repository = repository,
             sources = sources,
             extensions = MangaExtensions(server, sources),
             pages = pages,
-            local = LocalFiles(server, repository, sources),
+            local = localFiles,
             downloads = downloads,
             metadata = metadata,
+            trackers = MangaTrackers(server),
+            serverSettings = MangaServerSettings(server),
+            migration = migration,
             preferences = preferences,
             appSettings = appSettings,
             coversDir = storage.dataDir.resolve("covers"),
         )
         runBlocking { runCatching { registerPlugin(LOCAL_FILES) } }
         downloads.watch()
+        // A profile's earlier library is carried over the first time its own server is up. It is
+        // copied to a backup first and only ever read; what could not be carried over is in the report.
+        moduleScope.launch(Dispatchers.IO) {
+            server.state.collect { state ->
+                if (state is MangaConnection.Ready && !state.remote) {
+                    runCatching { if (migration.needsRun(state.profileId)) migration.run(state.profileId) }
+                        .onFailure { failure -> _migrationProblem.value = failure.message ?: "The earlier library could not be carried over." }
+                        .onSuccess { _migrationProblem.value = null }
+                }
+            }
+        }
         moduleScope.launch(Dispatchers.IO) { runCatching { pages.trimCache(appSettings.cacheMegabytes * 1024L * 1024L) } }
     }
 
@@ -242,6 +275,7 @@ class MangaModule(
             ProfileSettingsTableStore.createTableSql("manga_profile_settings"),
         ),
         MangaSchema.library,
+        MangaMigration.schema,
     )
 
     override val supportedPluginKinds = setOf(

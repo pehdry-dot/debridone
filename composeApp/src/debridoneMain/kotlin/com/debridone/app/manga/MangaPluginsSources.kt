@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.OpenInNew
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Star
@@ -386,16 +387,10 @@ internal fun MetadataTab() {
     val scope = rememberCoroutineScope()
     val providers by manga.module.metadataProviders.providers.collectAsStateWithLifecycle()
     val ordered = providers.sortedBy { it.priority }
-    var accountsVersion by remember { mutableStateOf(0) }
     var malClientId by remember { mutableStateOf(manga.services.metadata.myAnimeListClientId().orEmpty()) }
-    var aniListClient by remember { mutableStateOf("") }
-    var aniListToken by remember { mutableStateOf("") }
-    var malRedirect by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    val aniListAccount = remember(accountsVersion, manga.profileId) { manga.services.metadata.account(manga.profileId, "anilist") }
-    val malAccount = remember(accountsVersion, manga.profileId) { manga.services.metadata.account(manga.profileId, "myanimelist") }
 
     fun run(action: suspend () -> String) {
         if (busy) return
@@ -409,7 +404,6 @@ internal fun MetadataTab() {
                 problem = failure.message ?: "That did not work."
             } finally {
                 busy = false
-                accountsVersion++
             }
         }
     }
@@ -475,78 +469,9 @@ internal fun MetadataTab() {
         }
         item {
             SettingsBlock(
-                "AniList account (optional)",
-                "Only needed to keep your AniList reading list up to date. Searching AniList needs no account. " +
-                    "AniList gives tokens to API clients: create your own at anilist.co › Settings › Developer with the redirect address https://anilist.co/api/v2/oauth/pin, then get a token for it.",
-            ) {
-                if (aniListAccount != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatusPill("Signed in as ${aniListAccount.name}", PillTone.SUCCESS)
-                        MangaButton("Disconnect", {
-                            manga.services.metadata.disconnect(manga.profileId, "anilist")
-                            accountsVersion++
-                        }, primary = false)
-                    }
-                } else {
-                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        MangaTextField(aniListClient, { aniListClient = it }, "1. Your AniList client ID", Modifier.width(220.dp))
-                        MangaButton("2. Get a token", {
-                            runCatching { manga.services.metadata.aniListAuthorizationUrl(aniListClient) }
-                                .onSuccess(::openInBrowser).onFailure { problem = it.message }
-                        }, primary = false, icon = Icons.Rounded.OpenInNew, enabled = aniListClient.isNotBlank())
-                    }
-                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        MangaTextField(aniListToken, { aniListToken = it }, "3. Paste the token AniList shows", Modifier.weight(1f), secret = true)
-                        MangaButton("Connect", {
-                            run {
-                                val account = manga.services.metadata.connectAniList(manga.profileId, aniListToken)
-                                aniListToken = ""
-                                "Connected to AniList as ${account.name}."
-                            }
-                        }, enabled = aniListToken.isNotBlank() && !busy)
-                    }
-                }
-            }
-        }
-        item {
-            SettingsBlock(
-                "MyAnimeList account (optional)",
-                "Only needed to keep your MyAnimeList reading list up to date. You sign in on MyAnimeList's own page; DebridOne never sees your password.",
-            ) {
-                if (malAccount != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatusPill("Signed in as ${malAccount.name}", PillTone.SUCCESS)
-                        MangaButton("Disconnect", {
-                            manga.services.metadata.disconnect(manga.profileId, "myanimelist")
-                            accountsVersion++
-                        }, primary = false)
-                    }
-                } else {
-                    MangaButton("1. Open the MyAnimeList sign-in page", {
-                        runCatching { manga.services.metadata.myAnimeListAuthorizationUrl(manga.profileId) }
-                            .onSuccess(::openInBrowser).onFailure { problem = it.message }
-                    }, primary = false, icon = Icons.Rounded.OpenInNew, enabled = malClientId.isNotBlank())
-                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        MangaTextField(
-                            malRedirect, { malRedirect = it }, "2. After allowing access, paste the address your browser ended up at", Modifier.weight(1f),
-                            hint = "It starts with your redirect address and contains code=… (the page itself may say it cannot be opened; that is expected).",
-                        )
-                        MangaButton("Connect", {
-                            run {
-                                val account = manga.services.metadata.connectMyAnimeList(manga.profileId, malRedirect)
-                                malRedirect = ""
-                                "Connected to MyAnimeList as ${account.name}."
-                            }
-                        }, enabled = malRedirect.isNotBlank() && !busy)
-                    }
-                }
-            }
-        }
-        item {
-            Text(
-                "Accounts are per profile and kept in the system's credential store. Tracking is switched on per series, from the series' page.",
-                style = small(), color = tokens.colors.textMuted,
-            )
+                "Reading lists",
+                "Keeping your list on AniList, MyAnimeList, Kitsu, MangaUpdates, Shikimori or Bangumi up to date is done by the manga server's trackers, not by these providers.",
+            ) { MangaButton("Trackers", { MangaPluginsState.show(MangaPluginsTab.TRACKERS) }, primary = false, icon = Icons.Rounded.Sync) }
         }
     }
 }

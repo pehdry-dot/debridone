@@ -60,10 +60,6 @@ class MangaMetadataTest {
             val authorization = exchange.requestHeaders.getFirst("Authorization")
             fun json(status: Int, text: String) = exchange.reply(status, text.toByteArray(), "application/json")
             when {
-                path == "/anilist" && body.contains("Viewer") ->
-                    if (authorization == "Bearer good-token") json(200, """{"data":{"Viewer":{"name":"alice_reads"}}}""") else json(200, """{"errors":[{"message":"Invalid token"}],"data":null}""")
-                path == "/anilist" && body.contains("SaveMediaListEntry") ->
-                    if (authorization == "Bearer good-token") json(200, """{"data":{"SaveMediaListEntry":{"id":1,"progress":3}}}""") else json(401, "{}")
                 path == "/anilist" && body.contains("TRENDING_DESC") -> json(200, """{"data":{"Page":{"media":[$aniListMedia]}}}""")
                 path == "/anilist" && body.contains("Media(id") -> json(200, """{"data":{"Media":$aniListMedia}}""")
                 path == "/anilist" -> json(200, """{"data":{"Page":{"media":[$aniListMedia]}}}""")
@@ -71,11 +67,7 @@ class MangaMetadataTest {
                 path.startsWith("/mangadex/manga/") -> json(200, """{"data":$MANGADEX_ENTRY}""")
                 path.startsWith("/mal/") && exchange.requestHeaders.getFirst("X-MAL-CLIENT-ID") != "my-client" && authorization == null -> json(403, """{"error":"bad client"}""")
                 path == "/mal/manga" -> json(200, """{"data":[{"node":$MAL_NODE}]}""")
-                path == "/mal/users/@me" -> if (authorization == "Bearer mal-access" || authorization == "Bearer mal-renewed") json(200, """{"name":"alice_mal"}""") else json(401, "{}")
-                path == "/mal/manga/121496/my_list_status" -> if (authorization == "Bearer mal-renewed") json(200, """{"status":"reading"}""") else json(401, """{"error":"invalid_token"}""")
                 path == "/mal/manga/121496" -> json(200, MAL_NODE)
-                path == "/malauth/token" && body.contains("grant_type=authorization_code") && body.contains("code=the-code") -> json(200, """{"access_token":"mal-access","refresh_token":"mal-refresh"}""")
-                path == "/malauth/token" && body.contains("grant_type=refresh_token") && body.contains("refresh_token=mal-refresh") -> json(200, """{"access_token":"mal-renewed","refresh_token":"mal-refresh-2"}""")
                 else -> json(404, "{}")
             }
         }
@@ -84,7 +76,7 @@ class MangaMetadataTest {
         val paths = AppPaths(dir.resolve("data"), dir.resolve("cache"))
         module = MangaModule(
             ModuleStorage(ModuleId.MANGA, paths, FileSecretStore(paths.secretsDir)),
-            metadataEndpoints = MetadataEndpoints("$url/anilist", "$url/mangadex", "$url/covers", "$url/mal", "$url/malauth"),
+            metadataEndpoints = MetadataEndpoints("$url/anilist", "$url/mangadex", "$url/covers", "$url/mal"),
         )
         runBlocking {
             module.start()

@@ -95,7 +95,7 @@ data class Series(
     val customTags: List<String>,
     /** `Ongoing`, `Completed`, `Cancelled`, `Hiatus`, or null when unknown. */
     val status: String?,
-    /** Tiyo `LanguageKey` of the original work, when known. */
+    /** Language code of the original work ("ja", "ko", "zh"…), when known. */
     val originalLanguage: String?,
     val mediaType: MediaType,
     val coverUrl: String,

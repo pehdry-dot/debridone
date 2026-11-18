@@ -157,6 +157,50 @@ class MangaRepository(
         changed()
     }
 
+    /** How a check for new chapters ended. */
+    data class LibraryCheck(val seriesChecked: Int, val newChapters: Int, val finished: Boolean)
+
+    /**
+     * Has the server look for new chapters of the series in the library, the way its own settings
+     * say (which series are left out, whether new chapters are downloaded by themselves). Waits
+     * until it is done; [onProgress] is told how many series were asked so far, of how many.
+     * Returns how many chapters were added. With [stop] turning true the check is ended early.
+     */
+    fun checkForNewChapters(
+        timeoutMs: Long = 30 * 60 * 1000L,
+        stop: () -> Boolean = { false },
+        onProgress: (checked: Int, total: Int) -> Unit = { _, _ -> },
+    ): LibraryCheck {
+        val before = libraryMangas().associate { it.id to it.chapterCount }
+        var status = api.updateLibrary()
+        val deadline = clock() + timeoutMs
+        var seen = status.total
+        // The check starts a moment after it was asked for: until then the server says neither
+        // "running" nor how many series there are. Nothing after a short while means nothing to check.
+        var patience = 12
+        while (!status.running && status.total == 0 && patience-- > 0) {
+            Thread.sleep(250)
+            status = api.libraryUpdateStatus()
+        }
+        while (status.running) {
+            seen = maxOf(seen, status.total)
+            onProgress(status.finished, status.total)
+            if (stop() || clock() > deadline) {
+                runCatching { api.stopLibraryUpdate() }
+                break
+            }
+            Thread.sleep(500)
+            status = api.libraryUpdateStatus()
+        }
+        val finished = !status.running
+        seen = maxOf(seen, status.total)
+        // What the server now has replaces what was remembered, chapter lists included.
+        synchronized(libraryLock) { chapterLists.clear() }
+        reloadLibrary()
+        val added = libraryMangas().sumOf { manga -> (manga.chapterCount - (before[manga.id] ?: manga.chapterCount)).coerceAtLeast(0) }
+        return LibraryCheck(seen, added, finished)
+    }
+
     private fun libraryMangas(): List<SwManga> {
         if (!libraryLoaded) {
             synchronized(libraryLock) {
@@ -703,13 +747,6 @@ class MangaRepository(
         changed()
     }
 
-    fun setTracked(seriesId: Long, provider: String, tracked: Boolean) {
-        val manga = raw(seriesId) ?: return
-        val state = MetaCodec.state(manga.meta)
-        writeState(manga, state.copy(links = state.links.map { if (it.provider == provider) it.copy(tracked = tracked) else it }))
-        changed()
-    }
-
     // ---- downloads ------------------------------------------------------------------------------
 
     /** Every chapter that is waiting, downloading, failed or downloaded: the queue first, in its order. */
@@ -761,7 +798,8 @@ class MangaRepository(
         var done = 0
         while (true) {
             val status = api.restoreStatus(id)
-            done = status?.done ?: done
+            // The finished state no longer says how many there were: the largest number seen is kept.
+            done = maxOf(done, status?.done ?: 0, status?.total ?: 0)
             when (status?.state) {
                 "SUCCESS" -> break
                 "FAILURE" -> throw java.io.IOException("The manga server could not restore this backup. It may not be a Suwayomi or Mihon backup file.")

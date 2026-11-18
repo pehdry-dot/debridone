@@ -64,7 +64,6 @@ import com.debridone.manga.library.SeriesEdit
 import com.debridone.manga.library.SeriesField
 import com.debridone.manga.local.LocalFiles
 import com.debridone.manga.metadata.MetadataMatch
-import com.debridone.manga.metadata.TrackingResult
 import com.debridone.manga.reader.ReaderSettings
 import com.debridone.manga.sources.SourceSearchResult
 import com.nuvio.app.core.ui.nuvio
@@ -86,6 +85,9 @@ internal sealed interface MangaDialog {
     data class Collections(val seriesIds: List<Long>) : MangaDialog
     data class RemoveSeries(val seriesIds: List<Long>) : MangaDialog
     data class SeriesReader(val seriesId: Long) : MangaDialog
+
+    /** What became of the library of the earlier version of Manga. */
+    data object Migration : MangaDialog
 }
 
 /** System file dialogs for the things Manga opens from disk. */
@@ -285,6 +287,7 @@ internal fun MangaDialogs() {
         is MangaDialog.Collections -> CollectionsDialog(dialog.seriesIds, close)
         is MangaDialog.RemoveSeries -> RemoveSeriesDialog(dialog.seriesIds, close)
         is MangaDialog.SeriesReader -> SeriesReaderDialog(dialog.seriesId, close)
+        MangaDialog.Migration -> MigrationDialog(close)
     }
 }
 
@@ -568,68 +571,6 @@ private fun MatchRow(match: MetadataMatch, linked: Boolean, enabled: Boolean, on
 }
 
 // ---------------------------------------------------------------------------- tracking
-
-/**
- * Sending reading progress to AniList or MyAnimeList. Only with an account the person connected
- * themselves (Plugins › Manga › Metadata) and only for series they switch it on for.
- */
-@Composable
-private fun TrackingDialog(seriesId: Long, onDismiss: () -> Unit) {
-    val manga = LocalManga.current
-    val actions = LocalMangaActions.current
-    val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
-    val links by rememberMangaQuery(seriesId, initial = emptyList<MetadataLink>()) { services, _ -> services.repository.metadataLinks(seriesId) }
-    var results by remember { mutableStateOf<List<TrackingResult>>(emptyList()) }
-    var busy by remember { mutableStateOf(false) }
-
-    MangaDialogFrame("Track this series", onDismiss, width = 560) {
-        Text(
-            "DebridOne can keep your reading list on AniList or MyAnimeList up to date as you read. It only does so with an account you connected, and only for the series you choose.",
-            style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-        )
-        listOf("anilist", "myanimelist").forEach { provider ->
-            val account = remember(provider, results) { manga.services.metadata.account(manga.profileId, provider) }
-            val link = links.firstOrNull { it.provider == provider }
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(tokens.colors.surface).padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(providerName(provider), style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, modifier = Modifier.weight(1f))
-                    Text(account?.let { "Signed in as ${it.name}" } ?: "No account connected", style = small(), color = if (account != null) tokens.colors.success else tokens.colors.textMuted)
-                }
-                when {
-                    account == null -> MangaButton("Connect an account…", { onDismiss(); openMangaPlugins(MangaPluginsTab.METADATA) }, primary = false)
-                    link == null -> {
-                        Text("This series is not linked to an entry on ${providerName(provider)} yet.", style = small(), color = tokens.colors.textMuted)
-                        MangaButton("Find it on ${providerName(provider)}…", { MangaNav.dialog = MangaDialog.MatchMetadata(seriesId) }, primary = false)
-                    }
-                    else -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        MangaChip(if (link.tracked) "Tracking is on" else "Tracking is off", link.tracked) {
-                            actions.io { manga.services.repository.setTracked(seriesId, provider, !link.tracked) }
-                        }
-                        link.url?.let { url -> MangaButton("Open entry", { openInBrowser(url) }, primary = false, icon = Icons.Rounded.OpenInNew) }
-                    }
-                }
-                results.firstOrNull { it.provider == provider }?.let { result ->
-                    Text(if (result.ok) "Updated: ${result.message}" else result.message, style = small(), color = if (result.ok) tokens.colors.success else tokens.colors.danger)
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            if (busy) CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(10.dp))
-            MangaButton("Send progress now", {
-                busy = true
-                scope.launch(Dispatchers.IO) {
-                    results = manga.services.metadata.syncProgress(seriesId)
-                    busy = false
-                    if (results.isEmpty()) MangaNav.message = "Tracking is not switched on for this series."
-                }
-            }, primary = false, enabled = !busy && links.any { it.tracked })
-            Spacer(Modifier.width(10.dp))
-            MangaButton("Done", onDismiss)
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------- change source
 

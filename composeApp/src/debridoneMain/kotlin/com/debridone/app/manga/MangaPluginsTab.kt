@@ -81,6 +81,7 @@ internal enum class MangaPluginsTab(val label: String) {
     EXTENSIONS("Extensions"),
     STORES("Stores"),
     SOURCES("Sources"),
+    TRACKERS("Trackers"),
     METADATA("Metadata"),
     SERVER("Server"),
 }
@@ -154,6 +155,7 @@ fun MangaPluginsTab() {
                     MangaPluginsTab.EXTENSIONS -> ExtensionsTab()
                     MangaPluginsTab.STORES -> StoresTab()
                     MangaPluginsTab.SOURCES -> SourcesTab()
+                    MangaPluginsTab.TRACKERS -> TrackersTab()
                     MangaPluginsTab.METADATA -> MetadataTab()
                     MangaPluginsTab.SERVER -> ServerTab()
                 }
@@ -595,6 +597,10 @@ internal fun ServerTab() {
                     outcome?.let { (ok, text) -> Notice(text, if (ok) PillTone.SUCCESS else PillTone.DANGER) }
                 }
             }
+        }
+        // The server's own settings can only be shown, and changed, while it answers.
+        if (connection is MangaConnection.Ready) {
+            item { Column(verticalArrangement = Arrangement.spacedBy(14.dp)) { ServerOptionsBlocks(remote = (connection as MangaConnection.Ready).remote) } }
         }
     }
 }

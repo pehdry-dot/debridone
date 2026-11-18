@@ -150,12 +150,24 @@ class SuwayomiServerManager(
 
         val username = "debridone"
         var lastProblem: String? = null
+        // A profile's first start. Suwayomi comes with new-chapter checks that leave out series with
+        // unread chapters, series not started and completed ones; in a new library that is every
+        // series, so "check for new chapters" would find nothing. A new server starts with every
+        // series looked at; the person can switch the rules on in Manga's server settings, and from
+        // then on the choice is theirs (it is never written again).
+        val firstStart = !Files.exists(directory.resolve("server.conf"))
         for (attempt in 1..PORT_ATTEMPTS) {
             val port = freePort()
             val password = newPassword()
             ServerConf.write(
                 directory.resolve("server.conf"),
-                linkedMapOf(
+                linkedMapOf<String, String>().apply {
+                    if (firstStart) {
+                        put("excludeUnreadChapters", "false")
+                        put("excludeNotStarted", "false")
+                        put("excludeCompleted", "false")
+                    }
+                } + linkedMapOf(
                     "ip" to ServerConf.text("127.0.0.1"),
                     "port" to port.toString(),
                     // Nothing but the API: no web interface, no browser window, no tray icon, no bundled Chromium.

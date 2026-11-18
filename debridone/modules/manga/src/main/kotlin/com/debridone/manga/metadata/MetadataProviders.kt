@@ -30,7 +30,7 @@ data class MetadataMatch(
     val tags: List<String> = emptyList(),
     /** `Ongoing`, `Completed`, `Cancelled`, `Hiatus`, or null. */
     val status: String? = null,
-    /** Tiyo language key of the original work. */
+    /** Language code of the original work ("ja", "ko", "zh"…). */
     val originalLanguage: String? = null,
     val mediaType: MediaType? = null,
     val coverUrl: String? = null,
@@ -66,7 +66,6 @@ data class MetadataEndpoints(
     val mangaDex: String = "https://api.mangadex.org",
     val mangaDexCovers: String = "https://uploads.mangadex.org",
     val myAnimeList: String = "https://api.myanimelist.net/v2",
-    val myAnimeListAuth: String = "https://myanimelist.net/v1/oauth2",
 )
 
 interface MetadataSource {
@@ -145,9 +144,8 @@ class AniListSource(private val endpoints: MetadataEndpoints) : MetadataSource {
         return media(post(body).obj("Page")?.list("media").orEmpty())
     }
 
-    private suspend fun post(body: JsonObject, token: String? = null): JsonObject = metadataCall(name) {
-        val headers = if (token != null) mapOf("Authorization" to "Bearer $token") else emptyMap()
-        val answer = metadataJson.parseToJsonElement(MangaHttp.postJson(endpoints.aniList, body.toString(), headers).text()).jsonObject
+    private suspend fun post(body: JsonObject): JsonObject = metadataCall(name) {
+        val answer = metadataJson.parseToJsonElement(MangaHttp.postJson(endpoints.aniList, body.toString(), emptyMap()).text()).jsonObject
         answer.list("errors").firstOrNull()?.let { error ->
             throw MetadataException("AniList: " + ((error as? JsonObject)?.text("message") ?: "the request was not accepted"))
         }
@@ -211,32 +209,9 @@ class AniListSource(private val endpoints: MetadataEndpoints) : MetadataSource {
     }
 
     private fun id() = id
-
-    // ---- tracking (only with the person's own token) -------------------------------------------
-
-    /** The name of the account [token] belongs to; proves the token works. */
-    suspend fun viewer(token: String): String {
-        val body = buildJsonObject { put("query", "query { Viewer { name } }") }
-        return post(body, token).obj("Viewer")?.text("name") ?: throw MetadataException("AniList did not accept this token.")
-    }
-
-    /** Sets how many chapters have been read on the account's list. */
-    suspend fun saveProgress(token: String, remoteId: String, chaptersRead: Int, completed: Boolean) {
-        val numeric = remoteId.toIntOrNull() ?: throw MetadataException("This series is not linked to AniList.")
-        val status = if (completed) "COMPLETED" else "CURRENT"
-        val body = buildJsonObject {
-            put("query", "mutation (\$mediaId: Int, \$progress: Int, \$status: MediaListStatus) { SaveMediaListEntry(mediaId: \$mediaId, progress: \$progress, status: \$status) { id progress } }")
-            putJsonObject("variables") {
-                put("mediaId", numeric)
-                put("progress", chaptersRead)
-                put("status", status)
-            }
-        }
-        post(body, token)
-    }
 }
 
-/** MangaDex, through its public API, as a source of details (reading from MangaDex goes through its Tiyo source). */
+/** MangaDex, through its public API, as a source of details (reading from MangaDex goes through an extension of the manga server). */
 class MangaDexSource(private val endpoints: MetadataEndpoints) : MetadataSource {
     override val id = "mangadex"
     override val name = "MangaDex"
@@ -306,8 +281,7 @@ class MangaDexSource(private val endpoints: MetadataEndpoints) : MetadataSource 
 
 /**
  * MyAnimeList, through its official API. Every request carries the person's own API client ID
- * (from https://myanimelist.net/apiconfig); without one nothing is requested. Updating a list
- * additionally needs the person to sign in through MyAnimeList's own OAuth pages.
+ * (from https://myanimelist.net/apiconfig); without one nothing is requested.
  */
 class MyAnimeListSource(private val endpoints: MetadataEndpoints, private val clientId: () -> String?) : MetadataSource {
     override val id = "myanimelist"
@@ -385,51 +359,5 @@ class MyAnimeListSource(private val endpoints: MetadataEndpoints, private val cl
             year = node.text("start_date")?.take(4)?.toIntOrNull(),
             chapters = node.int("num_chapters")?.takeIf { it > 0 },
         )
-    }
-
-    // ---- signing in and tracking (the person's own account, through MyAnimeList's OAuth) -------
-
-    /** The address of MyAnimeList's sign-in page for this client. [verifier] is the PKCE secret to keep until [exchange]. */
-    fun authorizationUrl(verifier: String): String {
-        val id = clientId()?.trim()?.takeIf { it.isNotEmpty() } ?: throw MetadataException("Add your MyAnimeList API client ID first.")
-        // MyAnimeList supports the "plain" PKCE method: the challenge is the verifier itself.
-        return "${endpoints.myAnimeListAuth}/authorize?response_type=code&client_id=${MangaHttp.encode(id)}&code_challenge=$verifier&code_challenge_method=plain"
-    }
-
-    /** Trades the code MyAnimeList handed back after sign-in for tokens. Returns (access token, refresh token). */
-    suspend fun exchange(code: String, verifier: String): Pair<String, String?> {
-        val id = clientId()?.trim()?.takeIf { it.isNotEmpty() } ?: throw MetadataException("Add your MyAnimeList API client ID first.")
-        return metadataCall(name) {
-            val answer = metadataJson.parseToJsonElement(
-                MangaHttp.postForm("${endpoints.myAnimeListAuth}/token", mapOf("client_id" to id, "code" to code, "code_verifier" to verifier, "grant_type" to "authorization_code")).text(),
-            ).jsonObject
-            (answer.text("access_token") ?: throw MetadataException("MyAnimeList did not return a token.")) to answer.text("refresh_token")
-        }
-    }
-
-    suspend fun refresh(refreshToken: String): Pair<String, String?> {
-        val id = clientId()?.trim()?.takeIf { it.isNotEmpty() } ?: throw MetadataException("Add your MyAnimeList API client ID first.")
-        return metadataCall(name) {
-            val answer = metadataJson.parseToJsonElement(
-                MangaHttp.postForm("${endpoints.myAnimeListAuth}/token", mapOf("client_id" to id, "refresh_token" to refreshToken, "grant_type" to "refresh_token")).text(),
-            ).jsonObject
-            (answer.text("access_token") ?: throw MetadataException("MyAnimeList did not return a token.")) to (answer.text("refresh_token") ?: refreshToken)
-        }
-    }
-
-    suspend fun viewer(accessToken: String): String = metadataCall(name) {
-        metadataJson.parseToJsonElement(MangaHttp.get("${endpoints.myAnimeList}/users/@me", mapOf("Authorization" to "Bearer $accessToken")).text()).jsonObject.text("name")
-            ?: throw MetadataException("MyAnimeList did not accept this sign-in.")
-    }
-
-    suspend fun saveProgress(accessToken: String, remoteId: String, chaptersRead: Int, completed: Boolean) {
-        if (remoteId.toIntOrNull() == null) throw MetadataException("This series is not linked to MyAnimeList.")
-        metadataCall(name) {
-            val form = "status=${if (completed) "completed" else "reading"}&num_chapters_read=$chaptersRead"
-            MangaHttp.send(
-                "PUT", "${endpoints.myAnimeList}/manga/$remoteId/my_list_status",
-                mapOf("Authorization" to "Bearer $accessToken", "Content-Type" to "application/x-www-form-urlencoded"), form.toByteArray(),
-            )
-        }
     }
 }

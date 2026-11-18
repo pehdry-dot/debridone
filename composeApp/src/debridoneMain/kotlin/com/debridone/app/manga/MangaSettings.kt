@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.Storefront
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.CollectionsBookmark
@@ -72,6 +73,7 @@ internal object MangaSettingsSections {
     const val EXTENSIONS = "extensions"
     const val STORES = "stores"
     const val SOURCES = "sources"
+    const val TRACKERS = "trackers"
     const val METADATA = "metadata"
     const val SERVER = "server"
 
@@ -82,8 +84,9 @@ internal object MangaSettingsSections {
         SettingsCategory(EXTENSIONS, "Extensions", Icons.Rounded.Extension),
         SettingsCategory(STORES, "Extension stores", Icons.Rounded.Storefront),
         SettingsCategory(SOURCES, "Sources", Icons.Rounded.Public),
+        SettingsCategory(TRACKERS, "Trackers", Icons.Rounded.Sync, saving = "sign-ins are kept by this profile's manga server"),
         SettingsCategory(METADATA, "Metadata", Icons.Rounded.Label),
-        SettingsCategory(SERVER, "Server", Icons.Rounded.Dns),
+        SettingsCategory(SERVER, "Server", Icons.Rounded.Dns, saving = "the server's own settings are saved with their Save button"),
     )
 
     /** The pages that are also tabs of Plugins › Manga: one implementation, shown in both places. */
@@ -91,6 +94,7 @@ internal object MangaSettingsSections {
         MangaPluginsTab.EXTENSIONS -> EXTENSIONS
         MangaPluginsTab.STORES -> STORES
         MangaPluginsTab.SOURCES -> SOURCES
+        MangaPluginsTab.TRACKERS -> TRACKERS
         MangaPluginsTab.METADATA -> METADATA
         MangaPluginsTab.SERVER -> SERVER
     }
@@ -115,10 +119,14 @@ internal fun MangaSettingsPanel(modifier: Modifier = Modifier) {
         onClose = { MangaNav.settingsOpen = false },
         accent = manga.style.accent,
         modifier = modifier,
-        selfScrolling = setOf(MangaSettingsSections.EXTENSIONS, MangaSettingsSections.STORES, MangaSettingsSections.SOURCES, MangaSettingsSections.METADATA, MangaSettingsSections.SERVER),
+        selfScrolling = setOf(
+            MangaSettingsSections.EXTENSIONS, MangaSettingsSections.STORES, MangaSettingsSections.SOURCES, MangaSettingsSections.TRACKERS,
+            MangaSettingsSections.METADATA, MangaSettingsSections.SERVER,
+        ),
     ) { section ->
         // What lives in the manga server can only be shown while it runs; the rest is always there.
-        val needsServer = section == MangaSettingsSections.EXTENSIONS || section == MangaSettingsSections.STORES || section == MangaSettingsSections.SOURCES
+        val needsServer = section == MangaSettingsSections.EXTENSIONS || section == MangaSettingsSections.STORES || section == MangaSettingsSections.SOURCES ||
+            section == MangaSettingsSections.TRACKERS
         when {
             needsServer && connection !is com.debridone.manga.suwayomi.MangaConnection.Ready -> MangaServerStatus(connection)
             section == MangaSettingsSections.APPEARANCE -> ModuleAppearanceEditor(ModuleId.MANGA)
@@ -127,6 +135,7 @@ internal fun MangaSettingsPanel(modifier: Modifier = Modifier) {
             section == MangaSettingsSections.EXTENSIONS -> ExtensionsTab()
             section == MangaSettingsSections.STORES -> StoresTab()
             section == MangaSettingsSections.SOURCES -> SourcesTab()
+            section == MangaSettingsSections.TRACKERS -> TrackersTab()
             section == MangaSettingsSections.METADATA -> MetadataTab()
             section == MangaSettingsSections.SERVER -> ServerTab()
         }
@@ -152,6 +161,8 @@ internal fun MangaSourceConfigurationPanel(modifier: Modifier = Modifier) {
         onClose = { MangaPluginsState.configuring = null },
         modifier = modifier,
     ) { shown?.first?.let { SourcePreferencesEditor(it) } }
+    // A tracker's sign-in opens the same way, from the Trackers page or a series' tracking dialog.
+    MangaTrackerSignInPanel(modifier)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -194,6 +205,8 @@ private fun LibrarySettings() {
     val revision by manga.services.repository.revision.collectAsState()
     val cacheSize by produceState(0L, revision / 50) { value = withContext(Dispatchers.IO) { manga.services.pages.cacheSize() } }
 
+    // Shown only to somebody who used the earlier version: what became of that library, at any time.
+    MigrationCard(always = true)
     SettingsBlock("Your own files", "CBZ, ZIP, CBR, RAR and EPUB files, a folder of chapters or a folder of images. They are read where they are, through the manga server's Local source; nothing is copied.") {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MangaButton("Add files", { importLocal(manga, actions, MangaPickers.chooseArchives()) }, primary = false, icon = Icons.Rounded.InsertDriveFile)
