@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * listings asked with a limit above 100). It is a stand-in, not the service: it proves DebridOne
  * speaks the documented format. Every request is recorded.
  */
-class StandInRealDebrid(samples: Path? = null) : StandInServer() {
+class StandInRealDebrid(samples: Path? = null, port: Int = 0) : StandInServer(port) {
     /** The form fields of every POST, in order. */
     val forms = CopyOnWriteArrayList<Map<String, String>>()
 
@@ -106,6 +106,11 @@ class StandInRealDebrid(samples: Path? = null) : StandInServer() {
         val query = fields(exchange.requestURI.rawQuery.orEmpty())
         val form = if (method == "POST") fields(String(exchange.requestBody.readAllBytes())).also { forms += it } else emptyMap()
         when {
+            // For trying the application by hand: plays the user allowing the code on the provider's page.
+            path == "/__approve" -> {
+                approved = true
+                json(exchange, 200, """{"approved":true}""")
+            }
             path == "/oauth/v2/device/code" -> {
                 if (query["client_id"] != CLIENT_ID_OPEN_SOURCE || query["new_credentials"] != "yes") return json(exchange, 400, """{"error":"invalid_client","error_code":1}""")
                 json(exchange, 200, """{"device_code":"$DEVICE_CODE","user_code":"$USER_CODE","interval":5,"expires_in":1800,"verification_url":"https:\/\/real-debrid.com\/device"}""")

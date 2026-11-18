@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.receiveAsFlow
 
 /**
  * DebridOne seam between Nuvio (the Streaming module) and the application shell around it.
@@ -15,6 +18,24 @@ import kotlinx.coroutines.flow.asStateFlow
  * installed, that content is handed to it as one composable slot; Nuvio keeps owning its own
  * navigation inside the slot and reports when it needs the whole window (video playback).
  */
+/**
+ * A video file the shell hands to Streaming's player: an address made for the moment (or a local
+ * file), and how to recognise the same file again for resuming. Streaming keeps the player, the
+ * watch progress and Continue Watching; the shell never sees them.
+ */
+data class ShellPlaybackRequest(
+    val title: String,
+    val subtitle: String?,
+    val sourceUrl: String,
+    val providerName: String,
+    val providerId: String,
+    /** Stable for the entry the file belongs to; starts with [AppShellHost.SHELL_CONTENT_PREFIX]. */
+    val contentId: String,
+    /** Stable for the file itself. */
+    val videoId: String,
+    val startFromBeginning: Boolean = false,
+)
+
 object AppShellHost {
     /** Installed once at start-up by the desktop app. Null on platforms without a shell. */
     @Volatile
@@ -39,6 +60,28 @@ object AppShellHost {
     fun requestStreamingTab(tab: AppScreenTab) {
         _streamingTabRequests.tryEmit(tab)
     }
+
+    private val playbackRequests = Channel<ShellPlaybackRequest>(Channel.CONFLATED)
+
+    /**
+     * Videos the shell asks Streaming to play in its own player. A channel, not a shared flow: a
+     * request made before Streaming has been shown once waits until it is.
+     */
+    val streamingPlaybackRequests: Flow<ShellPlaybackRequest> = playbackRequests.receiveAsFlow()
+
+    fun requestPlayback(request: ShellPlaybackRequest) {
+        playbackRequests.trySend(request)
+    }
+
+    /**
+     * Continue Watching on something the shell asked to be played: the shell finds the file again
+     * and requests playback anew. Returns false when it cannot.
+     */
+    @Volatile
+    var resumeShellContent: ((contentId: String, videoId: String, startFromBeginning: Boolean) -> Boolean)? = null
+
+    /** Content ids of what the shell plays start with this, so they are never mistaken for Streaming's own. */
+    const val SHELL_CONTENT_PREFIX = "debridone:"
 
     @Composable
     fun Wrap(onSwitchProfile: () -> Unit, streaming: @Composable () -> Unit) {

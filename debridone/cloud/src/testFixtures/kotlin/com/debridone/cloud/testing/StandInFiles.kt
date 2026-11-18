@@ -33,8 +33,8 @@ class StandInFile(val path: String, sizeBytes: Int = if (path.endsWith(".mkv")) 
  * it misbehave: drop a connection part of the way, ignore ranges, forget the addresses it issued,
  * or be busy.
  */
-abstract class StandInServer : AutoCloseable {
-    protected val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+abstract class StandInServer(port: Int = 0) : AutoCloseable {
+    protected val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", port), 0)
 
     val origin: String get() = "http://127.0.0.1:${server.address.port}"
 

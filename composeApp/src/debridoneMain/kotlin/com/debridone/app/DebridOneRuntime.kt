@@ -2,6 +2,8 @@ package com.debridone.app
 
 import co.touchlab.kermit.Logger
 import com.debridone.accounts.AccountsDatabase
+import com.debridone.cloud.CloudServices
+import com.debridone.app.cloud.CloudAutomation
 import com.debridone.accounts.SettingsScope
 import com.debridone.app.accounts.AvatarImages
 import com.debridone.app.accounts.DesktopLocalAccountBackend
@@ -68,6 +70,20 @@ object DebridOneRuntime {
     /** The profile in use, or null while signed out / choosing a profile. */
     val activeProfileId: StateFlow<Long?> = _activeProfileId.asStateFlow()
 
+    @Volatile
+    private var cloudServices: CloudServices? = null
+
+    /** Why the cloud layer could not be opened, when it could not. */
+    @Volatile
+    var cloudError: String? = null
+        private set
+
+    /**
+     * The connected cloud accounts, their listings and the download manager; null only when their
+     * database could not be opened (the rest of the application still works).
+     */
+    val cloud: CloudServices? get() = cloudServices
+
     val accounts: AccountsDatabase get() = checkNotNull(accountsDb) { "DebridOne is not started" }
     val modules: ModuleHost get() = checkNotNull(moduleHost) { "DebridOne is not started" }
 
@@ -94,8 +110,16 @@ object DebridOneRuntime {
             val host = ModuleHost(paths, secrets)
             moduleHost = host
             host.start()
-            // Quitting the app saves each section's state (Music: queue and position) and stops playback.
-            Runtime.getRuntime().addShutdownHook(Thread({ runCatching { host.close() } }, "debridone-shutdown"))
+            // The connected accounts are the application's own: opened beside the sections, never inside one.
+            try {
+                cloudServices = CloudServices.open(paths, secrets).also(CloudAutomation::start)
+            } catch (t: Throwable) {
+                log.e(t) { "The cloud layer could not be opened" }
+                cloudError = t.message ?: t::class.simpleName
+            }
+            // Quitting the app saves each section's state (Music: queue and position), stops playback
+            // and leaves unfinished downloads to continue at the next start.
+            Runtime.getRuntime().addShutdownHook(Thread({ runCatching { host.close() }; runCatching { cloudServices?.close() } }, "debridone-shutdown"))
 
             AppShellHost.shell = { streaming, onSwitchProfile -> DebridOneShell(streaming, onSwitchProfile) }
             observeActiveProfile(host)
@@ -178,6 +202,8 @@ object DebridOneRuntime {
         runCatching { DesktopStorage.removeProfileScopedKeys(Math.toIntExact(profileId)) }
             .onFailure { e -> log.e(e) { "Could not erase Streaming data of profile $profileId" } }
         moduleHost?.let { host -> runBlocking { host.deleteProfileData(profileId) } }
+        runCatching { cloudServices?.deleteProfile(profileId) }
+            .onFailure { e -> log.e(e) { "Could not erase the cloud data of profile $profileId" } }
         accountsDb?.let { database -> runCatching { AvatarImages.sweepUnused(paths, database) } }
     }
 }

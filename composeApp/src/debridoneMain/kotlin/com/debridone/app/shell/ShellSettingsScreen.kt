@@ -50,6 +50,8 @@ import com.debridone.accounts.Account
 import com.debridone.accounts.AccountException
 import com.debridone.accounts.AccountsDatabase
 import com.debridone.app.DebridOneRuntime
+import com.debridone.app.cloud.ConnectedAccountsPage
+import com.debridone.app.cloud.DownloadSettingsPage
 import com.debridone.module.AppearanceOption
 import com.debridone.module.CommonAppearanceKeys
 import com.debridone.module.ModuleAppearance
@@ -110,6 +112,8 @@ internal fun ShellSettingsScreen(onSwitchProfile: () -> Unit) {
             when (page) {
                 SettingsPage.ACCOUNT -> AccountPage()
                 SettingsPage.PROFILES -> ProfilesPage(onSwitchProfile)
+                SettingsPage.CONNECTED_ACCOUNTS -> ConnectedAccountsPage()
+                SettingsPage.DOWNLOADS -> DownloadSettingsPage()
                 SettingsPage.APPEARANCE -> AppearancePage()
                 SettingsPage.STORAGE -> StoragePage()
                 SettingsPage.ABOUT -> AboutPage()

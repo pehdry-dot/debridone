@@ -31,3 +31,10 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }
+
+// Prints the classpath of the stand-in providers (see StandInMain.kt), for running them beside the application.
+tasks.register("standInClasspath") {
+    val classpath = sourceSets["testFixtures"].runtimeClasspath
+    dependsOn(tasks.named("testFixturesClasses"))
+    doLast { println(classpath.asPath) }
+}

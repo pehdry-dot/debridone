@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * their files inline, `requestdl` (which wants the key as its `token` parameter) and the three
  * control endpoints. A stand-in, not the service. Every request is recorded, without its query.
  */
-class StandInTorBox(samples: Path? = null) : StandInServer() {
+class StandInTorBox(samples: Path? = null, port: Int = 0) : StandInServer(port) {
     /** The JSON bodies of every POST, in order. */
     val bodies = CopyOnWriteArrayList<String>()
 

@@ -200,7 +200,19 @@ class LocalLibrary(private val repository: MangaRepository) {
 
         fun isImage(name: String): Boolean = extension(name) in IMAGE_EXTENSIONS
 
-        fun isReadableArchive(path: Path): Boolean = Files.isRegularFile(path) && extension(path.fileName.toString()) in ARCHIVE_EXTENSIONS
+        /**
+         * True for a CBZ or ZIP file, and for a file named `.cbr` that is in fact a ZIP archive (it
+         * happens): what is inside decides, and a real RAR archive stays unreadable.
+         */
+        fun isReadableArchive(path: Path): Boolean {
+            if (!Files.isRegularFile(path)) return false
+            val extension = extension(path.fileName.toString())
+            return extension in ARCHIVE_EXTENSIONS || (extension == "cbr" && hasZipSignature(path))
+        }
+
+        private fun hasZipSignature(path: Path): Boolean = runCatching {
+            Files.newInputStream(path).use { input -> input.readNBytes(4).contentEquals(byteArrayOf(0x50, 0x4B, 0x03, 0x04)) }
+        }.getOrDefault(false)
 
         fun unsupportedMessage(path: Path): String {
             val extension = extension(path.fileName.toString())

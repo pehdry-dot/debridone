@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Extension
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material3.Icon
@@ -174,6 +175,7 @@ private fun HomeSetup(sourceCount: Int) {
             ) {
                 MangaButton("Add files", { importLocal(manga, actions, MangaPickers.chooseArchives()) }, icon = Icons.Rounded.InsertDriveFile, primary = sourceCount > 0)
                 MangaButton("Add a folder", { MangaPickers.chooseFolder()?.let { importLocal(manga, actions, listOf(it)) } }, icon = Icons.Rounded.FolderOpen, primary = false)
+                MangaCloudBridge.openCloudBrowser?.let { openCloud -> MangaButton("From your cloud", openCloud, icon = Icons.Rounded.CloudDownload, primary = false) }
             }
         }
     }

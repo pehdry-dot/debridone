@@ -22,6 +22,7 @@ import androidx.compose.material.icons.rounded.CollectionsBookmark
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Refresh
@@ -162,6 +163,7 @@ internal fun MangaLibrary() {
                             DropdownMenu(addMenu, { addMenu = false }) {
                                 MangaMenuItem("Comic archives (CBZ, ZIP)…", Icons.Rounded.InsertDriveFile) { addMenu = false; importLocal(manga, actions, MangaPickers.chooseArchives(), LibraryState.type) }
                                 MangaMenuItem("A folder…", Icons.Rounded.FolderOpen) { addMenu = false; MangaPickers.chooseFolder()?.let { importLocal(manga, actions, listOf(it), LibraryState.type) } }
+                                MangaCloudBridge.openCloudBrowser?.let { openCloud -> MangaMenuItem("From your cloud…", Icons.Rounded.CloudDownload) { addMenu = false; openCloud() } }
                                 MangaMenuDivider()
                                 MangaMenuItem("From a source…") { addMenu = false; MangaNav.root(MangaRoute.Discover) }
                             }
@@ -252,6 +254,7 @@ internal fun MangaLibrary() {
                         MangaButton("Discover", { MangaNav.root(MangaRoute.Discover) })
                         MangaButton("Add files", { importLocal(manga, actions, MangaPickers.chooseArchives()) }, primary = false, icon = Icons.Rounded.InsertDriveFile)
                         MangaButton("Add a folder", { MangaPickers.chooseFolder()?.let { importLocal(manga, actions, listOf(it)) } }, primary = false, icon = Icons.Rounded.FolderOpen)
+                        MangaCloudBridge.openCloudBrowser?.let { openCloud -> MangaButton("From your cloud", openCloud, primary = false, icon = Icons.Rounded.CloudDownload) }
                     }
                 } else {
                     MangaEmptyState(BookIcon, "Nothing matches", "No series in your library fits these filters.") { MangaButton("Clear filters", { LibraryState.reset() }, primary = false) }

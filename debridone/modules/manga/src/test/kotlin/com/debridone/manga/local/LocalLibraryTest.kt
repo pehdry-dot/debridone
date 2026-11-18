@@ -175,6 +175,16 @@ class LocalLibraryTest {
         assertTrue(assertFailsWith<IOException> { services.local.import(alice, rar) }.message!!.contains("not a CBZ or ZIP"))
         assertTrue(services.repository.library(alice).isEmpty())
 
+        // A ".cbr" that is really a ZIP archive is read like the CBZ it is.
+        val mislabelled = files.resolve("Really A Zip.cbr")
+        writeZip(mislabelled, pages("zip", 2).mapIndexed { i, b -> "${i + 1}.png" to b })
+        assertTrue(LocalLibrary.isReadableArchive(mislabelled))
+        val fromZip = services.local.import(alice, mislabelled)
+        assertEquals("Really A Zip", fromZip.title)
+        assertEquals(2, services.pages.open(services.repository.chapters(fromZip.id).single().id).pageCount)
+        services.repository.deleteSeries(fromZip.id)
+        assertTrue(services.repository.library(alice).isEmpty())
+
         // A file that disappears after import is reported when it is opened.
         val cbz = files.resolve("gone.cbz")
         writeZip(cbz, pages("gone", 2).mapIndexed { i, b -> "${i + 1}.png" to b })

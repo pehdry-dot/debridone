@@ -39,6 +39,8 @@ enum class SidebarStyle(val key: String, val label: String) {
 enum class SettingsPage(val label: String) {
     ACCOUNT("Account"),
     PROFILES("Profiles"),
+    CONNECTED_ACCOUNTS("Connected Accounts"),
+    DOWNLOADS("Downloads"),
     APPEARANCE("Appearance"),
     STORAGE("Storage & backups"),
     ABOUT("About"),

@@ -983,6 +983,41 @@ internal fun MainAppContent(
             }
         }
 
+        // DebridOne: the shell can ask for a file of the user's connected accounts to be played here.
+        // It hands over an address made for the moment; the player, the watch progress and Continue
+        // Watching stay Streaming's own, under a content id that cannot be mistaken for anything else.
+        val shellPlaybackProfileId by rememberUpdatedState(activePlaybackProfileId)
+        LaunchedEffect(navController) {
+            AppShellHost.streamingPlaybackRequests.collect { request ->
+                val resume = if (request.startFromBeginning) {
+                    null
+                } else {
+                    WatchProgressRepository.progressForVideo(videoId = request.videoId, parentMetaId = request.contentId)?.takeIf { it.isResumable }
+                }
+                val playerLaunch = PlayerLaunch(
+                    profileId = shellPlaybackProfileId,
+                    title = request.title,
+                    sourceUrl = request.sourceUrl,
+                    streamTitle = request.title,
+                    streamSubtitle = request.subtitle,
+                    providerName = request.providerName,
+                    providerAddonId = "cloud:${request.providerId}",
+                    contentType = CloudLibraryContentType,
+                    videoId = request.videoId,
+                    parentMetaId = request.contentId,
+                    parentMetaType = CloudLibraryContentType,
+                    initialPositionMs = resume?.lastPositionMs?.takeIf { it > 0L } ?: 0L,
+                    initialProgressFraction = resume?.progressFraction?.takeIf { it > 0f },
+                )
+                if (externalPlayerSupported && playerSettingsUiState.externalPlayerEnabled) {
+                    openExternalPlayback(playerLaunch)
+                } else {
+                    val launchId = PlayerLaunchStore.put(playerLaunch)
+                    navController.navigate(PlayerRoute(launchId = launchId, title = playerLaunch.title))
+                }
+            }
+        }
+
         fun launchPlaybackWithDownloadPreference(
             type: String,
             videoId: String,
@@ -1224,7 +1259,13 @@ internal fun MainAppContent(
 
         val openContinueWatching: (ContinueWatchingItem, Boolean, Boolean) -> Unit = { item, manualSelection, startFromBeginning ->
             resumePromptItem = null
-            if (item.isCloudLibraryContinueWatchingItem()) {
+            if (item.parentMetaId.startsWith(AppShellHost.SHELL_CONTENT_PREFIX)) {
+                // DebridOne: a file of a connected account. The shell finds it again and asks for
+                // a fresh address; Streaming's own cloud library is not involved.
+                if (AppShellHost.resumeShellContent?.invoke(item.parentMetaId, item.videoId, startFromBeginning) != true) {
+                    NuvioToastController.show(cloudLibraryPlayFailedText)
+                }
+            } else if (item.isCloudLibraryContinueWatchingItem()) {
                 coroutineScope.launch {
                     when (
                         val lookup = CloudLibraryRepository.findPlaybackTargetForProgressResult(
