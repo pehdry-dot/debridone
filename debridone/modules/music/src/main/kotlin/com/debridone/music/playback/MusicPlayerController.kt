@@ -10,6 +10,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** One entry of the play queue: enough to play and to show it without touching the library. */
+/**
+ * Start of the `uri` of a queue item whose real address is asked for when it is about to play
+ * (a song of an addon, whose addresses expire). See [MusicPlayerController]'s `resolver`.
+ */
+const val DEFERRED_SCHEME = "debridone-deferred:"
+
 data class QueueItem(
     val trackId: Long,
     /** File path or URL handed to the engine. */
@@ -87,10 +93,24 @@ class MusicPlayerController(
     private val engine: MusicPlaybackEngine,
     private val random: Random = Random.Default,
     private val observer: PlayerObserver = object : PlayerObserver {},
+    /**
+     * For items whose address is only known when they are about to play (their `uri` starts with
+     * [DEFERRED_SCHEME]): returns the address to open. It is called off the player thread, may take
+     * a few seconds (it asks the song's source) and may throw with a message for the listener.
+     */
+    private val resolver: ((QueueItem) -> String)? = null,
 ) : AutoCloseable {
     private val executor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "debridone-music-player").apply { isDaemon = true }
     }
+
+    /** Runs [resolver]; a source that is slow to answer must not hold up pause, seek or skip. */
+    private val resolving = Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "debridone-music-resolve").apply { isDaemon = true }
+    }
+
+    /** Counts loads, so the answer for a song that was skipped while it was being resolved is dropped. */
+    private var loadTicket = 0L
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
@@ -365,6 +385,7 @@ class MusicPlayerController(
         closed = true
         engine.setListener(null)
         executor.shutdownNow()
+        resolving.shutdownNow()
         engine.close()
     }
 
@@ -459,12 +480,52 @@ class MusicPlayerController(
                 durationMs = item.durationMs,
             )
         }
+        val resolve = resolver
+        if (resolve == null || !item.uri.startsWith(DEFERRED_SCHEME)) {
+            loadTicket++
+            open(item, item.uri, startPositionMs, paused)
+            return
+        }
+        // Ask the song's source where the audio is, off this thread. Whatever was playing is
+        // stopped first: the state already shows the new song.
+        stopNow()
+        val ticket = loadTicket
+        runCatching {
+            resolving.execute {
+                val outcome = runCatching { resolve(item) }
+                post {
+                    if (ticket != loadTicket) return@post
+                    outcome.fold(
+                        onSuccess = { uri -> open(item, uri, startPositionMs, paused) },
+                        onFailure = { failure -> loadFailed(item, failure.message) },
+                    )
+                }
+            }
+        }.onFailure { loadFailed(item, null) }
+    }
+
+    private fun open(item: QueueItem, uri: String, startPositionMs: Long, paused: Boolean) {
         activeToken = try {
-            engine.load(item.uri, startPositionMs, paused)
+            engine.load(uri, startPositionMs, paused)
         } catch (e: RuntimeException) {
             update { it.copy(status = PlaybackStatus.IDLE) }
             reportError(PlaybackError(item.trackId, item.title, e.message ?: "This track could not be played."))
             -1L
+        }
+    }
+
+    /** A song whose address could not be obtained: reported, then skipped like one that failed to decode. */
+    private fun loadFailed(item: QueueItem, message: String?) {
+        activeToken = -1
+        listenedMs = 0
+        lastPositionMs = -1
+        consecutiveErrors++
+        reportError(PlaybackError(item.trackId, item.title, message ?: "This track could not be played."))
+        if (consecutiveErrors >= _state.value.queue.size || _state.value.repeat == RepeatMode.ONE) {
+            update { it.copy(status = PlaybackStatus.IDLE, positionMs = 0) }
+        } else {
+            pendingAdvance?.cancel(false)
+            pendingAdvance = executor.schedule({ runGuarded { advance(userInitiated = false) } }, ERROR_SKIP_DELAY_MS, TimeUnit.MILLISECONDS)
         }
     }
 
@@ -510,6 +571,8 @@ class MusicPlayerController(
 
     private fun stopNow() {
         pendingAdvance?.cancel(false)
+        // An address still being asked for belongs to a song that is no longer wanted.
+        loadTicket++
         if (activeToken >= 0) {
             activeToken = -1
             runCatching { engine.stop() }

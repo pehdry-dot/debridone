@@ -48,6 +48,11 @@ class MusicPlayer internal constructor(
     private val scope: CoroutineScope,
     /** Turns a library track into what the engine can open (a path, or a stream URL of its source). */
     private val resolveUri: (profileId: Long, track: Track) -> String?,
+    /**
+     * For queue items [resolveUri] marked as deferred: the address of the song now. May take a few
+     * seconds and throws with a message for the listener when the source cannot provide one.
+     */
+    private val resolveAtPlayTime: (profileId: Long, trackId: Long) -> String = { _, _ -> throw IllegalStateException("This song has no address.") },
     private val clock: () -> Long = System::currentTimeMillis,
 ) : AutoCloseable {
     private val _state = MutableStateFlow(PlayerState())
@@ -252,7 +257,7 @@ class MusicPlayer internal constructor(
             _engineDescription.value = created.description
             engine = created
             if (audioDevice != "auto") runCatching { created.setAudioDevice(audioDevice) }
-            val player = MusicPlayerController(created, observer = observer)
+            val player = MusicPlayerController(created, observer = observer, resolver = ::resolveDeferred)
             controller = player
             mirrorJob = scope.launch { player.state.collect { _state.value = it } }
             return player
@@ -277,6 +282,12 @@ class MusicPlayer internal constructor(
                 }
             }
         }
+    }
+
+    /** The address of a song whose source decides it at play time. Runs off the player thread. */
+    private fun resolveDeferred(item: QueueItem): String {
+        val profile = profileId ?: throw IllegalStateException("No profile is active.")
+        return resolveAtPlayTime(profile, item.trackId)
     }
 
     private fun toQueueItem(profile: Long, track: Track): QueueItem? {

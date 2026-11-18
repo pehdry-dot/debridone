@@ -13,6 +13,11 @@ import java.nio.file.StandardCopyOption
 
 class HttpStatusException(val status: Int, val url: String, message: String) : IOException(message)
 
+/** An answer of any status; see [MusicHttp.exchange]. */
+internal class HttpAnswer(val status: Int, val contentType: String?, val body: ByteArray, val retryAfterSeconds: Int?) {
+    fun text(): String = String(body, StandardCharsets.UTF_8)
+}
+
 internal class HttpResponse(val status: Int, val contentType: String?, val body: ByteArray, val finalUrl: String) {
     fun text(): String = String(body, StandardCharsets.UTF_8)
 }
@@ -61,6 +66,22 @@ internal object MusicHttp {
                 throw HttpStatusException(status, redact(url), "The server answered $status" + bytes.takeIf { it.isNotEmpty() }?.let { ": " + String(it, StandardCharsets.UTF_8).take(200) }.orEmpty())
             }
             return HttpResponse(status, connection.contentType, bytes, connection.url.toString())
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
+     * A GET whose error answers are returned instead of thrown, with the `Retry-After` header: for
+     * protocols that put a message for the user in the body of a 4xx or 5xx answer.
+     */
+    fun exchange(url: String, headers: Map<String, String> = emptyMap(), maxBytes: Int = 8 * 1024 * 1024): HttpAnswer {
+        val connection = open(url, headers)
+        try {
+            val status = connection.responseCode
+            val stream: InputStream? = if (status >= 400) connection.errorStream else connection.inputStream
+            val bytes = stream?.use { readLimited(it, maxBytes) } ?: ByteArray(0)
+            return HttpAnswer(status, connection.contentType, bytes, connection.getHeaderField("Retry-After")?.trim()?.toIntOrNull())
         } finally {
             connection.disconnect()
         }

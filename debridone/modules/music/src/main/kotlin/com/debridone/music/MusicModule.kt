@@ -94,7 +94,7 @@ class MusicModule(
             database, library, storage.secrets, storage.dataDir.resolve("offline"), clock,
             artworkCacheDirectory = storage.cacheDir.resolve("catalogue-art"),
         )
-        val player = MusicPlayer(library, database, engineFactory, moduleScope, sources::resolveUri, clock)
+        val player = MusicPlayer(library, database, engineFactory, moduleScope, sources::resolveUri, sources::resolveAtPlayTime, clock)
         _services.value = MusicServices(
             library = library,
             scanner = MusicScanner(library, clock),

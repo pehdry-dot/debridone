@@ -67,6 +67,9 @@ data class CatalogCapabilities(
 interface MusicCatalogAdapter : MusicSourceAdapter {
     val capabilities: CatalogCapabilities
 
+    /** What one connection offers, for sources that differ from one connection to the next (addons). */
+    fun capabilities(connection: SourceConnection): CatalogCapabilities = capabilities
+
     fun search(connection: SourceConnection, secret: String, query: String, limit: Int): CatalogResults
 
     /** Songs the source puts forward (trending, random, newest), optionally of one [genre]. */

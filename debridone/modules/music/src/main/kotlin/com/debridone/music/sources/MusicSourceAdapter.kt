@@ -26,8 +26,20 @@ data class SourceField(val key: String, val label: String, val secret: Boolean =
 /** What the user typed into the form. */
 data class SourceDraft(val name: String, val baseUrl: String, val username: String, val secret: String)
 
-/** What a successful sign-in produced: the non-secret settings to keep and the secret to store. */
-data class SourceSession(val config: Map<String, String>, val secret: String, val serverName: String?, val serverVersion: String?)
+/**
+ * What a successful sign-in produced: the non-secret settings to keep and the secret to store.
+ * For a source whose address is itself a secret ([MusicSourceAdapter.addressIsSecret]),
+ * [publicAddress] is what may be shown and saved in its place and [account] tells two
+ * connections on the same server apart.
+ */
+data class SourceSession(
+    val config: Map<String, String>,
+    val secret: String,
+    val serverName: String?,
+    val serverVersion: String?,
+    val publicAddress: String? = null,
+    val account: String? = null,
+)
 
 class SourceException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -86,6 +98,22 @@ interface MusicSourceAdapter {
 
     /** Whether songs may be saved for offline listening. */
     val allowsDownload: Boolean get() = syncsLibrary
+
+    /** The same question for one connection, for sources where the user decides it per connection. */
+    fun allowsDownload(connection: SourceConnection): Boolean = allowsDownload
+
+    /**
+     * True when the address the user enters may carry a private token (an addon address such as
+     * `https://host/<token>/manifest.json`). It is then kept only in the system's credential store,
+     * handed to the adapter as its secret, and never written to the database, a log or a message.
+     */
+    val addressIsSecret: Boolean get() = false
+
+    /**
+     * Settings to keep after a successful [test], when the source describes itself anew each time
+     * (an addon's manifest). Null: nothing changes.
+     */
+    fun refreshedConfig(connection: SourceConnection, secret: String): Map<String, String>? = null
 
     /**
      * Signs in with what the user typed. Throws [SourceException] with a message for the user when

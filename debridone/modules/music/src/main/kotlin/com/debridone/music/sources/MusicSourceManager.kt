@@ -8,6 +8,7 @@ import com.debridone.music.library.TrackInput
 import com.debridone.platform.db.SqliteDatabase
 import com.debridone.platform.db.getBooleanInt
 import com.debridone.platform.db.getNullableLong
+import com.debridone.music.playback.DEFERRED_SCHEME
 import com.debridone.platform.secrets.ScopedSecretStore
 import java.io.IOException
 import java.net.URI
@@ -52,7 +53,7 @@ class MusicSourceManager(
     private val offlineDirectory: Path,
     private val clock: () -> Long = System::currentTimeMillis,
     /** The kinds of source this build can talk to. Each is a tested adapter; nothing else is accepted. */
-    val adapters: List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter()),
+    val adapters: List<MusicSourceAdapter> = listOf(AudiusAdapter(), SubsonicAdapter(), JellyfinAdapter(), HttpCatalogAdapter(), EclipseAddonAdapter()),
     /** Where covers shown while browsing a catalogue are kept. Null: they are fetched each time. */
     private val artworkCacheDirectory: Path? = null,
 ) {
@@ -76,7 +77,7 @@ class MusicSourceManager(
 
     /** True when [track] comes from a server it can be downloaded from (not a live stream). */
     fun canDownload(profileId: Long, track: Track): Boolean =
-        !track.isLocal && connection(profileId, track.sourceId)?.let { it.enabled && adapter(it.adapter)?.allowsDownload == true } == true
+        !track.isLocal && connection(profileId, track.sourceId)?.let { it.enabled && adapter(it.adapter)?.allowsDownload(it) == true } == true
 
     // ---------------------------------------------------------------- connections
 
@@ -102,16 +103,25 @@ class MusicSourceManager(
         } catch (e: IllegalArgumentException) {
             throw SourceException(e.message ?: "That address is not valid.")
         }
-        val baseUrl = MusicHttp.normalizeBaseUrl(address)
+        // An address that may carry a token is never written down: what is saved in its place is
+        // the part the adapter says may be shown, and the addon's id tells two of them apart.
+        val baseUrl = if (adapter.addressIsSecret) session.publicAddress.orEmpty() else MusicHttp.normalizeBaseUrl(address)
+        val username = if (adapter.addressIsSecret) session.account.orEmpty() else draft.username.trim()
         val name = draft.name.trim().ifEmpty { session.serverName ?: adapter.displayName }.take(80)
         val now = clock()
         val id = database.transaction {
             val duplicate = queryOne(
                 "SELECT id FROM music_sources WHERE profile_id = ? AND adapter = ? AND base_url = ? AND username = ?",
-                profileId, adapterId, baseUrl, draft.username.trim(),
+                profileId, adapterId, baseUrl, username,
             ) { it.getLong(1) }
             if (duplicate != null) {
-                throw SourceException(if (adapter.needsCredentials) "This profile is already connected to that server with that user." else "${adapter.displayName} is already set up for this profile.")
+                throw SourceException(
+                    when {
+                        adapter.addressIsSecret -> "${session.serverName ?: "This addon"} is already installed for this profile. Remove it first to add it with another address."
+                        adapter.needsCredentials -> "This profile is already connected to that server with that user."
+                        else -> "${adapter.displayName} is already set up for this profile."
+                    },
+                )
             }
             val priority = (queryOne("SELECT COALESCE(MAX(priority), 0) FROM music_sources WHERE profile_id = ?", profileId) { it.getInt(1) } ?: 0) + 1
             insert(
@@ -119,7 +129,7 @@ class MusicSourceManager(
                 INSERT INTO music_sources (profile_id, adapter, name, base_url, username, config, enabled, priority, created_at, updated_at, last_test_at, last_test_ok, plugin_id)
                 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 1, ?)
                 """.trimIndent(),
-                profileId, adapterId, name, baseUrl, draft.username.trim(), toJson(session.config), priority, now, now, now, pluginId,
+                profileId, adapterId, name, baseUrl, username, toJson(session.config), priority, now, now, now, pluginId,
             )
         }
         try {
@@ -181,10 +191,26 @@ class MusicSourceManager(
         val result = runCatching {
             if (existing.adapter == STREAM_ADAPTER) return@runCatching
             val adapter = adapter(existing.adapter) ?: throw SourceException("This kind of source is not supported.")
-            adapter.test(existing, requireSecret(profileId, existing))
+            val secret = requireSecret(profileId, existing)
+            adapter.test(existing, secret)
+            adapter.refreshedConfig(existing, secret)?.let { fresh -> updateConfig(profileId, sourceId) { old -> keepChoices(old) + fresh } }
+            Unit
         }
         recordTest(sourceId, result.exceptionOrNull())
         return result
+    }
+
+    /** What the user chose for a connection (an addon's settings, whether saving is allowed) outlives a new manifest. */
+    private fun keepChoices(config: Map<String, String>): Map<String, String> =
+        config.filterKeys { it.startsWith(AddonManifest.VALUE_PREFIX) || it == EclipseAddonAdapter.DOWNLOADS_KEY }
+
+    private fun updateConfig(profileId: Long, sourceId: Long, change: (Map<String, String>) -> Map<String, String>) {
+        val existing = connection(profileId, sourceId) ?: return
+        database.execute(
+            "UPDATE music_sources SET config = ?, updated_at = ? WHERE profile_id = ? AND id = ?",
+            toJson(change(existing.config)), clock(), profileId, sourceId,
+        )
+        library.notifyChanged()
     }
 
     // ---------------------------------------------------------------- synchronisation
@@ -276,7 +302,7 @@ class MusicSourceManager(
         connections(profileId).filter { it.enabled && adapter(it.adapter) is MusicCatalogAdapter }
 
     fun capabilities(connection: SourceConnection): CatalogCapabilities =
-        (adapter(connection.adapter) as? MusicCatalogAdapter)?.capabilities ?: CatalogCapabilities()
+        (adapter(connection.adapter) as? MusicCatalogAdapter)?.let { adapter -> runCatching { adapter.capabilities(connection) }.getOrNull() } ?: CatalogCapabilities()
 
     fun search(profileId: Long, sourceId: Long, query: String, limit: Int = 24): CatalogResults =
         onCatalog(profileId, sourceId) { adapter, connection, secret -> adapter.search(connection, secret, query.trim(), limit) }
@@ -472,6 +498,104 @@ class MusicSourceManager(
         library.notifyChanged()
     }
 
+    // ---------------------------------------------------------------- addons (Eclipse Music / BeatBoss format)
+
+    private val addons: EclipseAddonAdapter? get() = adapters.filterIsInstance<EclipseAddonAdapter>().firstOrNull()
+
+    /** Reads the manifest behind [address] and says what DebridOne would do with it. Nothing is saved. */
+    fun previewAddon(address: String): AddonManifest =
+        (addons ?: throw SourceException("Addons are not supported by this build.")).preview(address)
+
+    /**
+     * Installs an addon for one profile. Its address goes to the credential store only; other
+     * profiles neither see the addon nor share it.
+     */
+    fun addAddon(profileId: Long, address: String): SourceConnection =
+        add(profileId, EclipseAddonAdapter.ID, SourceDraft(name = "", baseUrl = address, username = "", secret = ""))
+
+    /** The addons of a profile, in the user's order. */
+    fun addonConnections(profileId: Long): List<SourceConnection> = connections(profileId).filter { it.adapter == EclipseAddonAdapter.ID }
+
+    fun addonManifest(connection: SourceConnection): AddonManifest? = AddonManifest.fromConfig(connection.name, connection.config)
+
+    /** The value in use for each of an addon's settings: the user's choice, else the addon's default. */
+    fun addonSettingValues(connection: SourceConnection): Map<String, String> =
+        addonManifest(connection)?.settings.orEmpty().associate { it.key to (connection.config[AddonManifest.VALUE_PREFIX + it.key] ?: it.default) }
+
+    /** Sets one of an addon's settings for this profile; null goes back to the addon's default. */
+    fun setAddonSetting(profileId: Long, sourceId: Long, key: String, value: String?) {
+        val connection = connection(profileId, sourceId) ?: return
+        val setting = addonManifest(connection)?.settings?.firstOrNull { it.key == key } ?: throw SourceException("${connection.name} has no setting \"$key\".")
+        val clean = value?.let { checkedSetting(setting, it) }
+        updateConfig(profileId, sourceId) { config ->
+            if (clean == null || clean == setting.default) config - (AddonManifest.VALUE_PREFIX + key) else config + (AddonManifest.VALUE_PREFIX + key to clean)
+        }
+    }
+
+    private fun checkedSetting(setting: AddonSetting, value: String): String = when (setting.type) {
+        "toggle" -> if (value == "true") "true" else "false"
+        "select" -> value.takeIf { v -> setting.options.any { it.first == v } } ?: throw SourceException("\"$value\" is not one of the choices of ${setting.label}.")
+        "number" -> {
+            val number = value.trim().toDoubleOrNull() ?: throw SourceException("${setting.label} must be a number.")
+            if (setting.min != null && number < setting.min) throw SourceException("${setting.label} must be at least ${trim(setting.min)}.")
+            if (setting.max != null && number > setting.max) throw SourceException("${setting.label} must be at most ${trim(setting.max)}.")
+            trim(number)
+        }
+        else -> value.trim().take(setting.maxLength ?: 500)
+    }
+
+    private fun trim(number: Double): String = if (number == Math.floor(number) && !number.isInfinite()) number.toLong().toString() else number.toString()
+
+    /**
+     * Whether songs of this addon may be saved for offline listening. Off until the user switches
+     * it on: installing an addon says nothing about what its provider permits.
+     */
+    fun setAddonDownloads(profileId: Long, sourceId: Long, allowed: Boolean) {
+        updateConfig(profileId, sourceId) { config ->
+            if (allowed) config + (EclipseAddonAdapter.DOWNLOADS_KEY to "on") else config - EclipseAddonAdapter.DOWNLOADS_KEY
+        }
+    }
+
+    /** Tries an addon step by step and records the outcome on the connection. */
+    fun diagnoseAddon(profileId: Long, sourceId: Long, query: String): List<AddonCheck> {
+        val connection = connection(profileId, sourceId) ?: return listOf(AddonCheck("Addon", false, "That addon is no longer installed."))
+        val adapter = addons ?: return listOf(AddonCheck("Addon", false, "Addons are not supported by this build."))
+        val secret = runCatching { requireSecret(profileId, connection) }.getOrElse { return listOf(AddonCheck("Address", false, it.message.orEmpty())) }
+        val checks = adapter.diagnose(connection, secret, query.trim().ifEmpty { "a" })
+        val failed = checks.firstOrNull { !it.ok }
+        recordTest(sourceId, failed?.let { SourceException("${it.step}: ${it.detail}") })
+        if (failed == null) adapter.refreshedConfig(connection, secret)?.let { fresh -> updateConfig(profileId, sourceId) { old -> keepChoices(old) + fresh } }
+        return checks
+    }
+
+    /** The rows an addon offers for browsing. */
+    fun addonRows(connection: SourceConnection): List<AddonRow> = addonManifest(connection)?.rows.orEmpty()
+
+    fun addonRow(profileId: Long, sourceId: Long, rowId: String, skip: Int = 0): CatalogResults =
+        onCatalog(profileId, sourceId) { adapter, connection, secret ->
+            (adapter as? EclipseAddonAdapter ?: throw SourceException("${connection.name} has no rows.")).row(connection, secret, rowId, skip)
+        }
+
+    fun addonArtistAlbums(profileId: Long, sourceId: Long, artistId: String): List<RemoteAlbum> =
+        onCatalog(profileId, sourceId) { adapter, connection, secret ->
+            (adapter as? EclipseAddonAdapter)?.artistAlbums(connection, secret, artistId).orEmpty()
+        }
+
+    /**
+     * Lyrics for a song from the profile's addons that offer them (BeatBoss's `lyrics` resource),
+     * the song's own addon first. Null when none has any.
+     */
+    fun addonLyrics(profileId: Long, track: Track): String? {
+        val adapter = addons ?: return null
+        val candidates = addonConnections(profileId).filter { it.enabled && addonManifest(it)?.hasLyrics == true }
+            .sortedByDescending { it.id == track.sourceId }
+        for (connection in candidates) {
+            val secret = runCatching { requireSecret(profileId, connection) }.getOrNull() ?: continue
+            runCatching { adapter.lyrics(connection, secret, track.artist.orEmpty(), track.title) }.getOrNull()?.let { return it }
+        }
+        return null
+    }
+
     // ---------------------------------------------------------------- playback and offline copies
 
     /**
@@ -485,9 +609,36 @@ class MusicSourceManager(
         val remoteId = track.remoteId ?: return null
         if (source.adapter == STREAM_ADAPTER) return remoteId
         val adapter = adapter(source.adapter) ?: return null
+        // An addon is asked for a song's address when the song starts, not when it is queued:
+        // such addresses expire, and a queue of fifty songs must not mean fifty requests.
+        if (adapter.addressIsSecret) return DEFERRED_SCHEME + track.id
         val secret = runCatching { profileSecrets(profileId).get(secretName(source.id)) }.getOrNull()
             ?: if (adapter.needsCredentials) return null else ""
         return adapter.streamUrl(source, secret, remoteId)
+    }
+
+    /**
+     * The address of a song marked as deferred by [resolveUri], asked from its source now. Throws
+     * [SourceException] with a message for the listener when there is none to be had.
+     */
+    fun resolveAtPlayTime(profileId: Long, trackId: Long): String {
+        val track = library.track(profileId, trackId) ?: throw SourceException("This song is no longer in the library.")
+        track.offlinePath?.takeIf { Files.isRegularFile(Paths.get(it)) }?.let { return it }
+        val source = connection(profileId, track.sourceId) ?: throw SourceException("The addon this song came from was removed.")
+        if (!source.enabled) throw SourceException("${source.name} is switched off.")
+        val adapter = adapter(source.adapter) ?: throw SourceException("This kind of source is not supported.")
+        val remoteId = track.remoteId ?: throw SourceException("This song has no address.")
+        return try {
+            adapter.streamUrl(source, requireSecret(profileId, source), remoteId).also { if (source.lastError != null) recordTest(source.id, null) }
+        } catch (e: SourceException) {
+            recordTest(source.id, e)
+            throw e
+        } catch (e: IOException) {
+            // The exception's own text may contain the address; it is not repeated.
+            val wrapped = SourceException("${source.name} could not be reached.")
+            recordTest(source.id, wrapped)
+            throw wrapped
+        }
     }
 
     /** Saves copies of remote songs so they play without the server. Returns how many were saved. */
@@ -502,11 +653,18 @@ class MusicSourceManager(
                     val source = connection(profileId, track.sourceId)?.takeIf { it.enabled && it.adapter != STREAM_ADAPTER }
                         ?: throw SourceException("Live streams cannot be downloaded.")
                     val adapter = adapter(source.adapter) ?: throw SourceException("This kind of source is not supported.")
-                    if (!adapter.allowsDownload) throw SourceException("${adapter.displayName} offers streaming only.")
+                    if (!adapter.allowsDownload(source)) {
+                        throw SourceException(
+                            if (adapter.addressIsSecret) "Saving songs is not switched on for ${source.name}." else "${adapter.displayName} offers streaming only.",
+                        )
+                    }
                     val secret = requireSecret(profileId, source)
-                    val target = offlineFolder(profileId, source.id).resolve("${track.id}.${adapter.fileExtension(track.format)}")
+                    val declared = adapter.fileExtension(track.format)
+                    val target = offlineFolder(profileId, source.id).resolve("${track.id}.$declared")
                     MusicHttp.download(adapter.streamUrl(source, secret, track.remoteId.orEmpty()), target)
-                    library.setOfflinePath(profileId, track.id, target.toString())
+                    // What the file is called follows what it is, not what the source said it would be.
+                    val file = if (adapter.addressIsSecret || declared == "bin") named(target, track.id) else target
+                    library.setOfflinePath(profileId, track.id, file.toString())
                     saved++
                 } catch (e: Exception) {
                     _activity.update { it.copy(lastDownloadError = "${track.title}: ${e.message ?: e::class.simpleName}") }
@@ -517,6 +675,25 @@ class MusicSourceManager(
             _activity.update { it.copy(downloading = 0, downloadTitle = null) }
         }
         return saved
+    }
+
+    /**
+     * Gives a downloaded file the extension of the audio it really contains. A file that is not
+     * audio (an error page, a playlist of segments) is deleted and reported instead of kept.
+     */
+    private fun named(file: Path, trackId: Long): Path {
+        val head = Files.newInputStream(file).use { it.readNBytes(4_096) }
+        val kind = AudioSniffer.fromBytes(head)
+        val extension = kind?.let(AudioSniffer::extension)
+        if (extension == null) {
+            runCatching { Files.deleteIfExists(file) }
+            throw SourceException(
+                if (kind != null) "This song is served as ${AudioSniffer.label(kind)}, which cannot be saved as one file." else "What the source sent is not an audio file DebridOne recognises.",
+            )
+        }
+        val target = file.resolveSibling("$trackId.$extension")
+        if (target != file) Files.move(file, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        return target
     }
 
     fun removeDownload(profileId: Long, trackId: Long) {
