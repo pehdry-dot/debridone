@@ -94,11 +94,17 @@ fun MusicSourcesTab() {
         Box(Modifier.fillMaxSize().padding(40.dp)) { Notice("Music could not open its storage, so its sources are unavailable: ${failed.message}", PillTone.DANGER) }
         return
     }
-    MusicProvider { MusicSourcesContent() }
+    MusicProvider {
+        Box(Modifier.fillMaxSize()) {
+            MusicSourcesContent()
+            // "Configure" and "Connect" open here, in this tab, over the list they were clicked in.
+            MusicSourceConfigurationPanel()
+        }
+    }
 }
 
 @Composable
-private fun MusicSourcesContent() {
+internal fun MusicSourcesContent() {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val actions = LocalMusicActions.current
@@ -114,8 +120,6 @@ private fun MusicSourcesContent() {
             services.sources.manifests(),
         )
     }
-    var adding by remember { mutableStateOf<MusicSourceAdapter?>(null) }
-    var connectingPlugin by remember { mutableStateOf<MusicPluginManifest?>(null) }
     var removingPlugin by remember { mutableStateOf<MusicPluginManifest?>(null) }
     var importText by remember { mutableStateOf("") }
     var importing by remember { mutableStateOf(false) }
@@ -147,7 +151,7 @@ private fun MusicSourcesContent() {
                     importText = ""
                     val manifest = result.plugin?.let { sources.manifest(it.id) }
                     MusicNav.message = "Installed ${result.plugin?.name ?: "the plugin"}."
-                    if (manifest != null && !manifest.connectsWithoutSignIn) connectingPlugin = manifest
+                    if (manifest != null && !manifest.connectsWithoutSignIn) MusicSourcesUi.configuring = MusicSourceConfig.Server(manifest.adapter, manifest)
                     result.plugin?.lastError?.let { importError = "Installed, with a note: $it" }
                 }
                 is PluginActionResult.Failure -> importError = result.message
@@ -165,7 +169,6 @@ private fun MusicSourcesContent() {
             }
         }
     }
-    var addingStream by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<SourceConnection?>(null) }
     val addons = data.connections.filter { it.adapter == EclipseAddonAdapter.ID }
     // Cloud accounts are listed with their own card: they come and go with Settings › Connected Accounts, not from here.
@@ -219,7 +222,7 @@ private fun MusicSourcesContent() {
                                         MusicNav.message = if (setup.problems.isEmpty()) "${manifest.name} is set up." else "${manifest.name} is set up; ${setup.problems.size} of its streams did not answer."
                                     }
                                 } else {
-                                    connectingPlugin = manifest
+                                    MusicSourcesUi.configuring = MusicSourceConfig.Server(manifest.adapter, manifest)
                                 }
                             }, primary = false)
                         }
@@ -256,12 +259,12 @@ private fun MusicSourcesContent() {
                     Icons.Rounded.Cloud, "Navidrome / OpenSubsonic", IntegrationKind.PERSONAL_SERVER,
                     "Your own Navidrome, Airsonic, Gonic or other Subsonic-compatible server: library, artists, albums, playlists, search, covers, streaming.",
                     status = data.connections.count { it.adapter == SubsonicAdapter.ID }.takeIf { it > 0 }?.let { plural(it, "connection") to PillTone.SUCCESS },
-                ) { MusicButton("Connect", { adding = adapter(SubsonicAdapter.ID) }, primary = false) }
+                ) { MusicButton("Connect", { MusicSourcesUi.configuring = MusicSourceConfig.Server(SubsonicAdapter.ID) }, primary = false) }
                 IntegrationCard(
                     Icons.Rounded.Cloud, "Jellyfin Music", IntegrationKind.PERSONAL_SERVER,
                     "The music libraries of your own Jellyfin server: albums, artists, songs, playlists, search, covers, playback.",
                     status = data.connections.count { it.adapter == JellyfinAdapter.ID }.takeIf { it > 0 }?.let { plural(it, "connection") to PillTone.SUCCESS },
-                ) { MusicButton("Connect", { adding = adapter(JellyfinAdapter.ID) }, primary = false) }
+                ) { MusicButton("Connect", { MusicSourcesUi.configuring = MusicSourceConfig.Server(JellyfinAdapter.ID) }, primary = false) }
                 // Cloud accounts belong to the application (Settings › Connected Accounts): Music lists their audio and holds no sign-in.
                 if (sources.adapter(CloudLibraryAdapter.ID) != null) {
                     val clouds = data.connections.filter { it.adapter == CloudLibraryAdapter.ID }
@@ -312,10 +315,8 @@ private fun MusicSourcesContent() {
                     status = details(plural(data.folderCount, "folder"), plural(data.localSongs, "song")) to PillTone.SUCCESS,
                     note = health["embedded-tags"]?.message,
                 ) {
-                    MusicButton("Configure", {
-                        ShellState.select(ShellSection.MUSIC)
-                        MusicNav.root(MusicRoute.Settings)
-                    }, primary = false)
+                    // Opens here, over this list: the folders are configured without leaving it.
+                    MusicButton("Configure", { MusicSourcesUi.configuring = MusicSourceConfig.LocalLibrary }, primary = false)
                 }
             }
         }
@@ -351,7 +352,7 @@ private fun MusicSourcesContent() {
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                    MusicButton("Connect a catalogue server", { adding = adapter(HttpCatalogAdapter.ID) }, icon = Icons.Rounded.Cloud, primary = false)
+                    MusicButton("Connect a catalogue server", { MusicSourcesUi.configuring = MusicSourceConfig.Server(HttpCatalogAdapter.ID) }, icon = Icons.Rounded.Cloud, primary = false)
                 }
                 Text(
                     (if (sources.credentialStoreIsProtected) "Passwords and sign-in tokens are kept in the ${sources.credentialStoreName}, protected by the system."
@@ -376,7 +377,7 @@ private fun MusicSourcesContent() {
                         MusicIconButton(Icons.Rounded.Delete, "Remove ${stream.title}", { MusicNav.dialog = MusicDialog.RemoveTracks(listOf(stream.id), "“${stream.title}”") })
                     }
                 }
-                MusicButton("Add a stream address", { addingStream = true }, icon = Icons.Rounded.Radio, primary = false, modifier = Modifier.padding(top = 6.dp))
+                MusicButton("Add a stream address", { MusicSourcesUi.configuring = MusicSourceConfig.Stream }, icon = Icons.Rounded.Radio, primary = false, modifier = Modifier.padding(top = 6.dp))
             }
         }
 
@@ -396,8 +397,6 @@ private fun MusicSourcesContent() {
         }
     }
 
-    adding?.let { adapter -> AddServerDialog(adapter, onDismiss = { adding = null }) }
-    connectingPlugin?.let { manifest -> AddServerDialog(adapter(manifest.adapter), plugin = manifest, onDismiss = { connectingPlugin = null }) }
     removingPlugin?.let { manifest ->
         ConfirmDialog(
             title = "Remove ${manifest.name}?",
@@ -410,7 +409,6 @@ private fun MusicSourcesContent() {
             }
         }
     }
-    if (addingStream) AddStreamDialog(onDismiss = { addingStream = false })
     removing?.let { connection ->
         ConfirmDialog(
             title = "Remove ${connection.name}?",
@@ -519,11 +517,12 @@ private fun IntegrationCard(
 }
 
 /**
- * Sign-in form of a source: the fields its adapter asks for. With [plugin], the address comes from
- * the plugin's manifest. The connection is saved only if the source accepts the sign-in.
+ * Sign-in form of a source, shown in the configuration panel: the fields its adapter asks for.
+ * With [plugin], the address comes from the plugin's manifest. The connection is saved only if
+ * the source accepts the sign-in; what goes wrong is said here, under the fields.
  */
 @Composable
-private fun AddServerDialog(adapter: MusicSourceAdapter, plugin: MusicPluginManifest? = null, onDismiss: () -> Unit) {
+internal fun ServerConnectionForm(adapter: MusicSourceAdapter, plugin: MusicPluginManifest? = null, onDismiss: () -> Unit) {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val scope = rememberCoroutineScope()
@@ -567,7 +566,7 @@ private fun AddServerDialog(adapter: MusicSourceAdapter, plugin: MusicPluginMani
             )
         }
     }
-    MusicDialogFrame(if (plugin != null) "Connect ${plugin.name}" else "Connect ${adapter.displayName}", onDismiss = { if (!working) onDismiss() }, width = 520) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(plugin?.description ?: adapter.description, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
         if (plugin?.baseUrl != null) {
             Text("Address: ${plugin.baseUrl}", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary)
@@ -598,7 +597,7 @@ private fun AddServerDialog(adapter: MusicSourceAdapter, plugin: MusicPluginMani
 }
 
 @Composable
-private fun AddStreamDialog(onDismiss: () -> Unit) {
+internal fun StreamAddressForm(onDismiss: () -> Unit) {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val scope = rememberCoroutineScope()
@@ -618,7 +617,7 @@ private fun AddStreamDialog(onDismiss: () -> Unit) {
             result.fold({ onDismiss(); MusicNav.message = "Added ${it.title}" }, { error = it.message ?: "That address could not be added." })
         }
     }
-    MusicDialogFrame("Add a stream address", onDismiss = { if (!working) onDismiss() }, width = 520) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         DialogTextField(address, { address = it; error = null }, "Address (http or https)", focusRequester = focus, onSubmit = submit)
         DialogTextField(name, { name = it }, "Name", onSubmit = submit)
         error?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger) }

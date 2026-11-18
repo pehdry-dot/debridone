@@ -285,7 +285,7 @@ private fun CloudTab(cloud: CloudServices, profileId: Long?, accounts: List<Clou
                 EmptyState(
                     if (provider == null) "No account is connected for this profile." else "No ${provider.displayName} account is connected for this profile.",
                     "Connect your account in Settings › Connected Accounts. DebridOne then shows the files that are already in it.",
-                ) { CloudButton("Open Connected Accounts", { ShellState.openSettings(SettingsPage.CONNECTED_ACCOUNTS) }, icon = Icons.Rounded.Link, primary = true) }
+                ) { CloudButton("Open Connected Accounts", { ShellState.showInPlace(SettingsPage.CONNECTED_ACCOUNTS) }, icon = Icons.Rounded.Link, primary = true) }
             }
             items == null -> item("loading") { Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = tokens.colors.accent, strokeWidth = 2.dp, modifier = Modifier.size(24.dp)) } }
             openItem != null -> {

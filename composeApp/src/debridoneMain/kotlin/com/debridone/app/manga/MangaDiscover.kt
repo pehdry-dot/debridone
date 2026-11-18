@@ -332,7 +332,7 @@ internal fun MangaDiscover() {
                 DiscoverState.problem?.let { problem ->
                     Notice(problem.message, if (problem.temporary) PillTone.WARNING else PillTone.DANGER)
                     if (source?.configurable == true) {
-                        MangaButton("Configure ${source.name}", { openMangaPlugins(MangaPluginsTab.SOURCES) }, primary = false, icon = Icons.Rounded.Tune)
+                        MangaButton("Configure ${source.name}", { MangaPluginsState.configuring = source.id }, primary = false, icon = Icons.Rounded.Tune)
                     }
                 }
             }

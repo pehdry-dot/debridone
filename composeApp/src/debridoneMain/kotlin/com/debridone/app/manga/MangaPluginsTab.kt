@@ -109,6 +109,12 @@ internal object MangaPluginsState {
     /** A store address waiting for the person to confirm they have read what an extension may do. */
     var pendingStore by mutableStateOf<String?>(null)
 
+    /** Goes to another of these pages, wherever they are shown: in Plugins › Manga or in Manga's settings panel. */
+    fun show(target: MangaPluginsTab) {
+        tab = target
+        MangaNav.settingsSection = MangaSettingsSections.of(target)
+    }
+
     fun say(message: String) {
         notice = message
         problem = null
@@ -132,6 +138,7 @@ fun MangaPluginsTab() {
         // The extensions live in the profile's manga server: looking at them needs it running.
         LaunchedEffect(manga.profileId) { manga.module.ensureServer() }
         val connection by manga.services.server.state.collectAsStateWithLifecycle()
+        Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().background(manga.style.background)) {
             Row(
                 Modifier.fillMaxWidth().padding(start = 40.dp, end = 40.dp, top = 6.dp, bottom = 10.dp),
@@ -152,7 +159,9 @@ fun MangaPluginsTab() {
                 }
             }
         }
-        MangaPluginsState.configuring?.let { sourceId -> SourceSettingsDialog(sourceId) { MangaPluginsState.configuring = null } }
+        // "Configure" opens here, in this tab, over the list it was clicked in.
+        MangaSourceConfigurationPanel()
+        }
         MangaPluginsState.pendingStore?.let { address -> ExtensionNoticeDialog(address) }
         MangaDialogs()
     }
@@ -198,7 +207,7 @@ private fun PluginsMessages() {
 /** What the server knows about extensions: the installed ones, and what the stores offer. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ExtensionsTab() {
+internal fun ExtensionsTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val revision by manga.services.extensions.revision.collectAsState()
@@ -236,7 +245,7 @@ private fun ExtensionsTab() {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Extensions", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
@@ -262,7 +271,7 @@ private fun ExtensionsTab() {
                             pluginWork("Installing ${file.fileName}…") { "${manga.services.extensions.installFile(file).name} installed from ${file.fileName}." }
                         }
                     }, primary = false, icon = Icons.Rounded.InsertDriveFile, enabled = MangaPluginsState.progress == null)
-                    MangaButton("Stores (${stores.size})", { MangaPluginsState.tab = MangaPluginsTab.STORES }, primary = false, icon = Icons.Rounded.Storefront)
+                    MangaButton("Stores (${stores.size})", { MangaPluginsState.show(MangaPluginsTab.STORES) }, primary = false, icon = Icons.Rounded.Storefront)
                 }
                 PluginsMessages()
                 if (extensions != null && stores.isEmpty() && installed.isEmpty()) {
@@ -270,7 +279,7 @@ private fun ExtensionsTab() {
                         Icons.Rounded.Extension, "No extension store yet",
                         "DebridOne comes with no store and no sources of its own. Add the address of an extension store you trust, then install the extensions you want from it. Your own files need none of this: add them from Manga's Library.",
                     ) {
-                        MangaButton("Add a store", { MangaPluginsState.tab = MangaPluginsTab.STORES }, icon = Icons.Rounded.Storefront)
+                        MangaButton("Add a store", { MangaPluginsState.show(MangaPluginsTab.STORES) }, icon = Icons.Rounded.Storefront)
                     }
                 }
                 if (all.isNotEmpty()) {
@@ -339,7 +348,7 @@ private const val EXTENSION_NOTICE =
 
 /** Extension stores: addresses the person adds. None is shipped or suggested. */
 @Composable
-private fun StoresTab() {
+internal fun StoresTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val revision by manga.services.extensions.revision.collectAsState()
@@ -362,7 +371,7 @@ private fun StoresTab() {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Extension stores", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
@@ -418,7 +427,7 @@ private fun addStore(manga: MangaContext, address: String, onAdded: () -> Unit) 
 
 /** Shown once, before the first store is added: what an extension is allowed to do. */
 @Composable
-private fun ExtensionNoticeDialog(address: String) {
+internal fun ExtensionNoticeDialog(address: String) {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val dismiss = { MangaPluginsState.pendingStore = null }
@@ -442,7 +451,7 @@ private fun ExtensionNoticeDialog(address: String) {
 /** The profile's manga server: what it is, how it is doing, and — instead of it — a server of the person's own. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ServerTab() {
+internal fun ServerTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
@@ -466,7 +475,7 @@ private fun ServerTab() {
         timeoutSeconds = timeout.toIntOrNull() ?: 60, requireHttps = requireHttps,
     )
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Text("Manga server", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
             Text(

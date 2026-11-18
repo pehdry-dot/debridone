@@ -107,7 +107,7 @@ internal fun SourcesTab() {
     }
     val preferred = all.filter { it.preferredRank != null }.sortedBy { it.preferredRank }.map { it.id }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Sources", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
@@ -141,7 +141,7 @@ internal fun SourcesTab() {
                 MangaEmptyState(
                     Icons.Rounded.Extension, "No online sources",
                     "Sources come with extensions. Add an extension store, then install the extensions you want; each brings one or more sources.",
-                ) { MangaButton("Extensions", { MangaPluginsState.tab = MangaPluginsTab.EXTENSIONS }, icon = Icons.Rounded.Extension) }
+                ) { MangaButton("Extensions", { MangaPluginsState.show(MangaPluginsTab.EXTENSIONS) }, icon = Icons.Rounded.Extension) }
             }
         }
         items(listed, key = { it.id }) { source ->
@@ -225,6 +225,7 @@ private fun SourceRow(
                     DiscoverState.open(source.id, "")
                     manga.services.preferences.set(MangaPreferences.DISCOVER_SOURCE, source.id)
                     MangaNav.root(MangaRoute.Discover)
+                    MangaNav.settingsOpen = false
                     com.debridone.app.shell.ShellState.select(com.debridone.app.shell.ShellSection.MANGA)
                 }, primary = false, icon = Icons.Rounded.Explore, enabled = source.enabled)
             } else {
@@ -255,19 +256,6 @@ private fun SourceRow(
 // ---------------------------------------------------------------------------- a source's own settings
 
 private fun isSecretSetting(name: String): Boolean = Regex("pass|token|secret|api.?key", RegexOption.IGNORE_CASE).containsMatchIn(name)
-
-/** The settings a source's extension defines, opened in a dialog. */
-@Composable
-internal fun SourceSettingsDialog(sourceId: String, onDismiss: () -> Unit) {
-    val manga = LocalManga.current
-    val source = remember(sourceId) { manga.services.sources.find(sourceId) }
-    MangaDialogFrame("Configure ${source?.name ?: "source"}", onDismiss, width = 600) {
-        Column(Modifier.weight(1f, fill = false).heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SourcePreferencesEditor(sourceId)
-        }
-        MangaDialogDone(onDismiss)
-    }
-}
 
 /**
  * The settings of one source, exactly as its extension defines them: switches, text fields, single
@@ -433,7 +421,7 @@ internal fun MetadataTab() {
         scope.launch(Dispatchers.IO) { next.forEachIndexed { position, item -> manga.module.metadataProviders.setPriority(item.id, position * 10) } }
     }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("Metadata", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
             Text(

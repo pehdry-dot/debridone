@@ -282,7 +282,7 @@ internal fun LocalTab(cloud: CloudServices, profileId: Long?, downloads: List<Do
         LocalSection.entries.forEach { section -> CloudChip(section.label, DownloadsUi.localSection == section) { DownloadsUi.localSection = section } }
         Box(Modifier.weight(1f))
         if (DownloadsUi.localSection == LocalSection.CLOUD) {
-            CloudButton("Download settings", { ShellState.openSettings(SettingsPage.DOWNLOADS) }, icon = Icons.Rounded.Settings)
+            CloudButton("Download settings", { ShellState.showInPlace(SettingsPage.DOWNLOADS) }, icon = Icons.Rounded.Settings)
             if (profileId != null && downloads.any { !it.active }) CloudButton("Clear history", { CloudApp.background { cloud.downloads.clearHistory(profileId); CloudApp.say("The history is cleared. No file was deleted.") } })
         }
     }

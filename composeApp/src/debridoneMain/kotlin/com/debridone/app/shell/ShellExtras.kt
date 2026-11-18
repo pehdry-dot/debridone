@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.debridone.app.DebridOneRuntime
+import com.debridone.app.music.MusicNav
+import com.debridone.app.manga.MangaNav
 import com.debridone.app.music.MusicRemote
 import com.nuvio.app.AppScreenTab
 import com.nuvio.app.AppShellHost
@@ -37,8 +39,8 @@ fun StartupErrorScreen(message: String) {
 }
 
 /**
- * Application shortcuts: Cmd+1…4 switch sections, Cmd+, opens Settings, Cmd+F searches inside the
- * active section. Music: Cmd+P play/pause, Cmd+Right/Left next/previous, Cmd+Up/Down volume, Esc
+ * Application shortcuts: Cmd+1…3 switch sections, Cmd+, opens the settings of the section that is
+ * showing (inside it), Cmd+F searches inside the active section. Music: Cmd+P play/pause, Cmd+Right/Left next/previous, Cmd+Up/Down volume, Esc
  * closes the full-screen player. (Ctrl replaces Cmd on non-macOS development hosts.)
  *
  * Installed at the AWT level so the shortcuts work wherever keyboard focus is.
@@ -73,8 +75,14 @@ private fun handleShortcut(keyCode: Int): Boolean {
         KeyEvent.VK_1 -> select(ShellSection.STREAMING)
         KeyEvent.VK_2 -> select(ShellSection.MUSIC)
         KeyEvent.VK_3 -> select(ShellSection.MANGA)
+        // Settings of the section that is showing, opened inside it; the application's own settings elsewhere.
         KeyEvent.VK_COMMA -> {
-            ShellState.openSettings(ShellState.settingsPage.value)
+            when (section) {
+                ShellSection.STREAMING -> AppShellHost.settingsOverlayOpen = true
+                ShellSection.MUSIC -> MusicNav.openSettings()
+                ShellSection.MANGA -> MangaNav.openSettings()
+                else -> ShellState.openSettings(ShellState.settingsPage.value)
+            }
             true
         }
         KeyEvent.VK_F -> when (section) {

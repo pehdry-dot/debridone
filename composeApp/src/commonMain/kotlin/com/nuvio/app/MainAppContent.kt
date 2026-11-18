@@ -419,6 +419,13 @@ internal fun MainAppContent(
     }
 
     fun activateTab(tab: AppScreenTab) {
+        // DebridOne: on desktop, settings open as a panel over the tab that is showing. Whatever asks
+        // for the Settings tab (the cogwheel, a link to a settings page) gets the panel instead, and
+        // the tab underneath is left exactly as it is.
+        if (tab == AppScreenTab.Settings && AppShellHost.isActive && isDesktop) {
+            AppShellHost.settingsOverlayOpen = true
+            return
+        }
         if (useNativeNavigation && onActivate != null) {
             onActivate(tab)
         } else {
@@ -426,7 +433,18 @@ internal fun MainAppContent(
         }
     }
 
+    // DebridOne: a Settings tab remembered from before settings became a panel is not gone back to.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == AppScreenTab.Settings && AppShellHost.isActive && isDesktop) selectedTab = AppScreenTab.Home
+    }
+
     fun handleRootTabClick(tab: AppScreenTab) {
+        // Choosing a tab while the settings panel is open closes the panel: the tab is what was asked for.
+        if (tab != AppScreenTab.Settings && AppShellHost.settingsOverlayOpen) {
+            AppShellHost.settingsOverlayOpen = false
+            // The tab that was underneath is simply shown again, not scrolled back to its top.
+            if (selectedTab == tab) return
+        }
         if (selectedTab != tab) {
             activateTab(tab)
             return

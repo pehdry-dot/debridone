@@ -78,7 +78,7 @@ internal class StreamingCloudLibrary(private val cloud: CloudServices) {
                 EmptyState(
                     "No account connected for this profile",
                     "Connect Real-Debrid or TorBox in Settings to play the videos that are already in your account.",
-                ) { CloudButton("Open Connected Accounts", { ShellState.openSettings(SettingsPage.CONNECTED_ACCOUNTS) }, primary = true) }
+                ) { CloudButton("Open Connected Accounts", { ShellState.showInPlace(SettingsPage.CONNECTED_ACCOUNTS) }, primary = true) }
             }
             list == null -> Unit
             list.isEmpty() -> item(key = "debridone-cloud-empty") {

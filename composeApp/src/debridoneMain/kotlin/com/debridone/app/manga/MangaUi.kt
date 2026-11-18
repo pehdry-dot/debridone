@@ -108,7 +108,6 @@ internal sealed interface MangaRoute {
     data object Search : MangaRoute
     data object Library : MangaRoute
     data object Downloads : MangaRoute
-    data object Settings : MangaRoute
     data class SeriesPage(val seriesId: Long) : MangaRoute
     /** [page] opens the chapter at that page (a bookmark, or the end when coming back from the next chapter) instead of where it was left. */
     data class Reader(val chapterId: Long, val page: Int? = null) : MangaRoute
@@ -122,6 +121,16 @@ internal object MangaNav {
 
     /** A short confirmation or error shown at the bottom of the section. */
     var message by mutableStateOf<String?>(null)
+
+    /** Manga's settings panel: open or not, and the page it shows. The page under it is not touched. */
+    var settingsOpen by mutableStateOf(false)
+    var settingsSection by mutableStateOf(MangaSettingsSections.APPEARANCE)
+
+    /** Opens the settings, on [section] when given, else where they were last. */
+    fun openSettings(section: String? = null) {
+        if (section != null) settingsSection = section
+        settingsOpen = true
+    }
 
     /** Incremented to ask the search field to take keyboard focus. */
     var searchFocusRequests by mutableIntStateOf(0)
@@ -161,6 +170,7 @@ internal object MangaNav {
         root(MangaRoute.Home)
         dialog = null
         message = null
+        settingsOpen = false
         SearchState.reset()
         DiscoverState.reset()
         LibraryState.reset()
@@ -360,8 +370,8 @@ fun MangaScreen() {
                     MangaTopBar()
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         val connection by manga.services.server.state.collectAsStateWithLifecycle()
-                        // The settings stay reachable while the server is down: that is where a wrong address is put right.
-                        if (connection !is MangaConnection.Ready && route != MangaRoute.Settings) {
+                        // The settings panel stays reachable while the server is down: that is where a wrong address is put right.
+                        if (connection !is MangaConnection.Ready) {
                             MangaServerStatus(connection)
                         } else when (route) {
                             MangaRoute.Home -> MangaHome()
@@ -369,10 +379,11 @@ fun MangaScreen() {
                             MangaRoute.Search -> MangaSearch()
                             MangaRoute.Library -> MangaLibrary()
                             MangaRoute.Downloads -> MangaDownloads()
-                            MangaRoute.Settings -> MangaSettings()
                             is MangaRoute.SeriesPage -> SeriesScreen(route.seriesId)
                             is MangaRoute.Reader -> Unit
                         }
+                        // Over the page, under the navigation: the page keeps its place, the navigation stays in view.
+                        MangaSettingsPanel()
                     }
                 }
             }
@@ -411,7 +422,9 @@ private fun MangaTopBar() {
             MangaNavItem("Search", Icons.Rounded.Search, root == MangaRoute.Search) { MangaNav.root(MangaRoute.Search) }
             MangaNavItem("Library", Icons.Rounded.CollectionsBookmark, root == MangaRoute.Library) { MangaNav.root(MangaRoute.Library) }
             MangaNavItem("Downloads", Icons.Rounded.Download, root == MangaRoute.Downloads) { MangaNav.root(MangaRoute.Downloads) }
-            MangaNavItem("Settings", Icons.Rounded.Settings, root == MangaRoute.Settings, iconOnly = true) { MangaNav.root(MangaRoute.Settings) }
+            MangaNavItem("Settings", Icons.Rounded.Settings, MangaNav.settingsOpen, iconOnly = true) {
+                if (MangaNav.settingsOpen) MangaNav.settingsOpen = false else MangaNav.openSettings()
+            }
         }
     }
 }
@@ -796,7 +809,7 @@ internal fun MangaServerStatus(connection: MangaConnection) {
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     MangaButton("Try again", { manga.services.server.reconnect() })
-                    MangaButton("Server settings", { MangaNav.root(MangaRoute.Settings) }, primary = false)
+                    MangaButton("Server settings", { MangaNav.openSettings(MangaSettingsSections.SERVER) }, primary = false)
                     if (connection.log.isNotEmpty()) MangaButton(if (details) "Hide details" else "Show details", { details = !details }, primary = false)
                 }
                 if (details && connection.log.isNotEmpty()) {

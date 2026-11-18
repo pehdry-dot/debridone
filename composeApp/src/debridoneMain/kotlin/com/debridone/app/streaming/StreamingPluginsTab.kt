@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.debridone.app.shell.SegmentedTabs
 import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.addons.AddonConfigurationPanel
 import com.nuvio.app.features.addons.AddonsScreen
 import com.nuvio.app.features.downloads.DownloadsScreen
 import com.nuvio.app.features.settings.PluginsSettingsScreen
@@ -40,6 +41,8 @@ internal fun StreamingPluginsTab() {
             } else {
                 AddonsScreen(modifier = Modifier.fillMaxSize())
             }
+            // An addon's "Configure" opens here, in this tab, over the list it was clicked in.
+            AddonConfigurationPanel()
         }
     }
 }

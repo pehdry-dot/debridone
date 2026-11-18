@@ -173,8 +173,17 @@ internal fun AddonsSettingsPageContent(
                     },
                     onConfigureClick = if (showConfigureAction && !configureUrl.isNullOrBlank()) {
                         {
-                            runCatching {
-                                uriHandler.openUri(configureUrl)
+                            if (com.nuvio.app.AppShellHost.isActive) {
+                                // DebridOne: configuration opens here, as a panel over this list.
+                                com.nuvio.app.AppShellHost.addonConfiguration = AddonConfigurationRequest(
+                                    name = manifest?.name ?: addon.manifestUrl,
+                                    manifestUrl = addon.manifestUrl,
+                                    configureUrl = configureUrl,
+                                )
+                            } else {
+                                runCatching {
+                                    uriHandler.openUri(configureUrl)
+                                }
                             }
                         }
                     } else {

@@ -64,11 +64,6 @@ object ShellState {
     private val _settingsPage = MutableStateFlow(SettingsPage.ACCOUNT)
     val settingsPage: StateFlow<SettingsPage> = _settingsPage.asStateFlow()
 
-    private val _appearanceModule = MutableStateFlow<ModuleId?>(null)
-
-    /** Which module's section of the Customization Studio is open (null = global). */
-    val appearanceModule: StateFlow<ModuleId?> = _appearanceModule.asStateFlow()
-
     private val _sidebarStyle = MutableStateFlow(SidebarStyle.AUTO)
     val sidebarStyle: StateFlow<SidebarStyle> = _sidebarStyle.asStateFlow()
 
@@ -84,7 +79,25 @@ object ShellState {
         _mangaImmersive.value = immersive
     }
 
+    private val _panel = MutableStateFlow<SettingsPage?>(null)
+
+    /** A page of the application's own settings shown over the section that asked for it, or null. */
+    val panel: StateFlow<SettingsPage?> = _panel.asStateFlow()
+
+    /**
+     * Shows one page of the application's own settings (connected accounts, download folders) as
+     * a panel over the section the person is in, so that closing it leaves them where they were.
+     */
+    fun showInPlace(page: SettingsPage) {
+        if (_section.value == ShellSection.SETTINGS) selectSettingsPage(page) else _panel.value = page
+    }
+
+    fun closePanel() {
+        _panel.value = null
+    }
+
     fun select(section: ShellSection) {
+        _panel.value = null
         _section.value = section
         DebridOneRuntime.setShellSetting(KEY_SECTION, section.key)
     }
@@ -98,18 +111,14 @@ object ShellState {
         _pluginsTab.value = module
     }
 
-    fun openSettings(page: SettingsPage, appearanceModule: ModuleId? = null) {
+    /** Opens the application's own settings (account, profiles, connected accounts, downloads, look, storage). */
+    fun openSettings(page: SettingsPage) {
         _settingsPage.value = page
-        _appearanceModule.value = appearanceModule
         select(ShellSection.SETTINGS)
     }
 
     fun selectSettingsPage(page: SettingsPage) {
         _settingsPage.value = page
-    }
-
-    fun selectAppearanceModule(module: ModuleId?) {
-        _appearanceModule.value = module
     }
 
     fun setSidebarStyle(style: SidebarStyle) {

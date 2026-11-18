@@ -26,11 +26,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOff
 import androidx.compose.material.icons.rounded.NoteAdd
-import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material3.DropdownMenu
@@ -52,9 +50,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.DebridOneRuntime
-import com.debridone.app.shell.SettingsPage
-import com.debridone.app.shell.ShellState
-import com.debridone.module.ModuleId
 import com.debridone.music.MusicPreferences
 import com.debridone.music.library.AudioTagReader
 import com.debridone.music.library.LibraryFolder
@@ -162,168 +157,159 @@ private class SettingsData(
     val historySize: Int = 0,
 )
 
+/** Music's library settings: the folders, what a scan found, what is missing or duplicated, and the listening history. */
 @Composable
-internal fun MusicSettings() {
+internal fun MusicLibrarySettings() {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val actions = LocalMusicActions.current
     val module = DebridOneRuntime.modules.music
     val preferences by music.services.preferences.values.collectAsStateWithLifecycle()
     val scan by music.services.scanner.progress.collectAsStateWithLifecycle()
-    val engine by music.services.player.engineDescription.collectAsStateWithLifecycle()
-    val engineError by music.services.player.engineError.collectAsStateWithLifecycle()
     val data by rememberMusicQuery(initial = SettingsData()) { services, profile ->
         SettingsData(
             services.library.folders(profile), services.library.stats(profile),
             services.library.duplicateGroups(profile), services.library.history(profile, 5_000).size,
         )
     }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 28.dp, end = 28.dp, top = 6.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item("library") {
-            SettingsCard("Music folders", "Songs are read where they are. Nothing is copied, moved or changed.") {
-                if (data.folders.isEmpty()) {
-                    Text("No folder added yet.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
-                }
-                data.folders.forEach { folder ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Icon(
-                            if (folder.available) Icons.Rounded.Folder else Icons.Rounded.FolderOff, contentDescription = null,
-                            tint = if (folder.available) music.style.accent else tokens.colors.warning, modifier = Modifier.size(22.dp),
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(folder.path, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
-                            Text(
-                                if (!folder.available) "This folder cannot be reached right now. Its songs are kept and marked as missing."
-                                else listOfNotNull(
-                                    plural(folder.trackCount, "song"),
-                                    folder.lastScanAt?.let { "checked " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) },
-                                ).joinToString(" · "),
-                                style = small(), color = if (folder.available) tokens.colors.textMuted else tokens.colors.warning,
-                            )
-                        }
-                        MusicIconButton(Icons.Rounded.Delete, "Remove ${folder.path} from the library", { MusicNav.dialog = MusicDialog.RemoveFolder(folder.id, folder.path) })
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
-                    MusicButton("Add a folder", { MusicNav.dialog = MusicDialog.AddFolder }, icon = Icons.Rounded.CreateNewFolder)
-                    MusicButton("Add files", {
-                        val files = MusicPickers.chooseAudioFiles()
-                        if (files.isNotEmpty()) module.importFiles(files)
-                    }, icon = Icons.Rounded.NoteAdd, primary = false)
-                    MusicButton("Rescan now", { module.rescan() }, icon = Icons.Rounded.Sync, primary = false, enabled = !scan.running)
-                }
-                val summary = when {
-                    scan.running -> "Scanning ${scan.filesProcessed} of ${scan.filesFound} files" + (scan.currentFile?.let { ": $it" } ?: "")
-                    scan.error != null -> "The last scan failed: ${scan.error}"
-                    scan.finishedAt != null -> with(scan.result) {
-                        "Last scan: " + listOf(
-                            "$added added", "$updated updated", "$relinked moved or renamed", "$missing missing",
-                            "$unreadable unreadable", "$duplicates duplicate",
-                        ).joinToString(", ")
-                    }
-                    else -> null
-                }
-                summary?.let { Text(it, style = small(), color = if (scan.error != null) tokens.colors.danger else tokens.colors.textSecondary) }
-                ToggleRow(
-                    "Check for changes when DebridOne starts",
-                    "Looks for new, changed, moved and deleted files. Unchanged files are not opened again.",
-                    preferences[MusicPreferences.RESCAN_ON_START]?.toBooleanStrictOrNull() ?: true,
-                ) { music.services.preferences.set(MusicPreferences.RESCAN_ON_START, it.toString()) }
+        SettingsCard("Music folders", "Songs are read where they are. Nothing is copied, moved or changed.") {
+            if (data.folders.isEmpty()) {
+                Text("No folder added yet.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
             }
-        }
-
-        if (data.stats.missing > 0 || data.duplicates.isNotEmpty()) {
-            item("health") {
-                SettingsCard("Library check", null) {
-                    if (data.stats.missing > 0) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "${plural(data.stats.missing, "song")} cannot be found on disk. They stay in your playlists and come back when the files do.",
-                                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f),
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            MusicButton("Remove them", { actions.io { music.services.library.removeMissing(music.profileId); music.services.player.removeDeletedFromQueue() } }, primary = false)
-                        }
-                    }
-                    if (data.duplicates.isNotEmpty()) {
+            data.folders.forEach { folder ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(
+                        if (folder.available) Icons.Rounded.Folder else Icons.Rounded.FolderOff, contentDescription = null,
+                        tint = if (folder.available) music.style.accent else tokens.colors.warning, modifier = Modifier.size(22.dp),
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(folder.path, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary, maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
                         Text(
-                            "${plural(data.duplicates.size, "song")} exist as identical copies in more than one place:",
-                            style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                            if (!folder.available) "This folder cannot be reached right now. Its songs are kept and marked as missing."
+                            else listOfNotNull(
+                                plural(folder.trackCount, "song"),
+                                folder.lastScanAt?.let { "checked " + DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) },
+                            ).joinToString(" · "),
+                            style = small(), color = if (folder.available) tokens.colors.textMuted else tokens.colors.warning,
                         )
-                        data.duplicates.take(20).forEach { group ->
-                            Column(Modifier.padding(start = 8.dp)) {
-                                Text(group.first().title, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary)
-                                group.forEach { copy ->
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(copy.path.orEmpty(), style = small(), color = tokens.colors.textMuted, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
-                                        MusicIconButton(Icons.Rounded.Delete, "Remove this copy from the library", { MusicNav.dialog = MusicDialog.RemoveTracks(listOf(copy.id), "this copy of “${copy.title}”") }, size = 28.dp)
-                                    }
-                                }
+                    }
+                    MusicIconButton(Icons.Rounded.Delete, "Remove ${folder.path} from the library", { MusicNav.dialog = MusicDialog.RemoveFolder(folder.id, folder.path) })
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
+                MusicButton("Add a folder", { MusicNav.dialog = MusicDialog.AddFolder }, icon = Icons.Rounded.CreateNewFolder)
+                MusicButton("Add files", {
+                    val files = MusicPickers.chooseAudioFiles()
+                    if (files.isNotEmpty()) module.importFiles(files)
+                }, icon = Icons.Rounded.NoteAdd, primary = false)
+                MusicButton("Rescan now", { module.rescan() }, icon = Icons.Rounded.Sync, primary = false, enabled = !scan.running)
+            }
+            val summary = when {
+                scan.running -> "Scanning ${scan.filesProcessed} of ${scan.filesFound} files" + (scan.currentFile?.let { ": $it" } ?: "")
+                scan.error != null -> "The last scan failed: ${scan.error}"
+                scan.finishedAt != null -> with(scan.result) {
+                    "Last scan: " + listOf(
+                        "$added added", "$updated updated", "$relinked moved or renamed", "$missing missing",
+                        "$unreadable unreadable", "$duplicates duplicate",
+                    ).joinToString(", ")
+                }
+                else -> null
+            }
+            summary?.let { Text(it, style = small(), color = if (scan.error != null) tokens.colors.danger else tokens.colors.textSecondary) }
+            ToggleRow(
+                "Check for changes when DebridOne starts",
+                "Looks for new, changed, moved and deleted files. Unchanged files are not opened again.",
+                preferences[MusicPreferences.RESCAN_ON_START]?.toBooleanStrictOrNull() ?: true,
+            ) { music.services.preferences.set(MusicPreferences.RESCAN_ON_START, it.toString()) }
+        }
+    if (data.stats.missing > 0 || data.duplicates.isNotEmpty()) {
+        SettingsCard("Library check", null) {
+            if (data.stats.missing > 0) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${plural(data.stats.missing, "song")} cannot be found on disk. They stay in your playlists and come back when the files do.",
+                        style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    MusicButton("Remove them", { actions.io { music.services.library.removeMissing(music.profileId); music.services.player.removeDeletedFromQueue() } }, primary = false)
+                }
+            }
+            if (data.duplicates.isNotEmpty()) {
+                Text(
+                    "${plural(data.duplicates.size, "song")} exist as identical copies in more than one place:",
+                    style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
+                )
+                data.duplicates.take(20).forEach { group ->
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text(group.first().title, style = MaterialTheme.typography.bodyLarge, color = tokens.colors.textPrimary)
+                        group.forEach { copy ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(copy.path.orEmpty(), style = small(), color = tokens.colors.textMuted, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.MiddleEllipsis)
+                                MusicIconButton(Icons.Rounded.Delete, "Remove this copy from the library", { MusicNav.dialog = MusicDialog.RemoveTracks(listOf(copy.id), "this copy of “${copy.title}”") }, size = 28.dp)
                             }
                         }
                     }
                 }
             }
         }
-
-        item("playback") {
-            SettingsCard("Playback", null) {
-                OutputDeviceRow()
-                ToggleRow(
-                    "Continue playing when DebridOne starts",
-                    "Otherwise your last queue is restored paused, at the position you left it.",
-                    preferences[MusicPreferences.RESUME_ON_START] == "true",
-                ) { music.services.preferences.set(MusicPreferences.RESUME_ON_START, if (it) "true" else null) }
-                engineError?.let { Text("The audio engine could not be started: $it", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger) }
-                Text(
-                    "Engine: " + (engine ?: "starts when you first play something"),
-                    style = small(), color = tokens.colors.textMuted,
-                )
-                Text(
-                    "Plays " + AudioTagReader.supportedExtensions.sorted().joinToString(", ") { it.uppercase() } + " (MP3, FLAC, AAC, ALAC, WAV, AIFF, Ogg Vorbis, Opus).",
-                    style = small(), color = tokens.colors.textMuted,
-                )
-            }
-        }
-
-        item("home") {
-            SettingsCard("Home", "Choose what the Music home page shows for this profile.") {
-                val hidden = HomeSection.hidden(preferences[MusicPreferences.HOME_HIDDEN_SECTIONS])
-                HomeSection.entries.forEach { section ->
-                    ToggleRow(section.label, null, section.key !in hidden) { visible ->
-                        val next = if (visible) hidden - section.key else hidden + section.key
-                        music.services.preferences.set(MusicPreferences.HOME_HIDDEN_SECTIONS, next.sorted().joinToString(",").ifEmpty { null })
-                    }
-                }
-                ToggleRow(
-                    "Open Music on the library",
-                    "Otherwise Music opens on Home.",
-                    preferences[MusicPreferences.DEFAULT_VIEW] == "library",
-                ) { music.services.preferences.set(MusicPreferences.DEFAULT_VIEW, if (it) "library" else null) }
-            }
-        }
-
-        item("more") {
-            SettingsCard("More", null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MusicButton("Music appearance", { ShellState.openSettings(SettingsPage.APPEARANCE, ModuleId.MUSIC) }, icon = Icons.Rounded.Palette, primary = false)
-                    MusicButton("Music sources", { ShellState.openPlugins(ModuleId.MUSIC) }, icon = Icons.Rounded.Extension, primary = false)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (data.historySize == 0) "No listening history yet." else "Listening history: ${plural(data.historySize, "play")} recorded for this profile.",
-                        style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f),
-                    )
-                    MusicButton("Clear history", { actions.io { music.services.library.clearHistory(music.profileId) } }, primary = false, enabled = data.historySize > 0)
-                }
-            }
+    }
+    SettingsCard("Listening history", null) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (data.historySize == 0) "No listening history yet." else "${plural(data.historySize, "play")} recorded for this profile.",
+                style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary, modifier = Modifier.weight(1f),
+            )
+            MusicButton("Clear history", { actions.io { music.services.library.clearHistory(music.profileId) } }, primary = false, enabled = data.historySize > 0)
         }
     }
+}
+
+/** Music's playback settings: where sound goes and what happens when DebridOne starts. */
+@Composable
+internal fun MusicPlaybackSettings() {
+    val tokens = MaterialTheme.nuvio
+    val music = LocalMusic.current
+    val preferences by music.services.preferences.values.collectAsStateWithLifecycle()
+    val engine by music.services.player.engineDescription.collectAsStateWithLifecycle()
+    val engineError by music.services.player.engineError.collectAsStateWithLifecycle()
+        SettingsCard("Playback", null) {
+            OutputDeviceRow()
+            ToggleRow(
+                "Continue playing when DebridOne starts",
+                "Otherwise your last queue is restored paused, at the position you left it.",
+                preferences[MusicPreferences.RESUME_ON_START] == "true",
+            ) { music.services.preferences.set(MusicPreferences.RESUME_ON_START, if (it) "true" else null) }
+            engineError?.let { Text("The audio engine could not be started: $it", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.danger) }
+            Text(
+                "Engine: " + (engine ?: "starts when you first play something"),
+                style = small(), color = tokens.colors.textMuted,
+            )
+            Text(
+                "Plays " + AudioTagReader.supportedExtensions.sorted().joinToString(", ") { it.uppercase() } + " (MP3, FLAC, AAC, ALAC, WAV, AIFF, Ogg Vorbis, Opus).",
+                style = small(), color = tokens.colors.textMuted,
+            )
+        }
+}
+
+/** What Music's Home shows, and which page Music opens on. */
+@Composable
+internal fun MusicHomeSettings() {
+    val music = LocalMusic.current
+    val preferences by music.services.preferences.values.collectAsStateWithLifecycle()
+        SettingsCard("Home", "Choose what the Music home page shows for this profile.") {
+            val hidden = HomeSection.hidden(preferences[MusicPreferences.HOME_HIDDEN_SECTIONS])
+            HomeSection.entries.forEach { section ->
+                ToggleRow(section.label, null, section.key !in hidden) { visible ->
+                    val next = if (visible) hidden - section.key else hidden + section.key
+                    music.services.preferences.set(MusicPreferences.HOME_HIDDEN_SECTIONS, next.sorted().joinToString(",").ifEmpty { null })
+                }
+            }
+            ToggleRow(
+                "Open Music on the library",
+                "Otherwise Music opens on Home.",
+                preferences[MusicPreferences.DEFAULT_VIEW] == "library",
+            ) { music.services.preferences.set(MusicPreferences.DEFAULT_VIEW, if (it) "library" else null) }
+        }
 }
 
 @Composable

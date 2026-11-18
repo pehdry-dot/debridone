@@ -36,14 +36,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.debridone.app.shell.Notice
 import com.debridone.app.shell.PillTone
-import com.debridone.app.shell.ShellSection
-import com.debridone.app.shell.ShellState
 import com.debridone.manga.library.LibraryFilter
 import com.debridone.manga.library.MediaType
 import com.debridone.manga.library.SeriesSummary
 import com.debridone.manga.sources.SourceEntry
 import com.debridone.manga.sources.SourceSearchResult
-import com.debridone.module.ModuleId
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,11 +73,13 @@ internal object SearchState {
     }
 }
 
-/** Opens Plugins › Manga: where extension stores, extensions and sources are managed. */
+/**
+ * Opens where extension stores, extensions, sources and the like are managed: Manga's own settings
+ * panel, on the matching page. The reader stays in Manga, on the page they were on.
+ */
 internal fun openMangaPlugins(tab: MangaPluginsTab = MangaPluginsTab.EXTENSIONS) {
     MangaPluginsState.tab = tab
-    ShellState.selectPluginsTab(ModuleId.MANGA)
-    ShellState.select(ShellSection.PLUGINS)
+    MangaNav.openSettings(MangaSettingsSections.of(tab))
 }
 
 /** The name of a source's language code ("en", "pt-BR"), in English. */

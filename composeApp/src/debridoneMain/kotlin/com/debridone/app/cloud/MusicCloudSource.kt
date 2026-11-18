@@ -54,7 +54,7 @@ internal class MusicCloudSource(private val cloud: CloudServices) : CloudAudioSo
 
     fun install() {
         CloudBridges.music = this
-        MusicCloudBridge.openConnectedAccounts = { ShellState.openSettings(SettingsPage.CONNECTED_ACCOUNTS) }
+        MusicCloudBridge.openConnectedAccounts = { ShellState.showInPlace(SettingsPage.CONNECTED_ACCOUNTS) }
         MusicCloudBridge.openCloudFiles = {
             DownloadsUi.showShelf(MediaClass.MUSIC)
             ShellState.select(ShellSection.DOWNLOADS)

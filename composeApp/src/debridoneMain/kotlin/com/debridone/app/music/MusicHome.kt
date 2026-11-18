@@ -333,7 +333,7 @@ private fun HomeSetup(hasCatalogue: Boolean) {
                 }
             }
             SetupCard(Icons.Rounded.LibraryMusic, "Your server", "Navidrome, another OpenSubsonic server, or Jellyfin.", "Connect", Modifier.weight(1f)) {
-                ShellState.openPlugins(ModuleId.MUSIC)
+                MusicNav.openSettings(MusicSettingsSections.SOURCES)
             }
         }
         if (scan.running) {

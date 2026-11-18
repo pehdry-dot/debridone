@@ -5,6 +5,23 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import com.debridone.app.cloud.ConnectedAccountsPage
+import com.debridone.app.cloud.DownloadSettingsPage
+import com.nuvio.app.core.ui.SideDrawer
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
@@ -102,6 +119,8 @@ fun DebridOneShell(
     var streamingOpened by remember { mutableStateOf(false) }
     if (section == ShellSection.STREAMING) streamingOpened = true
 
+    // Panels everywhere in the app (settings, plugin configuration) follow the same "reduce motion" choice.
+    CompositionLocalProvider(com.nuvio.app.core.ui.LocalReduceMotion provides reduceMotion) {
     Box(modifier = Modifier.fillMaxSize().background(tokens.colors.background)) {
         Box(modifier = Modifier.fillMaxSize().padding(start = contentInset, bottom = if (miniPlayerVisible) MusicMiniPlayerHeight else 0.dp)) {
             if (streamingOpened) {
@@ -116,6 +135,7 @@ fun DebridOneShell(
                 ShellSection.DOWNLOADS -> DownloadsScreen()
                 ShellSection.SETTINGS -> ShellSettingsScreen(onSwitchProfile = onSwitchProfile)
             }
+            ShellPagePanel()
         }
         if (miniPlayerVisible) {
             MusicProvider { MusicMiniPlayer(Modifier.align(Alignment.BottomStart).padding(start = contentInset)) }
@@ -133,6 +153,44 @@ fun DebridOneShell(
         }
         // The full-screen player covers the sidebar too.
         MusicProvider { MusicFullPlayer() }
+    }
+    }
+}
+
+/**
+ * A page of the application's own settings that a section linked to (connected accounts, download
+ * folders), shown over that section: the section stays as it was underneath, and closing the
+ * panel returns to it.
+ */
+@Composable
+private fun ShellPagePanel() {
+    val tokens = MaterialTheme.nuvio
+    val page by ShellState.panel.collectAsStateWithLifecycle()
+    // Kept while the panel slides away, so it does not blank out.
+    var shown by remember { mutableStateOf<SettingsPage?>(null) }
+    if (page != null) shown = page
+    SideDrawer(
+        open = page != null, onClose = ShellState::closePanel, title = shown?.label.orEmpty(),
+        width = 820.dp, background = tokens.colors.background,
+    ) {
+        Column(Modifier.fillMaxSize().border(1.dp, tokens.colors.borderSubtle)) {
+            Row(Modifier.fillMaxWidth().padding(start = 40.dp, end = 14.dp, top = 12.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Application settings", style = MaterialTheme.typography.titleSmall, color = tokens.colors.textMuted, modifier = Modifier.weight(1f))
+                Box(
+                    Modifier.size(38.dp).clip(CircleShape).background(tokens.colors.surface)
+                        .clickable(role = Role.Button, onClickLabel = "Close (Escape)", onClick = ShellState::closePanel),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.Close, contentDescription = "Close (Escape)", tint = tokens.colors.textPrimary, modifier = Modifier.size(20.dp)) }
+            }
+            HorizontalDivider(color = tokens.colors.borderSubtle)
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when (shown) {
+                    SettingsPage.CONNECTED_ACCOUNTS -> ConnectedAccountsPage()
+                    SettingsPage.DOWNLOADS -> DownloadSettingsPage()
+                    else -> Unit
+                }
+            }
+        }
     }
 }
 

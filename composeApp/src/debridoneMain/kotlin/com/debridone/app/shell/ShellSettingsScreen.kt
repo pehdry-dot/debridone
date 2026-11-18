@@ -50,6 +50,11 @@ import com.debridone.accounts.Account
 import com.debridone.accounts.AccountException
 import com.debridone.accounts.AccountsDatabase
 import com.debridone.app.DebridOneRuntime
+import com.nuvio.app.AppShellHost
+import com.debridone.app.music.MusicSettingsSections
+import com.debridone.app.music.MusicNav
+import com.debridone.app.manga.MangaSettingsSections
+import com.debridone.app.manga.MangaNav
 import com.debridone.app.cloud.ConnectedAccountsPage
 import com.debridone.app.cloud.DownloadSettingsPage
 import com.debridone.module.AppearanceOption
@@ -367,13 +372,11 @@ private fun ProfilesPage(onSwitchProfile: () -> Unit) {
 @Composable
 private fun AppearancePage() {
     val scope = rememberCoroutineScope()
-    val selectedModule by ShellState.appearanceModule.collectAsStateWithLifecycle()
     var message by remember { mutableStateOf<Pair<String, PillTone>?>(null) }
-    val tabs: List<Pair<ModuleId?, String>> = listOf<Pair<ModuleId?, String>>(null to "Global") + ModuleId.active.map { it to it.displayName }
 
     ShellPage(
         title = "Appearance",
-        subtitle = "One look for the app, with separate options for each section. Saved per profile.",
+        subtitle = "The look of the application as a whole, saved per profile. Each section's own look is set inside that section.",
         headerTrailing = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = {
@@ -401,12 +404,32 @@ private fun AppearancePage() {
         },
     ) {
         message?.let { (text, tone) -> Notice(text, tone) }
-        SegmentedTabs(items = tabs, selected = selectedModule, onSelect = ShellState::selectAppearanceModule)
-        when (val module = selectedModule) {
-            null -> GlobalAppearance()
-            ModuleId.STREAMING -> StreamingAppearance()
-            else -> ModuleAppearanceEditor(module)
+        GlobalAppearance()
+        SectionAppearanceLinks()
+    }
+}
+
+/** Where each section's own appearance is: inside the section, in its settings panel. */
+@Composable
+private fun SectionAppearanceLinks() {
+    val tokens = MaterialTheme.nuvio
+    ShellCard(Modifier.fillMaxWidth()) {
+        SectionTitle("Streaming, Music and Manga", "Each section has its own colours, card sizes and layout, set in that section's settings (the cogwheel in its navigation).")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = {
+                ShellState.select(ShellSection.STREAMING)
+                AppShellHost.settingsOverlayOpen = true
+            }) { Text("Streaming's settings") }
+            OutlinedButton(onClick = {
+                ShellState.select(ShellSection.MUSIC)
+                MusicNav.openSettings(MusicSettingsSections.APPEARANCE)
+            }) { Text("Music's appearance") }
+            OutlinedButton(onClick = {
+                ShellState.select(ShellSection.MANGA)
+                MangaNav.openSettings(MangaSettingsSections.APPEARANCE)
+            }) { Text("Manga's appearance") }
         }
+        Text("They open inside the section, over the page you were on there.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
     }
 }
 
@@ -454,24 +477,12 @@ private fun GlobalAppearance() {
     }
 }
 
+/**
+ * The appearance options of one section (accent, card size, layout and the section's own), with a
+ * preview. Shown inside that section's settings panel.
+ */
 @Composable
-private fun StreamingAppearance() {
-    val tokens = MaterialTheme.nuvio
-    ShellCard(Modifier.fillMaxWidth()) {
-        SectionTitle("Streaming")
-        Text(
-            "Streaming keeps its own layout options: poster size and style, home rows, hero artwork, navigation bar and " +
-                "metadata density. They only affect Streaming.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = tokens.colors.textSecondary,
-        )
-        Text("Open Streaming, then Settings › Appearance and Layout.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted)
-        Button(onClick = { ShellState.select(ShellSection.STREAMING) }) { Text("Open Streaming") }
-    }
-}
-
-@Composable
-private fun ModuleAppearanceEditor(moduleId: ModuleId) {
+internal fun ModuleAppearanceEditor(moduleId: ModuleId) {
     val tokens = MaterialTheme.nuvio
     val scope = rememberCoroutineScope()
     val module = DebridOneRuntime.modules.module(moduleId) ?: return

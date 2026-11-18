@@ -56,7 +56,6 @@ internal class AddonReview(val address: String, val manifest: AddonManifest)
 /** What the addon part of Plugins › Music is showing. */
 internal object AddonUi {
     var review by mutableStateOf<AddonReview?>(null)
-    var configuring by mutableStateOf<Long?>(null)
     var testing by mutableStateOf<Long?>(null)
 }
 
@@ -121,7 +120,6 @@ internal fun AddonsCard(addons: List<SourceConnection>, onRemove: (SourceConnect
     }
 
     AddonUi.review?.let { review -> AddonReviewDialog(review) }
-    addons.firstOrNull { it.id == AddonUi.configuring }?.let { connection -> AddonSettingsDialog(connection) { AddonUi.configuring = null } }
     addons.firstOrNull { it.id == AddonUi.testing }?.let { connection -> AddonTestDialog(connection) { AddonUi.testing = null } }
 }
 
@@ -165,7 +163,7 @@ private fun AddonRow(connection: SourceConnection, manifest: AddonManifest?, onE
                 MusicNav.root(MusicRoute.Discover)
             }, primary = false, enabled = connection.enabled)
         }
-        MusicIconButton(Icons.Rounded.Tune, "Settings of ${connection.name}", { AddonUi.configuring = connection.id })
+        MusicIconButton(Icons.Rounded.Tune, "Settings of ${connection.name}", { MusicSourcesUi.configuring = MusicSourceConfig.Addon(connection.id) })
         MusicIconButton(Icons.Rounded.Verified, "Test ${connection.name}", { AddonUi.testing = connection.id })
         Switch(
             checked = connection.enabled, onCheckedChange = onEnabled,
@@ -269,10 +267,14 @@ private fun ReviewList(title: String, lines: List<String>, bullet: androidx.comp
 
 // ---------------------------------------------------------------------------- settings of one addon
 
-/** The addon's own settings (as its manifest declares them), its name in DebridOne, and whether its songs may be saved. */
+/**
+ * The addon's own settings (as its manifest declares them), its name in DebridOne, and whether its
+ * songs may be saved. Shown in the configuration panel, where "Settings" was clicked; every change
+ * is saved as it is made.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AddonSettingsDialog(connection: SourceConnection, onDismiss: () -> Unit) {
+internal fun AddonSettingsForm(connection: SourceConnection) {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
     val actions = LocalMusicActions.current
@@ -284,8 +286,8 @@ private fun AddonSettingsDialog(connection: SourceConnection, onDismiss: () -> U
 
     fun set(setting: AddonSetting, value: String?) = actions.io { sources.setAddonSetting(music.profileId, connection.id, setting.key, value) }
 
-    MusicDialogFrame("Settings of ${connection.name}", onDismiss = onDismiss, width = 560) {
-        Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    run {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 DialogTextField(name, { name = it }, "Name shown in DebridOne", Modifier.weight(1f), onSubmit = { actions.io { sources.rename(music.profileId, connection.id, name) } })
                 MusicButton("Rename", { actions.io { sources.rename(music.profileId, connection.id, name) } }, primary = false, enabled = name.isNotBlank() && name.trim() != connection.name)
@@ -348,7 +350,6 @@ private fun AddonSettingsDialog(connection: SourceConnection, onDismiss: () -> U
                 )
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { MusicButton("Done", onDismiss) }
     }
 }
 

@@ -282,6 +282,57 @@ class SourceBoundaryTest {
         assertTrue(users.isEmpty(), "modules must not reach the cloud layer: ${users.map { it.name }}")
     }
 
+    /**
+     * Each section is configured inside itself: its settings are a panel over its own page, and a
+     * plugin's "Configure" opens in the tab it was clicked in. Nothing in a section's screens may
+     * send the person to the application's Settings or Plugins section to configure that section,
+     * and there is no full-page settings route to go to.
+     */
+    @Test
+    fun sectionsAreConfiguredInPlace() {
+        val app = File(root, "composeApp/src/debridoneMain/kotlin/com/debridone/app")
+        val violations = ArrayList<String>()
+        for (section in listOf("music", "manga")) {
+            kotlinFiles(File(app, section)).forEach { file ->
+                file.readLines().forEachIndexed { index, raw ->
+                    val line = raw.substringBefore("//")
+                    val where = "${file.relativeTo(root)}:${index + 1}"
+                    if ("ShellState.openPlugins(" in line) violations += "$where leaves the section for the Plugins section"
+                    if (Regex("""ShellState\.select\(\s*ShellSection\.(PLUGINS|SETTINGS)""").containsMatchIn(line)) violations += "$where leaves the section for the application's Plugins or Settings section"
+                    if ("SettingsPage.APPEARANCE" in line) violations += "$where sends appearance settings to the application's Settings"
+                    if (Regex("""(Music|Manga)Route\.Settings""").containsMatchIn(line)) violations += "$where uses a full-page settings route"
+                }
+            }
+        }
+        // A link from a section to one of the application's own pages (connected accounts,
+        // download folders) shows that page over the section; only the shell itself navigates
+        // to the Settings section.
+        for (section in listOf("music", "manga", "cloud", "streaming", "modules")) {
+            kotlinFiles(File(app, section)).forEach { file ->
+                file.readLines().forEachIndexed { index, raw ->
+                    if ("ShellState.openSettings(" in raw.substringBefore("//")) violations += "${file.relativeTo(root)}:${index + 1} jumps to the application's Settings section"
+                }
+            }
+        }
+        // The shared pieces exist and are the ones in use.
+        val drawer = File(root, "composeApp/src/commonMain/kotlin/com/nuvio/app/core/ui/SideDrawer.kt")
+        val configuration = File(root, "composeApp/src/commonMain/kotlin/com/nuvio/app/core/ui/PluginConfigurationPanel.kt")
+        assertTrue(drawer.isFile && configuration.isFile, "the shared panel components are missing")
+        fun uses(path: String, what: String) {
+            val file = File(app, path)
+            if (!file.isFile || what !in file.readText()) violations += "$path does not use $what"
+        }
+        uses("music/MusicSettingsPanel.kt", "ModuleSettingsPanel(")
+        uses("manga/MangaSettings.kt", "ModuleSettingsPanel(")
+        uses("music/MusicSettingsPanel.kt", "PluginConfigurationPanel(")
+        uses("manga/MangaSettings.kt", "PluginConfigurationPanel(")
+        val streaming = File(root, "composeApp/src/commonMain/kotlin/com/nuvio/app/StreamingSettingsOverlay.kt")
+        if (!streaming.isFile || "SideDrawer(" !in streaming.readText()) violations += "Streaming's settings are not shown in the shared side panel"
+        val addons = File(root, "composeApp/src/commonMain/kotlin/com/nuvio/app/features/addons/AddonConfigurationPanel.kt")
+        if (!addons.isFile || "PluginConfigurationPanel(" !in addons.readText()) violations += "Streaming addons are not configured in the shared configuration panel"
+        if (violations.isNotEmpty()) fail("Sections must be configured in place:\n" + violations.joinToString("\n"))
+    }
+
     private fun kotlinFiles(dir: File): List<File> =
         if (dir.isDirectory) dir.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() else emptyList()
 

@@ -145,21 +145,24 @@ internal fun MainTabsDestination(
         }
         val navBarGlowEnabled by ThemeSettingsRepository.navBarGlowEnabled.collectAsStateWithLifecycle()
         var isTopProfileSwitcherOpen by remember { mutableStateOf(false) }
+        // DebridOne: while the settings panel is open over a tab, the cogwheel is the one item
+        // marked in the navigation bar; the tab is marked again when the panel closes.
+        val settingsPanelOpen = isDesktop && AppShellHost.isActive && AppShellHost.settingsOverlayOpen
         val floatingNavigationItems = listOf(
             FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Home,
+                selected = selectedTab == AppScreenTab.Home && !settingsPanelOpen,
                 onClick = { onTabSelected(AppScreenTab.Home) },
                 icon = Icons.Filled.Home,
                 label = stringResource(Res.string.compose_nav_home),
             ),
             FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Search,
+                selected = selectedTab == AppScreenTab.Search && !settingsPanelOpen,
                 onClick = { onTabSelected(AppScreenTab.Search) },
                 drawable = Res.drawable.sidebar_search,
                 label = stringResource(Res.string.compose_nav_search),
             ),
             FloatingNavigationItem(
-                selected = selectedTab == AppScreenTab.Library,
+                selected = selectedTab == AppScreenTab.Library && !settingsPanelOpen,
                 onClick = { onTabSelected(AppScreenTab.Library) },
                 drawable = Res.drawable.sidebar_library,
                 label = stringResource(Res.string.compose_nav_library),
@@ -167,9 +170,13 @@ internal fun MainTabsDestination(
             if (isDesktop) {
                 // DebridOne: Settings is a cogwheel alone. The profile picture made the tab read as
                 // "profile" and its label did not fit; profiles are switched from the sidebar.
+                // DebridOne: under the shell, the cogwheel opens the settings as a panel over the tab
+                // that is showing (and closes it again); the tab itself is not left.
                 FloatingNavigationItem(
-                    selected = selectedTab == AppScreenTab.Settings,
-                    onClick = { onTabSelected(AppScreenTab.Settings) },
+                    selected = selectedTab == AppScreenTab.Settings || settingsPanelOpen,
+                    onClick = {
+                        if (settingsPanelOpen) AppShellHost.settingsOverlayOpen = false else onTabSelected(AppScreenTab.Settings)
+                    },
                     icon = Icons.Rounded.Settings,
                     label = stringResource(Res.string.compose_nav_settings_tooltip),
                     iconOnly = true,
@@ -268,6 +275,18 @@ internal fun MainTabsDestination(
                             .then(if (shouldAttachNestedScroll) Modifier.nestedScroll(navBarScrollState.nestedScrollConnection) else Modifier)
                             .padding(innerPadding)
                             .padding(start = contentStartPadding),
+                    )
+                }
+
+                // DebridOne: Streaming's settings, as a panel over the open tab and under the
+                // navigation bar, which stays in view.
+                if (isDesktop && AppShellHost.isActive) {
+                    StreamingSettingsOverlay(
+                        requests = requests,
+                        state = state,
+                        actions = tabActions,
+                        // Just below the navigation bar (which is 52 points high, 10 from the top).
+                        topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 72.dp,
                     )
                 }
 

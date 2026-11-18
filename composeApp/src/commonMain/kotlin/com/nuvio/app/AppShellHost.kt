@@ -2,6 +2,9 @@ package com.nuvio.app
 
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -46,6 +49,19 @@ object AppShellHost {
     var shell: (@Composable (streaming: @Composable () -> Unit, onSwitchProfile: () -> Unit) -> Unit)? = null
 
     val isActive: Boolean get() = shell != null
+
+    /**
+     * Streaming's settings shown as a panel over the tab that is open, instead of as a tab of their
+     * own: the tab underneath (its scroll position, a search, what is selected) stays as it was.
+     * Used on desktop while the shell is active; other platforms keep the Settings tab.
+     */
+    var settingsOverlayOpen by mutableStateOf(false)
+
+    /**
+     * The addon whose "Configure" was clicked. Under the shell it opens as a panel where it was
+     * clicked (see `AddonConfigurationPanel`) instead of sending the person straight to a browser.
+     */
+    var addonConfiguration by mutableStateOf<com.nuvio.app.features.addons.AddonConfigurationRequest?>(null)
 
     private val _streamingImmersive = MutableStateFlow(false)
 

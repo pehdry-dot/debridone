@@ -278,7 +278,7 @@ internal fun MusicDiscover() {
                         DiscoverState.genre = null
                     }
                 }
-                MusicChip("Add a source", false) { ShellState.openPlugins(ModuleId.MUSIC) }
+                MusicChip("Add a source", false) { MusicNav.openSettings(MusicSettingsSections.SOURCES) }
             }
         }
         if (genres.isNotEmpty() && submitted.isBlank()) {
@@ -411,10 +411,10 @@ private fun DiscoverSetup() {
                 }
             }
             SetupCard(Icons.Rounded.Album, "Your own server", "Navidrome, another OpenSubsonic server, or Jellyfin.", "Connect", Modifier.weight(1f)) {
-                ShellState.openPlugins(ModuleId.MUSIC)
+                MusicNav.openSettings(MusicSettingsSections.SOURCES)
             }
             SetupCard(Icons.Rounded.LibraryAdd, "A plugin", "Import a Music plugin from its address or a file.", "Open Plugins", Modifier.weight(1f)) {
-                ShellState.openPlugins(ModuleId.MUSIC)
+                MusicNav.openSettings(MusicSettingsSections.SOURCES)
             }
         }
     }

@@ -115,7 +115,6 @@ internal sealed interface MusicRoute {
     data class ArtistPage(val id: Long) : MusicRoute
     data class GenrePage(val name: String) : MusicRoute
     data class PlaylistPage(val id: Long) : MusicRoute
-    data object Settings : MusicRoute
 }
 
 internal sealed interface MusicDialog {
@@ -145,6 +144,16 @@ internal object MusicNav {
 
     /** A short confirmation or error shown at the bottom of the section. */
     var message by mutableStateOf<String?>(null)
+
+    /** Music's settings panel: open or not, and the page it shows. The page under it is not touched. */
+    var settingsOpen by mutableStateOf(false)
+    var settingsSection by mutableStateOf(MusicSettingsSections.APPEARANCE)
+
+    /** Opens the settings, on [section] when given, else where they were last. */
+    fun openSettings(section: String? = null) {
+        if (section != null) settingsSection = section
+        settingsOpen = true
+    }
 
     fun open(route: MusicRoute) {
         if (current != route) stack += route
@@ -182,6 +191,8 @@ internal object MusicNav {
         playerExpanded = false
         dialog = null
         message = null
+        settingsOpen = false
+        MusicSourcesUi.configuring = null
     }
 }
 
@@ -384,8 +395,9 @@ fun MusicScreen() {
                         is MusicRoute.ArtistPage -> ArtistScreen(route.id)
                         is MusicRoute.GenrePage -> GenreScreen(route.name)
                         is MusicRoute.PlaylistPage -> PlaylistScreen(route.id)
-                        MusicRoute.Settings -> MusicSettings()
                     }
+                    // Over the page, under the navigation: the page keeps its place, the navigation stays in view.
+                    MusicSettingsPanel()
                 }
             }
             MusicMessageBar(Modifier.align(Alignment.BottomCenter))
@@ -402,7 +414,6 @@ fun MusicScreen() {
 private fun MusicTopBar() {
     val tokens = MaterialTheme.nuvio
     val music = LocalMusic.current
-    val route = MusicNav.current
     val scan by music.services.scanner.progress.collectAsStateWithLifecycle()
     val root = MusicNav.stack.first()
     Box(Modifier.fillMaxWidth().padding(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 8.dp)) {
@@ -427,8 +438,8 @@ private fun MusicTopBar() {
             MusicNavItem("Library", Icons.Rounded.LibraryMusic, root is MusicRoute.Library) {
                 MusicNav.root(MusicRoute.Library(LibraryTab.fromKey(music.services.preferences[MusicPreferences.LIBRARY_TAB])))
             }
-            MusicNavItem("Settings", Icons.Rounded.Settings, root == MusicRoute.Settings || route == MusicRoute.Settings, iconOnly = true) {
-                MusicNav.root(MusicRoute.Settings)
+            MusicNavItem("Settings", Icons.Rounded.Settings, MusicNav.settingsOpen, iconOnly = true) {
+                if (MusicNav.settingsOpen) MusicNav.settingsOpen = false else MusicNav.openSettings()
             }
         }
         Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
