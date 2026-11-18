@@ -41,7 +41,7 @@ class SourceBoundaryTest {
     fun sharedInfrastructureDoesNotDependOnAnyModule() {
         val forbidden = enginePackage.values + "com.nuvio."
         val violations = ArrayList<String>()
-        listOf("platform", "module-api", "accounts").forEach { project ->
+        listOf("platform", "module-api", "accounts", "cloud").forEach { project ->
             kotlinFiles(File(root, "debridone/$project/src/main")).forEach { file ->
                 imports(file).filter { import -> forbidden.any(import::startsWith) }
                     .forEach { violations += "${file.relativeTo(root)}: $it" }
@@ -54,7 +54,9 @@ class SourceBoundaryTest {
     fun moduleEnginesDoNotImportEachOtherOrStreaming() {
         val violations = ArrayList<String>()
         for (key in moduleKeys) {
-            val forbidden = enginePackage.filterKeys { it != key }.values + listOf("com.nuvio.", "com.debridone.accounts")
+            // Nor the cloud layer: connected accounts are the application's, and a module is handed
+            // only its own kind of file through an interface of its own.
+            val forbidden = enginePackage.filterKeys { it != key }.values + listOf("com.nuvio.", "com.debridone.accounts", "com.debridone.cloud")
             kotlinFiles(File(root, "debridone/modules/$key/src/main")).forEach { file ->
                 imports(file).filter { import -> forbidden.any(import::startsWith) }
                     .forEach { violations += "${file.relativeTo(root)}: $it" }
@@ -76,7 +78,7 @@ class SourceBoundaryTest {
         for (key in moduleKeys) {
             val forbidden = enginePackage.filterKeys { it != key }.values +
                 moduleKeys.filter { it != key }.map { "com.debridone.app.$it." } +
-                listOf("com.debridone.app.streaming.", "com.nuvio.app.features.")
+                listOf("com.debridone.app.streaming.", "com.nuvio.app.features.", "com.debridone.cloud", "com.debridone.app.cloud.")
             kotlinFiles(File(uiRoot, key)).forEach { file ->
                 imports(file).filter { import -> forbidden.any(import::startsWith) }
                     .forEach { violations += "${file.relativeTo(root)}: $it" }
@@ -233,6 +235,38 @@ class SourceBoundaryTest {
             .filter { "/build/" !in it.invariantSeparatorsPath && "/modules/music/" !in it.invariantSeparatorsPath && "/app/music/" !in it.invariantSeparatorsPath && "/architecture-tests/" !in it.invariantSeparatorsPath }
             .filter { file -> imports(file).any { it.startsWith("com.debridone.music.sources.RealDebrid") } }
         assertTrue(elsewhere.isEmpty(), "only Music may use its Real-Debrid integration: ${elsewhere.map { it.name }}")
+    }
+
+    /**
+     * The cloud layer shows and fetches what is **already** in the user's own accounts. It has no
+     * way to add or look for content at a provider, and the only thing it can remove there is an
+     * entry the user explicitly asked to delete: one call site, behind the confirmed action.
+     */
+    @Test
+    fun theCloudLayerOnlyReadsExceptForTheConfirmedDeletion() {
+        val sources = kotlinFiles(File(root, "debridone/cloud/src/main"))
+        assertTrue(sources.isNotEmpty(), "the cloud layer's sources were not found")
+        fun code(file: File): List<String> = file.readLines().map { it.trim() }
+            .filterNot { it.startsWith("*") || it.startsWith("/*") || it.startsWith("//") }
+            .map { it.substringBefore(" // ") }
+
+        val adding = Regex("addMagnet|addTorrent|createtorrent|createusenetdownload|createwebdownload|asynccreate|selectFiles|instantAvailability|checkcached|/search|torrentinfo|exportdata|/unrestrict/folder|/unrestrict/containerLink", RegexOption.IGNORE_CASE)
+        val added = sources.flatMap { file -> code(file).filter(adding::containsMatchIn).map { "${file.name}: $it" } }
+        assertTrue(added.isEmpty(), "the cloud layer must not add or look for content at a provider:\n" + added.joinToString("\n"))
+
+        // Requests that remove something exist in the two clients only...
+        val removing = Regex("/delete/|control(torrent|usenetdownload|webdownload)|\"DELETE\"")
+        val elsewhere = sources.filter { it.name !in setOf("RealDebridClient.kt", "TorBoxClient.kt") }
+            .flatMap { file -> code(file).filter(removing::containsMatchIn).map { "${file.name}: $it" } }
+        assertTrue(elsewhere.isEmpty(), "only the provider clients may contain a removal request:\n" + elsewhere.joinToString("\n"))
+        // ...and are reached from exactly one place: the explicit "delete from the cloud" action.
+        val callers = sources.flatMap { file -> code(file).filter { Regex("\\bprovider\\.delete\\(").containsMatchIn(it) }.map { file.name } }
+        assertEquals(listOf("CloudFileRepository.kt"), callers, "a provider's delete may be called from the confirmed deletion only")
+
+        // Credentials stay in the cloud layer: no module engine and no module screen may use it.
+        val users = moduleKeys.flatMap { key -> kotlinFiles(File(root, "debridone/modules/$key/src/main")) + kotlinFiles(File(root, "composeApp/src/debridoneMain/kotlin/com/debridone/app/$key")) }
+            .filter { file -> imports(file).any { it.startsWith("com.debridone.cloud") } }
+        assertTrue(users.isEmpty(), "modules must not reach the cloud layer: ${users.map { it.name }}")
     }
 
     private fun kotlinFiles(dir: File): List<File> =

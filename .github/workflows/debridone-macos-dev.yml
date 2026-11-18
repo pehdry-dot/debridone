@@ -55,6 +55,7 @@ jobs:
           ./gradlew
           :debridone:platform:test
           :debridone:accounts:test
+          :debridone:cloud:test
           :debridone:modules:music:test
           :debridone:modules:manga:test
           :debridone:architecture-tests:test

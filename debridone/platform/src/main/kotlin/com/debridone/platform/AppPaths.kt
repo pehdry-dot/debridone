@@ -34,6 +34,9 @@ class AppPaths(
     val secretsDir: Path get() = dataRoot.resolve("secrets")
     val logsDir: Path get() = dataRoot.resolve("logs")
 
+    /** Connected cloud accounts, their cached file listings and the download queue (application level). */
+    val cloudDir: Path get() = dataRoot.resolve("cloud")
+
     /** Durable storage owned by exactly one module. [moduleKey] is the module's stable key. */
     fun moduleDataDir(moduleKey: String): Path = dataRoot.resolve("modules").resolve(requireSafeSegment(moduleKey))
 

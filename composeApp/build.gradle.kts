@@ -1309,6 +1309,8 @@ kotlin {
                 // DebridOne: shared infrastructure, accounts and the independent module engines.
                 implementation(projects.debridone.platform)
                 implementation(projects.debridone.accounts)
+                // Connected debrid accounts, cloud file listings and the download manager (application level).
+                implementation(projects.debridone.cloud)
                 implementation(projects.debridone.moduleApi)
                 implementation(projects.debridone.modules.music)
                 // Games is dormant: :debridone:modules:gaming stays in the repository (and keeps its own
