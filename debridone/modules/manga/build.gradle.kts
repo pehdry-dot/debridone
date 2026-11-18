@@ -93,6 +93,24 @@ val prepareMangaHost = tasks.register<Exec>("prepareMangaHost") {
     }
 }
 
+// ---- Suwayomi-Server (the Manga backend) -----------------------------------------------------------
+// scripts/debridone/fetch-suwayomi-runtime.sh puts the pinned server jar and a Java 21 runtime under
+// build/suwayomi-runtime/. Tests that start the real server use them; without them those tests are
+// skipped, unless DEBRIDONE_REQUIRE_SUWAYOMI=1 (CI), which makes a missing runtime a failure.
+val suwayomiRuntimeDir = layout.buildDirectory.dir("suwayomi-runtime")
+val suwayomiJar: File = suwayomiRuntimeDir.get().file("Suwayomi-Server.jar").asFile
+val suwayomiJava: File = suwayomiRuntimeDir.get().file("$mangaNodePlatform/jre/bin/java").asFile
+
+tasks.withType<Test>().configureEach {
+    if (suwayomiJar.isFile && suwayomiJava.isFile) {
+        systemProperty("debridone.suwayomi.jar", suwayomiJar.absolutePath)
+        systemProperty("debridone.suwayomi.java", suwayomiJava.absolutePath)
+    }
+    inputs.property("suwayomiPresent", suwayomiJar.isFile && suwayomiJava.isFile)
+    environment("DEBRIDONE_REQUIRE_SUWAYOMI", System.getenv("DEBRIDONE_REQUIRE_SUWAYOMI") ?: "")
+    inputs.property("requireSuwayomi", System.getenv("DEBRIDONE_REQUIRE_SUWAYOMI") ?: "")
+}
+
 tasks.withType<Test>().configureEach {
     val node = mangaNode
     if (node != null) {
