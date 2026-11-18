@@ -314,10 +314,10 @@ class MangaSources(
         }
         if (first != null) {
             step<SeriesPage>("Search", { "${it.series.size} results for \"${word(first.title)}\"" }) { browse(sourceId, BrowseMode.SEARCH, word(first.title)) }
-            // The first series may be one without chapters (an e-book on a Komga server, a licensed title): try a few.
+            // The first series may be ones without chapters (e-books on a Komga server, licensed titles): try several.
             val readable = step<Pair<Series, Int>>("Open a series", { "\"${it.first.title}\", ${it.second} chapters" }) {
                 var last: Pair<Series, Int>? = null
-                for (candidate in listed.series.take(5)) {
+                for (candidate in listed.series.take(TEST_CANDIDATES)) {
                     refresh(candidate.id)
                     val count = repository.chapters(candidate.id).size
                     last = (repository.series(candidate.id) ?: candidate) to count
@@ -327,7 +327,7 @@ class MangaSources(
             }
             val chapter = readable?.takeIf { it.second > 0 }?.let { repository.rawChapters(it.first.id.toInt()).firstOrNull() }
             if (readable != null && chapter == null) {
-                steps += HealthStep("Open a chapter", false, "None of the first series lists a chapter.")
+                steps += HealthStep("Open a chapter", false, "None of the first ${minOf(TEST_CANDIDATES, listed.series.size)} series lists a chapter.")
                 failure = "No chapter could be opened."
             }
             if (chapter != null) {
@@ -359,6 +359,7 @@ class MangaSources(
         private const val ENABLED = "debridone.enabled"
         private const val PREFERRED = "debridone.preferredSources"
         private const val HEALTH = "debridone.health"
+        private const val TEST_CANDIDATES = 12
 
         /** The languages a new profile's sources are on for: this computer's language, English, and multi-language sources. */
         fun defaultLanguages(): Set<String> = setOf(Locale.getDefault().language.ifBlank { "en" }, "en")

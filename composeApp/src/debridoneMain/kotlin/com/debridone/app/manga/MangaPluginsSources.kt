@@ -331,11 +331,11 @@ internal fun SourcePreferencesEditor(sourceId: String) {
                     is SwPreference.Text -> {
                         var text by remember(sourceId, preference.position, preference.value) { mutableStateOf(preference.value.orEmpty()) }
                         val changed = text != preference.value.orEmpty()
+                        val secret = isSecretSetting(title) || isSecretSetting(preference.key.orEmpty())
                         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             MangaTextField(
-                                text, { text = it }, title, Modifier.weight(1f), secret = isSecretSetting(title) || isSecretSetting(preference.key.orEmpty()),
+                                text, { text = it }, title, Modifier.weight(1f), secret = secret,
                                 onSubmit = { if (changed) send(SwPreferenceChange(preference.position, text = text)) },
-                                hint = (preference.dialogMessage ?: preference.summary)?.takeIf { it.isNotBlank() && it != text },
                             )
                             MangaButton(
                                 when {
@@ -346,6 +346,11 @@ internal fun SourcePreferencesEditor(sourceId: String) {
                                 { send(SwPreferenceChange(preference.position, text = text)) }, primary = changed, enabled = changed && saving == null,
                             )
                         }
+                        // The extension's own explanation. Many extensions put the saved value in the
+                        // summary; that is already in the field, so the explanation stays instead.
+                        val explanation = preference.dialogMessage?.takeIf { it.isNotBlank() }
+                            ?: preference.summary?.takeIf { it.isNotBlank() && it != preference.value.orEmpty() && !(secret && it.all { c -> c == '*' || c == '•' }) }
+                        Text(explanation.orEmpty(), style = small(), color = tokens.colors.textMuted, minLines = 1)
                     }
                     is SwPreference.Choice -> {
                         Text(title, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)

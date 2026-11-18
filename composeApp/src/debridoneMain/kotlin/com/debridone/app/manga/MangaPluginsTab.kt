@@ -158,10 +158,13 @@ fun MangaPluginsTab() {
     }
 }
 
+/** Outlives the tab and its dialogs: an install that was started finishes, and says how it went, wherever the person went meanwhile. */
+private val pluginScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
 /** Runs something that talks to the manga server, off the UI thread, and reports how it went in the tab. */
-private fun CoroutineScope.pluginWork(progress: String? = null, block: suspend () -> String?) {
+private fun pluginWork(progress: String? = null, block: suspend () -> String?) {
     if (progress != null) MangaPluginsState.progress = progress
-    launch(Dispatchers.IO) {
+    pluginScope.launch {
         try {
             block()?.let(MangaPluginsState::say)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -198,7 +201,6 @@ private fun PluginsMessages() {
 private fun ExtensionsTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
     val revision by manga.services.extensions.revision.collectAsState()
     val generation by manga.services.server.generation.collectAsState()
     val extensions by produceState<List<SwExtension>?>(null, revision, generation) {
@@ -222,7 +224,7 @@ private fun ExtensionsTab() {
     fun change(extension: SwExtension, doing: String, done: String, action: (String) -> Unit) {
         if (extension.pkgName in MangaPluginsState.working) return
         MangaPluginsState.working[extension.pkgName] = doing
-        scope.launch(Dispatchers.IO) {
+        pluginScope.launch {
             try {
                 action(extension.pkgName)
                 MangaPluginsState.say("${extension.name} $done.")
@@ -244,7 +246,7 @@ private fun ExtensionsTab() {
                 )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     MangaButton("Check the stores", {
-                        scope.pluginWork("Asking the stores for their lists…") {
+                        pluginWork("Asking the stores for their lists…") {
                             val fresh = manga.services.extensions.list(refresh = true)
                             val updates = fresh.count { it.installed && it.hasUpdate }
                             "${plural(fresh.size, "extension")} listed" + if (updates > 0) ", ${plural(updates, "update")} available." else "."
@@ -252,12 +254,12 @@ private fun ExtensionsTab() {
                     }, primary = false, icon = Icons.Rounded.Refresh, enabled = stores.isNotEmpty() && MangaPluginsState.progress == null)
                     if (outdated.isNotEmpty()) {
                         MangaButton("Update all (${outdated.size})", {
-                            scope.pluginWork("Updating ${plural(outdated.size, "extension")}…") { "${plural(manga.services.extensions.updateAll(), "extension")} updated." }
+                            pluginWork("Updating ${plural(outdated.size, "extension")}…") { "${plural(manga.services.extensions.updateAll(), "extension")} updated." }
                         }, icon = Icons.Rounded.SystemUpdateAlt, enabled = MangaPluginsState.progress == null)
                     }
                     MangaButton("Install from a file…", {
                         MangaPickers.choosePackage()?.let { file ->
-                            scope.pluginWork("Installing ${file.fileName}…") { "${manga.services.extensions.installFile(file).name} installed from ${file.fileName}." }
+                            pluginWork("Installing ${file.fileName}…") { "${manga.services.extensions.installFile(file).name} installed from ${file.fileName}." }
                         }
                     }, primary = false, icon = Icons.Rounded.InsertDriveFile, enabled = MangaPluginsState.progress == null)
                     MangaButton("Stores (${stores.size})", { MangaPluginsState.tab = MangaPluginsTab.STORES }, primary = false, icon = Icons.Rounded.Storefront)
@@ -340,7 +342,6 @@ private const val EXTENSION_NOTICE =
 private fun StoresTab() {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
     val revision by manga.services.extensions.revision.collectAsState()
     val generation by manga.services.server.generation.collectAsState()
     val stores by produceState<List<SwStore>?>(null, revision, generation) {
@@ -348,6 +349,8 @@ private fun StoresTab() {
     }
     val settings by manga.services.appSettings.values.collectAsState()
     var address by remember { mutableStateOf("") }
+    // The store was added (also when that went through the notice): the field starts empty again.
+    LaunchedEffect(stores?.size) { if (stores?.any { it.indexUrl == address.trim() } == true) address = "" }
 
     fun add() {
         val wanted = address.trim()
@@ -355,7 +358,7 @@ private fun StoresTab() {
         if (settings[MangaAppSettings.EXTENSION_NOTICE_SEEN] != "true") {
             MangaPluginsState.pendingStore = wanted
         } else {
-            addStore(manga, scope, wanted) { address = "" }
+            addStore(manga, wanted) { address = "" }
         }
     }
 
@@ -394,7 +397,7 @@ private fun StoresTab() {
                 if (store.legacy) StatusPill("Older format") else StatusPill("Current format", PillTone.SUCCESS)
                 store.website?.let { site -> MangaButton("Its site", { openInBrowser(site) }, primary = false, icon = Icons.Rounded.OpenInNew) }
                 MangaButton("Remove", {
-                    scope.pluginWork("Removing ${store.name}…") {
+                    pluginWork("Removing ${store.name}…") {
                         manga.services.extensions.removeStore(store.indexUrl)
                         "${store.name.ifBlank { "The store" }} was removed. Extensions installed from it stay until you remove them."
                     }
@@ -404,8 +407,8 @@ private fun StoresTab() {
     }
 }
 
-private fun addStore(manga: MangaContext, scope: CoroutineScope, address: String, onAdded: () -> Unit) {
-    scope.pluginWork("Adding the store and reading its list…") {
+private fun addStore(manga: MangaContext, address: String, onAdded: () -> Unit) {
+    pluginWork("Adding the store and reading its list…") {
         val store = manga.services.extensions.addStore(address)
         val offered = runCatching { manga.services.extensions.list().count { it.storeIndexUrl == store.indexUrl } }.getOrDefault(0)
         withContext(Dispatchers.Main) { onAdded() }
@@ -418,7 +421,6 @@ private fun addStore(manga: MangaContext, scope: CoroutineScope, address: String
 private fun ExtensionNoticeDialog(address: String) {
     val manga = LocalManga.current
     val tokens = MaterialTheme.nuvio
-    val scope = rememberCoroutineScope()
     val dismiss = { MangaPluginsState.pendingStore = null }
     MangaDialogFrame("Before you add a store", dismiss, width = 560) {
         Text(EXTENSION_NOTICE, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
@@ -430,7 +432,7 @@ private fun ExtensionNoticeDialog(address: String) {
         MangaDialogButtons("I understand, add the store", dismiss) {
             manga.services.appSettings.set(MangaAppSettings.EXTENSION_NOTICE_SEEN, "true")
             dismiss()
-            addStore(manga, scope, address) {}
+            addStore(manga, address) {}
         }
     }
 }

@@ -97,6 +97,7 @@ class MangaPages(
                         throw problem(open.series, failure)
                     }
                     if (!looksLikeImage(bytes)) throw PageException("Page ${index + 1} is not an image the reader can show.", false)
+                    if (!isComplete(bytes)) throw PageException("Page ${index + 1} arrived incomplete. Try again.", true)
                     remember(key, bytes)
                     bytes
                 }
@@ -157,8 +158,23 @@ class MangaPages(
     private suspend fun fetch(address: String): ByteArray? {
         if (address.isBlank()) return null
         if (address.startsWith("/")) {
-            // The server keeps its own copy of covers and icons; asking it again costs nothing.
-            return fetches.withPermit { runCatching { server.transport().bytes(address) }.getOrNull()?.takeIf(::looksLikeImage) }
+            // The server keeps its own copy of covers and icons; asking it again costs nothing. It
+            // can hand out a cover while it is still writing it (after the series was refreshed):
+            // one request per address at a time, and a picture that stops short is asked for again.
+            val lock = pageLocks.getOrPut("cover:$address") { Mutex() }
+            return try {
+                lock.withLock {
+                    var last: ByteArray? = null
+                    for (attempt in 1..COVER_ATTEMPTS) {
+                        last = fetches.withPermit { runCatching { server.transport().bytes(address) }.getOrNull() }?.takeIf(::looksLikeImage)
+                        if (last == null || isComplete(last)) break
+                        kotlinx.coroutines.delay(250L * attempt)
+                    }
+                    last?.takeIf(::isComplete)
+                }
+            } finally {
+                pageLocks.remove("cover:$address", lock)
+            }
         }
         if (!address.startsWith("https://") && !address.startsWith("http://")) return null
         val file = coverCacheDir.resolve(sha1(address))
@@ -229,6 +245,26 @@ class MangaPages(
     companion object {
         private const val MAX_IMAGE_BYTES = 64 * 1024 * 1024
         private const val PAGE_TIMEOUT_SECONDS = 90
+        private const val COVER_ATTEMPTS = 4
+
+        /**
+         * False for a JPEG or PNG that stops before its end marker: a file that was read while it
+         * was still being written. Other formats are taken as they are.
+         */
+        fun isComplete(bytes: ByteArray): Boolean {
+            fun at(index: Int) = bytes[index].toInt() and 0xff
+            return when (imageExtension(bytes)) {
+                "jpg" -> {
+                    // The end-of-image marker, allowing for a few bytes of padding after it.
+                    var end = bytes.size - 2
+                    val floor = maxOf(2, bytes.size - 64)
+                    while (end >= floor && !(at(end) == 0xFF && at(end + 1) == 0xD9)) end--
+                    end >= floor
+                }
+                "png" -> bytes.size >= 20 && String(bytes, bytes.size - 8, 4, Charsets.ISO_8859_1) == "IEND"
+                else -> true
+            }
+        }
 
         /** JPEG, PNG, GIF, WebP, BMP or AVIF/HEIF, by their first bytes. */
         fun looksLikeImage(bytes: ByteArray): Boolean = imageExtension(bytes) != null
