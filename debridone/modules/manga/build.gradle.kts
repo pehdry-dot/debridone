@@ -109,6 +109,10 @@ tasks.withType<Test>().configureEach {
     inputs.property("suwayomiPresent", suwayomiJar.isFile && suwayomiJava.isFile)
     environment("DEBRIDONE_REQUIRE_SUWAYOMI", System.getenv("DEBRIDONE_REQUIRE_SUWAYOMI") ?: "")
     inputs.property("requireSuwayomi", System.getenv("DEBRIDONE_REQUIRE_SUWAYOMI") ?: "")
+    // The extension store the live extension test adds (DEBRIDONE_LIVE_TESTS=1). No address is
+    // written anywhere in DebridOne: whoever runs the test names the store.
+    environment("DEBRIDONE_TEST_EXTENSION_STORE", System.getenv("DEBRIDONE_TEST_EXTENSION_STORE") ?: "")
+    inputs.property("testExtensionStore", System.getenv("DEBRIDONE_TEST_EXTENSION_STORE") ?: "")
 }
 
 tasks.withType<Test>().configureEach {
