@@ -167,7 +167,11 @@ Connected accounts (Real-Debrid, TorBox) and Downloads
   asked with more than 100 entries per page (not in its documentation). Pages are 100.
 - Nothing about connected accounts was run on a Mac: the Keychain store has its own test on
   macOS, but the pages, "Reveal in Finder", "Open with the default app" and sound were not tried
-  there. The packaged app's self-tests cover Music and Manga, not the cloud pages.
+  there. The packaged app's self-tests cover Music and Manga, not the cloud pages. The build with
+  connected accounts (commit `5329c8100`, CI run 44241102644) passed on every machine: the Linux
+  tests including the cloud, Music and architecture tests, the Keychain test, and the unsigned
+  DMGs for Apple Silicon on `macos-15` and `macos-26` and for Intel, each with the Music and
+  Manga self-tests inside the packaged app.
 - RAR and 7-Zip archives (true CBR, CB7) are not read: the only Java reader for RAR is under the
   UnRAR licence, which does not fit this project's GPL-3. A `.cbr` that is really a ZIP is read.
 - Videos are sorted into *TV Shows* only by markers in their names; everything else is *Movies*.
