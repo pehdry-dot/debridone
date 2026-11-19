@@ -328,6 +328,15 @@ fun MangaProvider(content: @Composable () -> Unit) {
     )
     val scope = rememberCoroutineScope()
     val actions = remember(ready, profile) { MangaActions(ready, profile, scope) }
+    // A source test decodes the first page it fetches exactly as the reader would.
+    androidx.compose.runtime.LaunchedEffect(ready) {
+        ready.sources.pictureDecoder = { bytes ->
+            when (val decoded = MangaDecoder.decodePage(bytes, maxWidth = 1200, maxHeight = 6000)) {
+                is Decoding.Done -> "${decoded.page.width} × ${decoded.page.height}" + if (decoded.page.blank) " (one colour throughout: a placeholder rather than a page?)" else ""
+                is Decoding.Failed -> throw java.io.IOException(decoded.message)
+            }
+        }
+    }
     val context = remember(module, ready, profile, style) { MangaContext(module, ready, profile, style) }
     MangaNav.onProfile(profile)
     CompositionLocalProvider(LocalManga provides context, LocalMangaActions provides actions, content = content)

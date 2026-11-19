@@ -150,6 +150,9 @@ class SuwayomiServerManager(
 
     fun directory(profile: Long): Path = dataRoot.resolve("profile-$profile")
 
+    /** The Java program the managed server runs with, or null when this build has none. */
+    fun javaExecutable(): Path? = runCatching { runtime().java }.getOrNull()
+
     /** The folder Suwayomi's built-in Local source reads from. */
     fun localSourceDirectory(profile: Long): Path = directory(profile).resolve("local")
 

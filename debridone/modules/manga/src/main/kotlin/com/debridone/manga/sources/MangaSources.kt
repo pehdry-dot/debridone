@@ -35,6 +35,8 @@ data class SourceEntry(
     /** A path of the server for the source's icon. */
     val iconUrl: String,
     val homeUrl: String?,
+    /** The address the source's requests go to, when it has one (what a connection diagnosis tries). */
+    val baseUrl: String?,
     /** The source has settings of its own (an address, a login, quality options). */
     val configurable: Boolean,
     val supportsLatest: Boolean,
@@ -60,28 +62,12 @@ data class SeriesPage(val series: List<Series>, val hasMore: Boolean)
 
 enum class BrowseMode { POPULAR, LATEST, SEARCH }
 
-/** A failure put in words a reader can act on. */
-data class SourceProblem(val code: String, val message: String, val temporary: Boolean) {
+/** A failure put in words a reader can act on. [failure] has the kind and the technical detail. */
+data class SourceProblem(val code: String, val message: String, val temporary: Boolean, val failure: SourceFailure? = null) {
     companion object {
-        fun of(sourceName: String, failure: Throwable): SourceProblem {
-            val detail = failure.message.orEmpty()
-            val kind = (failure as? SuwayomiException)?.kind
-            val lower = detail.lowercase()
-            return when {
-                kind == SuwayomiException.Kind.UNREACHABLE -> SourceProblem("SERVER", detail.ifBlank { "The manga server is not running." }, true)
-                kind == SuwayomiException.Kind.UNAUTHORIZED -> SourceProblem("SERVER", detail, false)
-                kind == SuwayomiException.Kind.TIMEOUT || "timeout" in lower || "timed out" in lower -> SourceProblem("TIMEOUT", "$sourceName did not answer in time.", true)
-                "cloudflare" in lower || "webview" in lower || "captcha" in lower ->
-                    SourceProblem("BROWSER_CHECK", "$sourceName asks for a browser check (Cloudflare), which the manga server cannot pass on this computer. ($detail)", false)
-                "unable to resolve host" in lower || "unknownhost" in lower || "failed to connect" in lower || "connection reset" in lower || "no address associated" in lower ->
-                    SourceProblem("NETWORK", "$sourceName could not be reached. Check the connection, or the site may be down. ($detail)", true)
-                Regex("http error (\\d{3})").find(lower)?.groupValues?.get(1)?.let { it.startsWith("5") } == true ->
-                    SourceProblem("HTTP_ERROR", "$sourceName has a problem of its own right now: $detail", true)
-                "http error" in lower -> SourceProblem("HTTP_ERROR", "$sourceName refused the request: $detail", false)
-                "no chapters found" in lower -> SourceProblem("NO_CHAPTERS", "$sourceName lists no chapters for this series.", false)
-                detail.isBlank() -> SourceProblem("ERROR", "$sourceName reported an error without saying what went wrong.", false)
-                else -> SourceProblem("ERROR", "$sourceName reported an error: $detail", false)
-            }
+        fun of(sourceName: String, failure: Throwable, baseUrl: String? = null): SourceProblem {
+            val classified = SourceFailure.of(sourceName, failure, baseUrl)
+            return SourceProblem(classified.kind.name, classified.explanation, classified.temporary, classified)
         }
     }
 }
@@ -109,10 +95,17 @@ class MangaSources(
     private val filterCache = ConcurrentHashMap<String, List<SwFilter>>()
 
     @Serializable
-    private data class StoredHealth(val testedAt: Long, val ok: Boolean, val steps: List<StoredStep>, val message: String? = null)
+    private data class StoredHealth(val testedAt: Long, val ok: Boolean, val steps: List<StoredStep>, val message: String? = null, val kind: String? = null)
 
     @Serializable
-    private data class StoredStep(val name: String, val ok: Boolean, val detail: String)
+    private data class StoredStep(val name: String, val ok: Boolean, val detail: String, val kind: String? = null, val millis: Long? = null, val technical: String? = null)
+
+    /**
+     * Checks that a page's picture can be decoded, the way the reader will: set by the app, which
+     * has the decoder. Returns a short description ("800 × 1200") or throws with the reason.
+     */
+    @Volatile
+    var pictureDecoder: ((ByteArray) -> String)? = null
 
     private fun load(force: Boolean = false): List<SwSource> {
         val generation = server.generation.value
@@ -143,6 +136,7 @@ class MangaSources(
             language = if (local) "" else source.lang,
             iconUrl = source.iconUrl,
             homeUrl = source.homeUrl,
+            baseUrl = source.baseUrl ?: source.homeUrl,
             configurable = source.configurable,
             supportsLatest = source.supportsLatest,
             contentWarning = source.contentWarning,
@@ -151,7 +145,7 @@ class MangaSources(
             preferredRank = preferred.indexOf(source.id).takeIf { it >= 0 },
             health = source.meta[HEALTH]?.let { text ->
                 runCatching { json.decodeFromString(StoredHealth.serializer(), text) }.getOrNull()
-                    ?.let { SourceHealth(source.id, it.testedAt, it.ok, it.steps.map { step -> HealthStep(step.name, step.ok, step.detail) }, it.message) }
+                    ?.let { SourceHealth(source.id, it.testedAt, it.ok, it.steps.map { step -> HealthStep(step.name, step.ok, step.detail, step.kind, step.millis, step.technical) }, it.message, it.kind) }
             },
         )
     }
@@ -230,12 +224,12 @@ class MangaSources(
                 async(Dispatchers.IO) {
                     permits.withPermit {
                         val result = try {
-                            val page = browse(source.id, BrowseMode.SEARCH, query, 1)
+                            val page = kotlinx.coroutines.runInterruptible { retrying(source.name, source.baseUrl) { browse(source.id, BrowseMode.SEARCH, query, 1) } }
                             SourceSearchResult(source, page.series, page.hasMore, null)
                         } catch (cancelled: kotlinx.coroutines.CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
-                            SourceSearchResult(source, emptyList(), false, SourceProblem.of(source.name, failure))
+                            SourceSearchResult(source, emptyList(), false, SourceProblem.of(source.name, failure, source.baseUrl))
                         }
                         onResult(result)
                         result
@@ -285,67 +279,126 @@ class MangaSources(
         return added
     }
 
+    // ---- retries ------------------------------------------------------------------------------
+
+    /**
+     * Runs [block] and runs it again, after a pause, when it fails in a way that passes by itself:
+     * a timeout, a site that is down for a moment or answers 5xx, or asks for fewer requests (429).
+     * A failure that will not change by waiting (a name that does not resolve, no route, a refusal,
+     * an extension error) is reported at once. Interrupting the thread (cancelling) stops the wait.
+     */
+    fun <T> retrying(sourceName: String, baseUrl: String?, attempts: Int = RETRY_ATTEMPTS, block: () -> T): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return block()
+            } catch (failure: Exception) {
+                attempt++
+                val classified = SourceFailure.of(sourceName, failure, baseUrl)
+                val waitable = classified.kind == FailureKind.TIMEOUT || classified.kind == FailureKind.UNAVAILABLE || classified.httpStatus == 429
+                if (!waitable || attempt >= attempts) throw failure
+                Thread.sleep(RETRY_PAUSE_MS * attempt * attempt)
+            }
+        }
+    }
+
     // ---- testing --------------------------------------------------------------------------------
 
     /**
-     * Tries a source for real: lists, searches, opens a series, its chapters and the first page.
-     * The result is kept with the source. Nothing is added to the library.
+     * Tries a source for real, step by step: the extension loads, the source lists and searches,
+     * one series' details and chapters come, one chapter's pages are listed, the first page arrives
+     * and is a picture that decodes. Each step says how it went and, when it failed, what kind of
+     * failure it was, so a network problem is not taken for a broken extension or a reader problem.
+     * The result is kept with the source. Nothing is added to the library, and only one page is
+     * fetched.
      */
     fun test(sourceId: String): SourceHealth {
         val source = find(sourceId) ?: throw IllegalStateException("This source is not installed any more.")
         val steps = ArrayList<HealthStep>()
-        var failure: String? = null
-        fun <T> step(name: String, describe: (T) -> String, block: () -> T): T? {
+        var failure: SourceFailure? = null
+        fun stop(name: String, kind: FailureKind, detail: String) {
+            steps += HealthStep(name, false, detail, kind.name)
+            failure = SourceFailure(kind, kind.label, detail, "")
+        }
+        fun <T> step(name: String, describe: (T) -> String, onFailure: FailureKind? = null, block: () -> T): T? {
             if (failure != null) return null
+            val start = System.nanoTime()
             return try {
-                block().also { steps += HealthStep(name, true, describe(it)) }
+                block().also { steps += HealthStep(name, true, describe(it), millis = (System.nanoTime() - start) / 1_000_000) }
             } catch (problem: Exception) {
-                val message = SourceProblem.of(source.name, problem).message
-                steps += HealthStep(name, false, message)
-                failure = message
+                val classified = SourceFailure.of(source.name, problem, source.baseUrl).let { found ->
+                    // A failure inside the extension at this step is named by the step (a chapter or a picture that did not come).
+                    if (onFailure != null && found.kind == FailureKind.EXTENSION) found.copy(kind = onFailure, title = onFailure.label) else found
+                }
+                steps += HealthStep(name, false, classified.explanation, classified.kind.name, (System.nanoTime() - start) / 1_000_000, classified.detail.takeIf { it.isNotBlank() })
+                failure = classified
                 null
             }
         }
-        val listed = step<SeriesPage>("List series", { "${it.series.size} series" }) { browse(sourceId, BrowseMode.POPULAR) }
-        val first = listed?.series?.firstOrNull()
-        if (listed != null && first == null) {
-            steps += HealthStep("Open a series", false, "The source listed nothing, so nothing further could be tried. It may need to be configured first.")
-            failure = "The source listed no series."
+        steps += HealthStep("Switched on", source.enabled, if (source.enabled) "Yes" else "No: it is not searched or listed until switched on")
+        step<Int>("Extension load", { if (it == 0) "Loaded by the manga server" else "Loaded by the manga server · $it settings" }, FailureKind.INCOMPATIBLE) {
+            api.sourceDetails(sourceId).preferences.size
         }
+        val listed = step<SeriesPage>("Discovery", { "${it.series.size} series listed" }) { retrying(source.name, source.baseUrl) { browse(sourceId, BrowseMode.POPULAR) } }
+        val first = listed?.series?.firstOrNull()
+        if (listed != null && first == null) stop("Discovery", FailureKind.EXTENSION, "The source listed nothing, so nothing further could be tried. It may need to be configured first.")
         if (first != null) {
-            step<SeriesPage>("Search", { "${it.series.size} results for \"${word(first.title)}\"" }) { browse(sourceId, BrowseMode.SEARCH, word(first.title)) }
+            step<SeriesPage>("Search", { "${it.series.size} results for \"${word(first.title)}\"" }) { retrying(source.name, source.baseUrl) { browse(sourceId, BrowseMode.SEARCH, word(first.title)) } }
             // The first series may be ones without chapters (e-books on a Komga server, licensed titles): try several.
-            val readable = step<Pair<Series, Int>>("Open a series", { "\"${it.first.title}\", ${it.second} chapters" }) {
+            var readable: Pair<Series, Int>? = null
+            step<Series>("Series metadata", { "\"${it.title}\"" + (it.authors.firstOrNull()?.let { a -> " by $a" } ?: "") }) {
+                retrying(source.name, source.baseUrl) { repository.remember(api.refresh(first.id.toInt(), details = true, chapters = false).first) }
+                repository.series(first.id) ?: first
+            }
+            step<Pair<Series, Int>>("Chapters", { "${it.second} chapters of \"${it.first.title}\"" }, FailureKind.CHAPTER) {
                 var last: Pair<Series, Int>? = null
                 for (candidate in listed.series.take(TEST_CANDIDATES)) {
-                    refresh(candidate.id)
+                    retrying(source.name, source.baseUrl) { refresh(candidate.id) }
                     val count = repository.chapters(candidate.id).size
                     last = (repository.series(candidate.id) ?: candidate) to count
                     if (count > 0) break
                 }
-                last ?: error("No series could be opened.")
+                (last ?: error("No series could be opened.")).also { readable = it }
             }
             val chapter = readable?.takeIf { it.second > 0 }?.let { repository.rawChapters(it.first.id.toInt()).firstOrNull() }
-            if (readable != null && chapter == null) {
-                steps += HealthStep("Open a chapter", false, "None of the first ${minOf(TEST_CANDIDATES, listed.series.size)} series lists a chapter.")
-                failure = "No chapter could be opened."
-            }
+            if (readable != null && chapter == null) stop("Chapters", FailureKind.CHAPTER, "None of the first ${minOf(TEST_CANDIDATES, listed.series.size)} series lists a chapter.")
             if (chapter != null) {
-                val pages = step<List<String>>("Open a chapter", { "${it.size} pages" }) {
-                    val (opened, pages) = api.chapterPages(chapter.id)
+                val pages = step<List<String>>("Page request", { "${it.size} pages listed" }, FailureKind.CHAPTER) {
+                    val (opened, pages) = retrying(source.name, source.baseUrl) { api.chapterPages(chapter.id) }
                     repository.reloadChapters(opened.mangaId)
+                    if (pages.isEmpty()) error("The chapter has no pages.")
                     pages
                 }
-                pages?.firstOrNull()?.let { path ->
-                    step<ByteArray>("Load a page", { "${it.size / 1024} KB" }) {
-                        server.transport().bytes(path).also { require(it.size > 64) { "The page is empty." } }
+                val bytes = pages?.firstOrNull()?.let { path ->
+                    step<ByteArray>("Image download", { "${it.size / 1024} KB" }, FailureKind.IMAGE) {
+                        retrying(source.name, source.baseUrl) { server.transport().bytes(path) }
+                    }
+                }
+                if (bytes != null) {
+                    when (val checked = com.debridone.manga.reader.PageImageCheck.inspect(bytes)) {
+                        is com.debridone.manga.reader.PageBytes.Whole -> {
+                            val decoder = pictureDecoder
+                            if (decoder == null) {
+                                steps += HealthStep("Image decode", true, "A whole ${checked.format.label} picture")
+                            } else {
+                                step<String>("Image decode", { "A ${checked.format.label} picture, $it" }, FailureKind.IMAGE) { decoder(bytes) }
+                            }
+                        }
+                        else -> stop("Image decode", FailureKind.IMAGE, com.debridone.manga.reader.PageImageCheck.problem(checked, 1) ?: "The first page is not a picture.")
                     }
                 }
             }
         }
-        val health = SourceHealth(sourceId, clock(), failure == null, steps, failure)
+        val stopped = failure
+        val health = SourceHealth(sourceId, clock(), stopped == null, steps, stopped?.explanation, stopped?.kind?.name)
         runCatching {
-            api.setSourceMeta(sourceId, HEALTH, json.encodeToString(StoredHealth.serializer(), StoredHealth(health.testedAt, health.ok, steps.map { StoredStep(it.name, it.ok, it.detail) }, failure)))
+            api.setSourceMeta(
+                sourceId, HEALTH,
+                json.encodeToString(
+                    StoredHealth.serializer(),
+                    StoredHealth(health.testedAt, health.ok, steps.map { StoredStep(it.name, it.ok, it.detail, it.kind, it.millis, it.technical?.take(1500)) }, health.message, health.kind),
+                ),
+            )
             load(force = true)
         }
         repository.changed()
@@ -360,6 +413,8 @@ class MangaSources(
         private const val PREFERRED = "debridone.preferredSources"
         private const val HEALTH = "debridone.health"
         private const val TEST_CANDIDATES = 12
+        private const val RETRY_ATTEMPTS = 3
+        private const val RETRY_PAUSE_MS = 1_500L
 
         /** The languages a new profile's sources are on for: this computer's language, English, and multi-language sources. */
         fun defaultLanguages(): Set<String> = setOf(Locale.getDefault().language.ifBlank { "en" }, "en")

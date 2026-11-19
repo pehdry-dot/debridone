@@ -25,7 +25,17 @@ import java.util.Base64
 import java.util.UUID
 
 /** Something went wrong talking to a Suwayomi server. [message] is a sentence for the person. */
-class SuwayomiException(val kind: Kind, message: String, cause: Throwable? = null) : IOException(message, cause) {
+class SuwayomiException(
+    val kind: Kind,
+    message: String,
+    cause: Throwable? = null,
+    /**
+     * What the server reported in full, with the chain of exceptions it appends: kept so a failure
+     * can be told apart by its exception (a DNS failure, a missing route, a timeout…), which the
+     * short [message] no longer names.
+     */
+    val detail: String? = null,
+) : IOException(message, cause) {
     enum class Kind {
         /** Nothing answers at the address: the server is not running, or the address is wrong. */
         UNREACHABLE,
@@ -118,7 +128,15 @@ class SuwayomiTransport(val endpoint: ServerEndpoint) {
     fun bytes(path: String, timeoutSeconds: Int = endpoint.timeoutSeconds, maxBytes: Int = MAX_IMAGE_BYTES): ByteArray {
         require(path.startsWith("/")) { "not a path of the server" }
         val response = send(request(path, timeoutSeconds).GET().build(), HttpResponse.BodyHandlers.ofByteArray())
-        if (response.statusCode() !in 200..299) throw SuwayomiException(SuwayomiException.Kind.SERVER, "The manga server answered ${response.statusCode()} for an image.")
+        if (response.statusCode() !in 200..299) {
+            // Suwayomi answers a page it could not get from the source with the reason as text.
+            val reason = String(response.body(), 0, minOf(response.body().size, 8192), Charsets.UTF_8).trim()
+            throw SuwayomiException(
+                SuwayomiException.Kind.SERVER,
+                if (reason.isNotBlank() && !reason.startsWith("<")) cleanMessage(reason) else "The manga server answered ${response.statusCode()} for an image.",
+                detail = reason.takeIf { it.isNotBlank() },
+            )
+        }
         val body = response.body()
         if (body.size > maxBytes) throw SuwayomiException(SuwayomiException.Kind.PROTOCOL, "The manga server sent a file larger than DebridOne accepts.")
         return body
@@ -157,7 +175,7 @@ class SuwayomiTransport(val endpoint: ServerEndpoint) {
         val errors = root["errors"] as? JsonArray
         if (errors != null && errors.isNotEmpty()) {
             val raw = (errors.first().jsonObject["message"] as? JsonPrimitive)?.content.orEmpty()
-            throw SuwayomiException(SuwayomiException.Kind.SERVER, cleanMessage(raw))
+            throw SuwayomiException(SuwayomiException.Kind.SERVER, cleanMessage(raw), detail = raw)
         }
         return (root["data"] as? JsonObject) ?: throw SuwayomiException(SuwayomiException.Kind.PROTOCOL, "The manga server's answer had no data.")
     }

@@ -112,6 +112,7 @@ internal fun SeriesScreen(seriesId: Long) {
 
     var refreshing by remember(seriesId) { mutableStateOf(false) }
     var problem by remember(seriesId) { mutableStateOf<SourceProblem?>(null) }
+    var problemUrl by remember(seriesId) { mutableStateOf<String?>(null) }
     var descending by remember { mutableStateOf(manga.services.preferences.boolean(MangaPreferences.CHAPTERS_DESCENDING, true)) }
     var filter by rememberSaveable(seriesId) { mutableStateOf("") }
     var selecting by remember(seriesId) { mutableStateOf(false) }
@@ -130,7 +131,9 @@ internal fun SeriesScreen(seriesId: Long) {
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                problem = SourceProblem.of(series.sourceName.ifBlank { "The source" }, failure)
+                val url = runCatching { manga.services.sources.find(series.extensionId)?.baseUrl }.getOrNull()
+                problemUrl = url
+                problem = SourceProblem.of(series.sourceName.ifBlank { "The source" }, failure, url)
             } finally {
                 refreshing = false
             }
@@ -237,7 +240,7 @@ internal fun SeriesScreen(seriesId: Long) {
                             PillTone.WARNING,
                         )
                     }
-                    problem?.let { Notice(it.message, if (it.temporary) PillTone.WARNING else PillTone.DANGER) }
+                    problem?.let { FailureNotice(it, problemUrl) }
                     if (bookmarks.isNotEmpty()) {
                         MangaSectionHeader("Bookmarks")
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

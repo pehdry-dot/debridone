@@ -209,7 +209,7 @@ internal fun MangaDiscover() {
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                DiscoverState.problem = SourceProblem.of(current.name, failure)
+                DiscoverState.problem = SourceProblem.of(current.name, failure, current.baseUrl)
                 DiscoverState.hasMore = false
             } finally {
                 DiscoverState.loading = false
@@ -330,7 +330,7 @@ internal fun MangaDiscover() {
                     )
                 }
                 DiscoverState.problem?.let { problem ->
-                    Notice(problem.message, if (problem.temporary) PillTone.WARNING else PillTone.DANGER)
+                    FailureNotice(problem, source?.baseUrl)
                     if (source?.configurable == true) {
                         MangaButton("Configure ${source.name}", { MangaPluginsState.configuring = source.id }, primary = false, icon = Icons.Rounded.Tune)
                     }

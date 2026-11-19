@@ -99,10 +99,17 @@ internal fun SourcesTab() {
     }
     fun test(ids: List<String>) {
         testing = testing + ids
-        scope.launch(Dispatchers.IO) {
-            for (id in ids) {
-                runCatching { manga.services.sources.test(id) }
-                testing = testing - id
+        // Two at a time: sources are asked one page each, without crowding the sites or the server.
+        val permits = kotlinx.coroutines.sync.Semaphore(2)
+        for (id in ids) {
+            scope.launch(Dispatchers.IO) {
+                permits.acquire()
+                try {
+                    runCatching { manga.services.sources.test(id) }
+                } finally {
+                    permits.release()
+                    withContext(Dispatchers.Main) { testing = testing - id }
+                }
             }
         }
     }
@@ -114,7 +121,7 @@ internal fun SourcesTab() {
                 Text("Sources", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
                 Text(
                     "${plural(all.count { !it.isLocal }, "source")} from the installed extensions, ${all.count { it.enabled && !it.isLocal }} switched on for this profile, and your own files. " +
-                        "\"Working\" and \"Failing\" are results of tests run on this computer, with their date — nothing is called working that has not been tried.",
+                        "A source's status is the result of a test run on this computer, with its date: working, or the kind of failure that stopped it (no network route, DNS, timeout, HTTP error, extension error…). Nothing is called working that has not been tried.",
                     style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
                 )
                 if (all.isNotEmpty()) {
@@ -131,7 +138,7 @@ internal fun SourcesTab() {
                         )
                     }
                     Text(
-                        "A test lists and searches the source, opens one series and its chapters, and loads the first page of one chapter. Nothing is added to your library.",
+                        "A test checks, step by step, that the extension loads, the source lists and searches, a series' details and chapters come, a chapter's pages are listed, and its first page arrives and decodes as a picture. Each step says what kind of failure stopped it. Nothing is added to your library, and only one page is fetched.",
                         style = small(), color = tokens.colors.textMuted,
                     )
                 }
@@ -210,12 +217,7 @@ private fun SourceRow(
                 )
             }
             if (source.contentWarning == "NSFW") StatusPill("18+", PillTone.WARNING)
-            when {
-                testing -> CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                health == null -> StatusPill("Not tested")
-                health.ok -> StatusPill("Working · ${formatDate(health.testedAt)}", PillTone.SUCCESS)
-                else -> StatusPill("Failing · ${formatDate(health.testedAt)}", PillTone.DANGER)
-            }
+            if (testing) CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp)) else SourceStatusPill(health)
             if (!source.isLocal) MangaChip(if (source.enabled) "On" else "Off", source.enabled, onClick = onToggle)
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -239,17 +241,9 @@ private fun SourceRow(
                 MangaIconButton(Icons.Rounded.ArrowDownward, "Move down among the preferred sources", { onMove(1) }, size = 34.dp)
             }
         }
-        if (expanded && health != null) {
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(tokens.colors.background).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                health.steps.forEach { step ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(if (step.ok) "✓" else "✕", style = MaterialTheme.typography.bodyMedium, color = if (step.ok) tokens.colors.success else tokens.colors.danger)
-                        Text(step.name, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textPrimary, modifier = Modifier.width(120.dp))
-                        Text(step.detail, style = small(), color = tokens.colors.textSecondary, modifier = Modifier.weight(1f))
-                    }
-                }
-                if (health.steps.isEmpty()) Text(health.message ?: "The test could not start.", style = small(), color = tokens.colors.textSecondary)
-            }
+        if (expanded && health != null) SourceTestSteps(health, source.baseUrl)
+        if (!expanded && health != null && !health.ok && health.message != null) {
+            Text(health.message!!, style = small(), color = tokens.colors.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

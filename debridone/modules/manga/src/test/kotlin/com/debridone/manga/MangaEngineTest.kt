@@ -339,7 +339,12 @@ class MangaEngineTest {
 
         val health = services.sources.test(local.id)
         assertTrue(health.ok, health.steps.joinToString { "${it.name}: ${it.detail}" })
-        assertEquals(listOf("List series", "Search", "Open a series", "Open a chapter", "Load a page"), health.steps.map { it.name })
+        assertEquals(
+            listOf("Switched on", "Extension load", "Discovery", "Search", "Series metadata", "Chapters", "Page request", "Image download", "Image decode"),
+            health.steps.map { it.name },
+        )
+        assertTrue(health.steps.all { it.ok })
+        assertEquals(null, health.kind)
         assertEquals(health.testedAt, services.sources.find(local.id)!!.health!!.testedAt, "the result is kept with the source")
 
         services.sources.setEnabled(ALICE, local.id, false)

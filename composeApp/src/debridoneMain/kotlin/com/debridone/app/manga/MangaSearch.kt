@@ -180,7 +180,7 @@ internal fun MangaSearch() {
             when {
                 result.error != null -> Column(Modifier.padding(horizontal = 40.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     MangaSectionHeader(result.source.name, caption = languageName(result.source.language))
-                    Notice(result.error!!.message, if (result.error!!.temporary) PillTone.WARNING else PillTone.DANGER)
+                    FailureNotice(result.error!!, result.source.baseUrl)
                 }
                 shown.isEmpty() -> Row(Modifier.padding(horizontal = 40.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(

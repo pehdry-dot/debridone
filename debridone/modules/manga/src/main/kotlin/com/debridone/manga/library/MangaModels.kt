@@ -215,16 +215,28 @@ data class SourcePreference(
     val preferredRank: Int?,
 )
 
-/** One step of a source test and how it went. */
-data class HealthStep(val name: String, val ok: Boolean, val detail: String)
+/**
+ * One step of a source test and how it went. [kind] names the kind of failure (a
+ * [com.debridone.manga.sources.FailureKind]) when it failed; [technical] is the server's own
+ * report, shown only when the details are opened.
+ */
+data class HealthStep(
+    val name: String,
+    val ok: Boolean,
+    val detail: String,
+    val kind: String? = null,
+    val millis: Long? = null,
+    val technical: String? = null,
+)
 
-/** The result of the last "Test source" on this computer. */
+/** The result of the last "Test source" on this computer. [kind] is the kind of the failure that stopped it. */
 data class SourceHealth(
     val extensionId: String,
     val testedAt: Long,
     val ok: Boolean,
     val steps: List<HealthStep>,
     val message: String?,
+    val kind: String? = null,
 )
 
 data class MetadataLink(

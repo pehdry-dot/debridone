@@ -66,6 +66,8 @@ class MangaServices internal constructor(
     val appSettings: MangaAppSettings,
     /** Where covers the person chose themselves are kept. */
     val coversDir: Path,
+    /** Finds where a connection to a source's site stops, from DebridOne and from the manga server's Java. */
+    val diagnosis: com.debridone.manga.net.NetworkDiagnosis = com.debridone.manga.net.NetworkDiagnosis({ server.managedJava() }),
 )
 
 /**

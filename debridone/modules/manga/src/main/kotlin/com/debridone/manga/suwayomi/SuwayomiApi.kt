@@ -88,6 +88,8 @@ data class SwSource(
     /** SAFE, MIXED or NSFW. */
     val contentWarning: String,
     val homeUrl: String?,
+    /** The address the source's requests go to (an HTTP source's `baseUrl`), when it has one. */
+    val baseUrl: String? = null,
     val meta: Map<String, String>,
 )
 
@@ -736,6 +738,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
         supportsLatest = json.bool("supportsLatest") == true,
         contentWarning = json.text("contentWarning") ?: "SAFE",
         homeUrl = json.text("homeUrl")?.takeIf { it.isNotBlank() },
+        baseUrl = json.text("baseUrl")?.takeIf { it.isNotBlank() },
         meta = meta(json),
     )
 
@@ -910,7 +913,7 @@ class SuwayomiApi(private val transport: SuwayomiTransport) {
 
         private const val SOURCE_FIELDS = """
             fragment SourceFields on SourceType {
-              id name displayName lang iconUrl isConfigurable supportsLatest contentWarning homeUrl
+              id name displayName lang iconUrl isConfigurable supportsLatest contentWarning homeUrl baseUrl
               meta { key value }
             }"""
 

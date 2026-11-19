@@ -125,6 +125,9 @@ class MangaServer(
         return if (remoteFor(profile) != null) null else manager.directory(profile)
     }
 
+    /** The Java program of the server DebridOne runs for the active profile, or null when it uses a server of its own. */
+    fun managedJava(): Path? = if (managedDirectory() == null) null else manager.javaExecutable()
+
     /** The active profile changed. A server that is running is replaced at once; otherwise nothing starts yet. */
     fun activate(profileId: Long?) {
         if (wanted == profileId) return
