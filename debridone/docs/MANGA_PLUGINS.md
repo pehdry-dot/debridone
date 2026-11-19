@@ -1,154 +1,88 @@
-# Manga extensions: Houdoku / Tiyo compatibility
+# Manga extensions
 
-Manga's online sources are **Houdoku's source extensions, run unmodified**. DebridOne does not
-define a plugin format of its own for Manga. This page says exactly what is loaded, how, what was
-tested, and where compatibility stops.
+Manga's online sources are **Mihon/Tachiyomi extensions**, loaded by the Suwayomi-Server that
+DebridOne runs for each profile (see [MANGA.md](MANGA.md)). DebridOne does not have an extension
+format of its own for Manga, does not convert extensions, and ships none: everything on this page
+is Suwayomi's own mechanism, shown in DebridOne's screens.
 
-Extensions belong to Manga only. Streaming add-ons and Music plugins are different things, live in
-different registries and cannot be installed here (nor Manga's there).
+They are managed in **Plugins › Manga** and, identically, in Manga's own settings (the cogwheel):
+Extensions, Stores, Sources, Trackers, Metadata, Server.
 
-## What Houdoku loads, and what DebridOne loads
+## Before you add a store
 
-Audited upstream code (see `UPSTREAM.md` for the pinned commits):
+An extension is a small Android program (an `.apk`). Suwayomi runs its code **inside the Suwayomi
+server process, with your user's rights and without a sandbox** — that is how Suwayomi and Mihon
+extensions work. It never runs inside DebridOne itself, and the server it runs in can only be
+reached by DebridOne, but an extension can do on your computer what any program you start can do.
+Add stores, and install extensions, only from people you trust. DebridOne says this once, when you
+add your first store.
 
-- **Houdoku 2.16.0** supports exactly one plugin package: **`@tiyo/core`** from the npm registry.
-  It installs it with `aki-plugin-manager` into `<userData>/plugins`, loads it with `aki.load(…)`
-  and creates `new TiyoClient(spoofWindow)`. Any other package is ignored ("Ignoring unsupported
-  plugin").
-- **`@tiyo/core` 1.0.3** (the latest release, May 2024) contains 44 sources. Every source offers
-  `getSeries`, `getChapters`, `getPageRequesterData`, `getPageUrls`, `getImage`, `getSearch`,
-  `getDirectory`, `getSettingTypes`, `getSettings`, `setSettings` and `getFilterOptions`.
-- Older Houdoku versions loaded one npm package per source, **`@houdoku/extension-*`**, built on
-  `houdoku-extension-lib`. Current Houdoku no longer loads them.
+DebridOne does not name, recommend or preconfigure any store, and neither its code nor its tests
+contain a store's address.
 
-DebridOne therefore accepts:
+## Stores
 
-| Package | What it is | Status in DebridOne |
-|---|---|---|
-| `@tiyo/core` **1.0.3** | Houdoku's current extension package | **Verified** — loaded and exercised by DebridOne's tests (below) |
-| `@tiyo/core` other 1.x | Same interface | Installable, labelled **Not tested** |
-| `@tiyo/core` 0.x / 2.x+ | Different interface | Refused |
-| `@houdoku/extension-*` | Houdoku's older per-source packages | Hidden unless you switch on "Show older Houdoku extensions" in Plugins › Manga › Browse; run through an adapter, labelled **Not tested**. The adapter itself is verified with `@houdoku/extension-komga` 1.3.1 only. |
-| anything else | Not a Houdoku extension | Refused before anything is downloaded |
+A store is a web address of an index of extensions. In **Stores**, paste the address of the index
+and press Add; Suwayomi fetches it, checks it and lists what it offers. Both kinds Suwayomi
+understands are accepted:
 
-A package name, a URL or a file is never assumed to be an extension: the name must be one of the
-two above, the version must fit, and the package must then load and register sources in a
-throw-away trial run before it can be installed.
+- the current store format (an index file such as `index.pb`, or a `repo.json` pointing to one);
+- the older `index.min.json` repositories, which Suwayomi upgrades itself when the store offers
+  the new format.
 
-## How it runs
+What Suwayomi refuses is shown with Suwayomi's own reason. Removing a store removes its offers;
+extensions already installed stay installed and are marked as no longer offered.
 
-```
-Manga screens (Compose)
-   → Manga services (Kotlin)
-      → ExtensionHost (Kotlin): one helper process, JSON lines over its stdin/stdout
-         → Node.js 22 (bundled in the app) running debridone/modules/manga/host/src/host.js
-            → aki-plugin-manager: list / load / unload      ← the same library Houdoku uses
-               → @tiyo/core, unmodified: new TiyoClient(window).getExtensions()
-```
+`Suwayomi/tachiyomi-extension` is something else: an extension that lets Mihon read *from* a
+Suwayomi server. It is not a catalogue of sources and DebridOne does not treat it as one.
 
-- **Same loader, same folder layout.** Packages are unpacked the way Aki lays them out
-  (`plugins/@tiyo/core/…` with nested `node_modules`) and loaded with Aki's own `load`.
-- **No visible Houdoku, no Electron.** Tiyo needs two things from Electron: the object it is
-  constructed with and a hidden browser window for some sources. DebridOne supplies a stand-in
-  with the same methods (`loadURL`, `webContents.executeJavaScript`, cookies, …) that fetches
-  pages over HTTP and runs no page scripts.
-- **No network port.** The app and the helper talk over the helper's standard input and output
-  only. Whatever a plugin prints goes to a diagnostics log (Plugins › Manga › Settings), never
-  into the protocol.
-- **Bundled runtime.** The macOS app contains the official Node.js 22.23.4 build for its
-  architecture, checked against its published SHA-256 when the app is built. A Node.js installed
-  on your Mac is never used. (When running from source, `scripts/debridone/dev.sh` fetches the
-  same build.)
-- **A plugin cannot take the app down.** Every call has a time limit; a source that throws fails
-  that call with a message; if the helper crashes it is started again, and after five crashes in a
-  minute it stays stopped until you restart it from the settings. Local files keep working
-  throughout.
+## Extensions
 
-## Installing
+**Extensions** lists what the stores offer and what is installed, with search, a language filter,
+the version, and whether an update is there.
 
-Plugins › Manga › Browse reads the package's entry in the npm registry and shows its versions with
-their status. Installing:
+- **Install / Update / Remove**: done by Suwayomi; DebridOne shows the progress and the outcome.
+  "Update all" updates everything that has an update.
+- **Install from a file**: an extension `.apk` on your computer is handed to Suwayomi, which
+  checks and installs it like one from a store.
+- An extension usually brings one source per language. The languages you choose in Manga's
+  settings › Library decide which of them are switched on when they appear.
 
-1. Resolves the package's dependencies (for 1.0.3 from a list pinned in this repository: 79
-   archives with their SHA-512 checksums; for other versions live from the registry).
-2. Downloads every archive from `registry.npmjs.org` only and checks its SHA-512.
-3. Unpacks into a staging folder, refusing links, absolute paths, `..`, oversized archives and
-   more than 400 packages. **No install script is ever run.**
-4. Loads the staged package in a separate trial helper: it must export `TiyoClient` and register
-   at least one source.
-5. Shows a review: what the package is, its licence, how many sources it registers, what it can
-   and cannot touch, and any warnings (for example, sources that expect a browser window).
-6. Only after you confirm is it moved into place and loaded.
+## Sources
 
-You can also import a package archive (`.tgz`) from a file; it goes through steps 3–6 and must be
-`@tiyo/core` or `@houdoku/extension-*`. Updates, switching a package off, and uninstalling are on
-Plugins › Manga › Installed. Packages are shared by all profiles; which sources are enabled, their
-order, their settings and logins are per profile.
+**Sources** lists the sources of the installed extensions, and Suwayomi's own **Local source**
+(your files; it needs no extension).
 
-## What an extension can and cannot touch
+- **On / off** per source, and a preferred order for searches.
+- **Configure** opens the source's own settings in a panel, in the tab you are in: the fields are
+  the ones the extension defines (an address and sign-in for a server of your own, a preferred
+  quality, a content filter…). A sign-in typed there is kept by the profile's Suwayomi server.
+- **Test** tries the source step by step — list series, search, open a series, open a chapter,
+  load a page — and says where it stops.
+- **Browse** opens the source in Discover.
 
-Extension code is third-party JavaScript. It runs in the helper process, never inside the app.
+## What was tried, and how
 
-- **Files:** Node's permission model limits the helper to *reading* its own program folder and the
-  plugin folder and *writing* one scratch folder. It cannot read your documents, DebridOne's
-  databases, or other sections' data; it cannot start other programs, load native add-ons or start
-  worker threads.
-- **Environment:** the helper starts with an emptied environment and a private home folder. It
-  does not see your shell variables.
-- **Credentials:** a source's own settings (for example the address and login of your Komga
-  server) are stored in the macOS Keychain per profile and handed only to that source. Account
-  passwords, tracking tokens and other sections' secrets are never given to the helper.
-- **Network:** an extension can make web requests — that is its job. Requests to one source are
-  spaced out and limited to three at a time. An optional proxy for extensions can be set.
+With the real, pinned Suwayomi-Server (v2.4.2366) and its bundled Java:
 
-This is process isolation with Node's permission model, not a full operating-system sandbox; an
-extension can still talk to any web server. Install only packages you trust.
+- Every GraphQL document DebridOne sends is checked against that server in the test suite.
+- The **Local source** end to end, in the test suite and in the packaged app's self-test: files
+  listed, pages read in order, progress, restart and resume.
+- One **real extension from a real store**: the Komga extension (v1.6.76 at the time), installed
+  from a store named by the person running the test, configured through its own settings to read
+  Komga's public demo server, then browsed, searched, opened, read, its progress kept across a
+  restart of the server, and removed again. The same was done by hand in the running app, where a
+  chapter was also saved by the server and read with no network connection.
+- A store with about 1,700 extensions was listed and filtered in the app.
 
-## What was tested
+Not tried:
 
-"Verified" is used only for things DebridOne's tests actually ran.
+- Any other extension. Whether a given extension works is between that extension, its site and
+  Suwayomi.
+- Installing from an `.apk` file against a real package (the request is checked against the
+  server, and the same upload mechanism is tested with a backup file).
+- Sources behind a browser check. Suwayomi's embedded browser is switched off; a FlareSolverr of
+  your own can be named in the server's settings.
 
-**The package.** The real `@tiyo/core` 1.0.3, downloaded from the npm registry by DebridOne's own
-installer, is loaded through the helper on the pinned Node.js in the automated tests and in the
-packaged macOS app on CI: it loads, all 44 sources register, and settings, directory, search,
-series details, chapters, page lists and page images are exercised end to end through Tiyo's
-**Komga** source against a stand-in Komga server, including a restart of the app and resuming.
-
-**Live checks** (run by hand with `DEBRIDONE_LIVE_TESTS=1`, and in the running app):
-
-| Source | Result |
-|---|---|
-| Komga (Tiyo), against Komga's public demo server | Browse, search, series, chapters, pages, images, reading, resume after restart and downloading a chapter all work |
-| MangaDex (Tiyo) | Browse with its filters and sort orders, search, series details, chapters and page lists work. Page *images* come from changing hosts the build environment could not reach, so they were not tested there. |
-| `@houdoku/extension-komga` 1.3.1 (legacy adapter) | Search, series, chapters, pages against the demo server |
-
-**Every other source is "Not tested"** until you run **Test** on it (Plugins › Manga › Sources),
-which tries browse, search, series details, chapters and pages on your Mac and records which steps
-passed and when. Tiyo was last released in May 2024; expect some of its sources to have stopped
-working because their sites changed. DebridOne reports that per source and does not hide it.
-
-## Limits
-
-- **Sources that need a browser window.** Ten of Tiyo's sources (ComicK, Komikcast, Mangabat,
-  Mangakakalot, MangaLife, Manganato, MangaSee, nhentai, ReadComicOnline, TCB Scans) load pages in
-  Houdoku's hidden browser window. DebridOne's stand-in fetches the page without running its
-  scripts, so these work only where the site answers a plain request. A site that answers with a
-  browser check is reported as "needs a browser check"; DebridOne does not try to get past it.
-- **Logins and access.** A source's login is whatever that source's own settings ask for.
-  DebridOne does not work around logins, paywalls, rate limits or regional blocks.
-- **Legacy packages** are individually untested (see the table at the top), and their browser-window
-  function is not available.
-- **Tiyo quirks are kept as they are**, because the package is not modified. For example, its
-  language table files Japanese under a code no source uses, so Japanese-language sources show as
-  "Multiple languages".
-- **Gatekeeper.** Builds are unsigned. The bundled Node.js carries its publisher's own signature;
-  whether macOS asks about it separately on a downloaded, quarantined copy has not been checked on
-  a personal Mac.
-
-## Licences
-
-Houdoku, Tiyo, Aki Plugin Manager and the legacy Houdoku extensions are MIT-licensed projects by
-xgi and their contributors. DebridOne includes Aki Plugin Manager and its dependencies (in the
-helper) and the Node.js runtime; it does **not** include Tiyo or any source — you install those.
-Notices are in `THIRD_PARTY_NOTICES.md`; installed packages keep their own licence files, and the
-Node.js licence is in the app as `manga-host/NODE-LICENSE.txt`.
+The opt-in test is `SuwayomiExtensionLiveTest`; it runs only with `DEBRIDONE_LIVE_TESTS=1` and
+`DEBRIDONE_TEST_EXTENSION_STORE=<address of a store's index>`.

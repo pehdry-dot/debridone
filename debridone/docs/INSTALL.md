@@ -23,7 +23,7 @@ cd debridone
 ./scripts/debridone/build-macos-dev-dmg.sh
 ```
 
-The script downloads the bundled video runtime and the Node.js runtime for Manga's extensions
+The script downloads the bundled video runtime, and Suwayomi-Server with the Java 21 runtime it needs for Manga
 (checking every file against its recorded SHA-256), builds for your Mac's processor and prints where the `.dmg` and the `.app` are. The
 first build downloads the build dependencies and takes a while.
 

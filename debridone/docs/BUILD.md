@@ -30,7 +30,10 @@ Manga's backend is Suwayomi-Server, which needs Java 21. `scripts/debridone/fetc
 the pinned Eclipse Temurin 21 JRE, checks each against its SHA-256, and puts them under
 `debridone/modules/manga/build/suwayomi-runtime/`. `dev.sh` and `build-macos-dev-dmg.sh` call it for
 you; a Java installed on your machine is not used for the server. The packaged app carries both
-(`Contents/app/resources/suwayomi/`), which is why the DMG is about 200 MB larger than before.
+(`Contents/app/resources/suwayomi/`: the runtime in `jre/`, the jar in `server/`), which is why
+the DMG is about 405 MB. The jar has a folder of its own on purpose: lying beside the folder
+named `jre`, Suwayomi's own class scan takes it for a part of the Java runtime and the server
+dies while starting.
 
 ## Run from source
 

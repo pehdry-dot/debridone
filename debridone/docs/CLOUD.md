@@ -107,8 +107,9 @@ and settings.
   resolve add-on streams) are a different thing: they are not changed, and the connected accounts
   are never copied into them.
 - **Manga**: "From your cloud…" in Manga's Library opens the comics shelf. A downloaded archive
-  is imported into Manga's own library and read with its own reader. Houdoku's Tiyo extensions
-  are untouched and never see the accounts.
+  is linked into the profile's manga server (its Local source) and read with Manga's own reader.
+  Manga's extensions never see the accounts. A profile that reads from a manga server of its own
+  cannot open cloud archives through it.
 
 ## What is sent where
 

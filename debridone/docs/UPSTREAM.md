@@ -4,19 +4,20 @@
 |---|---|---|---|
 | [NuvioMedia/NuvioDesktop](https://github.com/NuvioMedia/NuvioDesktop) (`Dev`) | Foundation and Streaming module; this repository's history continues from it | GPL-3.0 | `0b283d0a393079c9f7e5ff4b4e825dba76ce80d4` |
 | [hydralauncher/hydra](https://github.com/hydralauncher/hydra) (`main`) | Reference for the Games module (to be ported) | MIT | `ff952e2312e191bcf0836210540ca03b169b80d3` |
-| [xgi/houdoku](https://github.com/xgi/houdoku) (`master`, 2.16.0) | Reference for the Manga module: how extensions are installed and loaded, the reader's behaviour, file-name parsing for local files. No source file is copied. | MIT | `a0c69348d5d3cf018bb6d127de86c63434913d14` |
-| [xgi/tiyo](https://github.com/xgi/tiyo) (`main`), npm `@tiyo/core` 1.0.3 | Manga's source extensions. Run unmodified; installed by the user, not bundled. | MIT | `84e75a3d6afe73cc698da86a45f45f81f50e067a` |
-| [xgi/aki-plugin-manager](https://github.com/xgi/aki-plugin-manager), npm 1.3.3 | The loader Houdoku uses for Tiyo. Bundled, unmodified, inside Manga's extension host. | MIT | `a398973d` (npm 1.3.3) |
-| [xgi/houdoku-extensions](https://github.com/xgi/houdoku-extensions), npm `@houdoku/extension-*` | Houdoku's older per-source packages; run through an adapter when the user installs one. Not bundled. | MIT | `d5710c72` |
-| [Node.js](https://nodejs.org) 22.23.4 | Runtime of Manga's extension host; the official build is bundled in the macOS app. | MIT and others (see its LICENSE) | release `v22.23.4` |
+| [Suwayomi/Suwayomi-Server](https://github.com/Suwayomi/Suwayomi-Server) `v2.4.2366` | Manga's backend: the unmodified release jar, bundled in the macOS app, run as a separate process and reached through its GraphQL API. | MPL-2.0 | release `v2.4.2366`, jar SHA-256 in `scripts/debridone/fetch-suwayomi-runtime.sh` |
+| [Eclipse Temurin](https://adoptium.net) JRE 21 | The Java runtime Suwayomi-Server runs on; the official build is bundled in the macOS app beside it. | GPL-2.0 with Classpath Exception | `21.0.13.1+2` (Apple Silicon), `21.0.13+9` (Intel, Linux tests); checksums in the same script |
+| Mihon/Tachiyomi extensions | Manga's sources. Installed by the user into their Suwayomi-Server from a store they add; none is bundled, named or preconfigured. | each extension's own (commonly Apache-2.0) | not pinned: the user's choice |
+| [Suwayomi/Suwayomi-JUI](https://github.com/Suwayomi/Suwayomi-JUI) | Read as a reference for starting the server from a desktop application. No code copied. | MPL-2.0 | `1.3.3` |
+| [Suwayomi/website](https://github.com/Suwayomi/website) (`suwayomi.org/tracker-oauth`) | The page trackers send the browser to after a sign-in; it forwards to the address the client names. DebridOne names a listener on this computer, as Suwayomi's other clients name theirs. Not bundled. | MPL-2.0 | as served |
+| [xgi/houdoku](https://github.com/xgi/houdoku) and [xgi/tiyo](https://github.com/xgi/tiyo) | The earlier Manga engine was built on them. They are no longer used or bundled; the library made with them is carried over (see MANGA.md). | MIT | — |
 | Eclipse Music | Feature reference for Music. Its published addon format (`eclipsemusic.app/docs`) is what Music's addon support follows. No source is available or used. | proprietary | docs read 2026-11-17 |
 | [TheVolecitor/BeatBoss](https://github.com/TheVolecitor/BeatBoss) (`main`) | Second description and a client implementation of the same addon format (`ADDONS.md`, `lib/core/services/addon_service.dart`), read to match real-world field names. No code copied. | MIT | `abc1b86f5ec266d499337fa77a602a2028327e9e` |
 
-Nuvio Desktop's code is the foundation of this repository. No Hydra, Houdoku or Tiyo source file
-is copied into it: Manga's engine, reader and extension host are DebridOne code written against
-the audited behaviour of Houdoku and the public interface of Tiyo, and the Tiyo package itself is
-downloaded by the user. What is redistributed (Aki Plugin Manager, its dependencies, Node.js) is
-listed in `THIRD_PARTY_NOTICES.md`. Details of the compatibility: `MANGA_PLUGINS.md`.
+Nuvio Desktop's code is the foundation of this repository. No Hydra or Suwayomi source file is
+copied into it: Manga's screens, reader, server manager and API client are DebridOne code, written
+against Suwayomi-Server's own GraphQL schema, and Suwayomi-Server itself is used as released, as a
+separate program. What is redistributed (Suwayomi-Server, the Temurin runtime) is listed in
+`THIRD_PARTY_NOTICES.md`. How extensions work: `MANGA_PLUGINS.md`.
 
 ## Merging Nuvio updates
 

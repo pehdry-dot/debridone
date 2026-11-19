@@ -67,48 +67,62 @@ Verification status
   Cover Art Archive (its downloads redirect to changing archive.org hosts the build environment
   cannot reach), internet radio addresses, and Subsonic-compatible servers other than Navidrome.
   The stand-in tests also cover unreachable servers and rejected sign-ins.
-- Manga, verified by tests that run on Linux and in CI (the real extension host on the pinned
-  Node.js, the real `@tiyo/core` 1.0.3 downloaded by DebridOne's installer, a stand-in Komga
-  server): the package loads and registers its 44 sources; settings, browse, search, series,
-  chapters, page lists and images through Tiyo's Komga source; reading progress and resume after
-  a restart; profile isolation; the installer refusing wrong names, wrong versions, bad checksums,
-  links and path tricks; the helper's file, process and environment restrictions; crash and
-  time-out recovery; CBZ, ZIP and folder reading with no extension runtime present; the library,
-  bookmarks, collections, source change with carried-over progress; downloads including resume
-  and retry; metadata edit, lock and refresh; backup and restore.
-- Manga, verified by running the app from source on Linux (virtual display), against the real
-  services: installing Tiyo 1.0.3 from the npm registry through Plugins › Manga › Browse with its
-  review dialog; the 44 sources listed as "Not tested"; setting up and testing Komga against
-  Komga's public demo server; searching all sources; a series page; reading with the keyboard;
-  quitting, restarting and resuming on the same page from Home; importing a CBZ and a folder of
-  chapters; the continuous webtoon mode; the settings panel; Discover on MangaDex with its own
-  filters; adding to the library; an AniList match applied, a title edited, and the edit kept
-  after refreshing from the source and from AniList; downloading a chapter from the demo server
-  and reading it offline; the Downloads, Settings and Plugins › Manga pages; a second profile
-  starting with an empty Manga library (and the shared extension package) while the first
-  profile's library is unchanged on return.
-- Manga, verified inside the packaged macOS app on GitHub's runners for commit `303c152ec`
-  (run 44203345039; and before it `d599f80f5`), on **Apple Silicon** (`macos-15` and `macos-26`,
-  arm64) and on **Intel** (`macos-15-intel`):
-  the DMG is built with the Node.js runtime and the extension host inside; the app starts and
-  stays running; `--manga-self-test` passes: a CBZ is read and resumed after a restart with no
-  extension involved; the extension host starts on the Node.js inside the app, with file access
-  restricted to its own folders; DebridOne's installer downloads Tiyo 1.0.3 from the npm registry
-  (79 archives, each matching its pinned checksum); it registers 44 sources on trial and after
-  installing; Tiyo's Komga source searches, opens a series, lists chapters and serves pages
-  against a stand-in server; a locked edit survives a refresh; the series resumes on the right
-  page after a restart; the host did not crash. The runtime also starts from the mounted DMG.
-  (The first packaged build failed this test because packaging had dropped the runtime's
-  executable permission; that is what the test is for, and it is fixed.)
-- Manga, verified in the app on Linux as well: switching the extension package off removes
-  Manga's sources and leaves Music and Streaming as they were; Manga's accent colour and cover
-  size change Manga only.
-- Manga, **not verified**: any Tiyo source other than Komga and (up to page lists) MangaDex —
-  they show "Not tested" in the app until you test them; MangaDex page images (their hosts were
-  out of reach of the build environment); MyAnimeList and reading-list tracking against the real
-  services (no client ID or account was available; they are tested against stand-ins that answer
-  in the services' formats); legacy `@houdoku/extension-*` packages other than
-  `@houdoku/extension-komga` 1.3.1; the reader's feel on a Mac trackpad.
+- Manga, verified by tests that run on Linux and in CI, on the real, pinned Suwayomi-Server
+  (v2.4.2366) started by DebridOne's own server manager with the pinned Java 21: every GraphQL
+  document DebridOne sends is accepted by the server; the server answers only on this computer and
+  only with DebridOne's password; starting, stopping, a second DebridOne on the same data, and a
+  server whose DebridOne was killed; sample comics read through the Local source (pages in order,
+  progress, restart and resume); library status, favourites, collections, bookmarks, hand edits
+  kept across a restart; two profiles with separate libraries and server folders; the server's own
+  settings changed and kept; its check for new chapters; trackers listed and a browser sign-in
+  returning through DebridOne's listener (refused, as it carried no sign-in: no tracker is
+  contacted by the tests); a backup restored into another profile with DebridOne's extras and
+  without the server's password; a profile reading from a second real server as "a server of
+  your own"; a remote server going away and coming back (stand-in); the migration of a library in
+  the earlier format, with its backup and report.
+- Manga, verified by running the app from source on Linux (virtual display): the server starting
+  when Manga is opened; adding an extension store (with the one-time notice), about 1,700
+  extensions listed and filtered, the Komga extension installed and configured through its own
+  settings against Komga's public demo server; search, a series page, reading in the native
+  reader, quitting and resuming on the same page with no server process left behind; adding to
+  the library with a status and as a favourite; a chapter saved by the server, then read with the
+  network cut off, while a chapter that was not saved said it could not be opened; a CBZ imported
+  and read; a comic archive from the cloud opened in the reader; the Trackers page with the
+  server's six trackers, both kinds of sign-in panel, and a browser sign-in that came back
+  refused; the Server page with the server's settings; Library's check for new chapters; a second
+  profile with an empty Manga and its own server, the first profile's library intact on return;
+  the migration of a real library left by the earlier engine (three local series carried over,
+  two online ones listed, one of them carried over on request), with its backup folder and report.
+- Manga inside the packaged macOS app: the first packaged build with Suwayomi (commit `63a6a034c`,
+  CI run 44416258890) built the unsigned DMG on all three machines (Apple Silicon on `macos-15`
+  and `macos-26`, Intel on `macos-15-intel`), the bundled Java started there, and then
+  `--manga-self-test` **failed**: the server died while starting, because its jar lay beside the
+  Java runtime's `jre` folder, where Suwayomi's own class scan takes it for a part of the runtime.
+  That was reproduced on Linux and fixed by giving the jar a folder of its own; a test now builds
+  the packaged layout on every machine (`PackagedLayoutTest`), and a jar in such a place is
+  refused with the reason instead of a start that never finishes.
+- Manga, verified inside the packaged macOS app on GitHub's runners after that fix (commit
+  `4e4f3c3d5`, CI run 44422145370), on **Apple Silicon** (`macos-15` and `macos-26`, arm64) and on
+  **Intel** (`macos-15-intel`): the unsigned DMG is built with Suwayomi-Server and its Java 21
+  runtime inside (about 405 MB); `--manga-self-test` passes in the packaged app: the server and
+  Java found are the copies inside the application; the server starts for a profile, listens on
+  this computer only and answers nothing without DebridOne's password; no extension store is
+  configured and the only source is the Local source; a comic archive is read through the
+  server (pages in order, cover, the five steps of the source test); closing DebridOne ends the
+  server process; after a restart the series resumes on the same page with its favourite; no
+  server process is left behind and the person's own file is where it was. The Java runtime also
+  starts from inside the mounted DMG. The same run passed the Linux tests, the Keychain test and
+  the Music self-test in the packaged app. Nobody opened that DMG on a Mac of their own.
+- Manga, **not verified**: any extension other than Komga's (whether one works is between that
+  extension, its site and Suwayomi); installing an extension from an `.apk` file with a real
+  package (the request is validated by the server and the same upload path is tested with a
+  backup file); updating an extension to a newer version; signing in to a tracker and linking,
+  updating and unlinking an entry there (no tracker account was available: the sign-in panels,
+  the listener and the refusal path are tested, the rest is Suwayomi's own code); Suwayomi's
+  "simple login" and "UI login" sign-in modes on a server of your own (only "basic" or none);
+  a SOCKS proxy and FlareSolverr (the settings are saved and read back; no proxy or FlareSolverr
+  was run); MyAnimeList lookups against the real service (no client ID was available; tested
+  against a stand-in); the reader's feel on a Mac trackpad.
 - Music, **only a person at the Mac can confirm**: that the sound is audible, that the media keys
   and the Now Playing widget respond (the code compiles and loads; nothing can press a key in
   CI), that sound follows a change of output device, and how the screens look on macOS.
@@ -217,24 +231,33 @@ Music
 - Switching a source off marks its songs unavailable rather than hiding them.
 
 Manga
-- Sources come only from Houdoku's extension packages. Tiyo was last released in May 2024; some
-  of its sources no longer work because their sites changed. Only what was tested is called
-  verified (`MANGA_PLUGINS.md`).
-- Ten Tiyo sources expect Houdoku's hidden browser window. DebridOne fetches their pages without
-  running page scripts, so they work only where the site answers a plain request; a browser check
-  is reported, not bypassed.
-- Extension code is isolated in a helper process with Node's permission model (no access to your
-  files or DebridOne's data, no other programs). That is not a full system sandbox: an extension
-  can still reach any web server.
-- CBR, RAR and 7z archives are not opened. Pinch-to-zoom is not available (Cmd + scroll and keys
-  are).
-- The app is about 50 MB larger because it carries Node.js for the extension host.
-- The bundled Node.js is the official, publisher-signed build inside an unsigned app; whether
-  macOS asks about it separately on a downloaded copy has not been checked on a personal Mac.
-- MyAnimeList needs your own API client ID (its API has no anonymous access).
-- Refreshing a series takes each field from the first provider in your priority list that offers
-  one, so details applied from AniList can be replaced by the source's own on the next refresh
-  unless AniList is placed above "Extension metadata" or the field is locked.
+- Manga needs its Suwayomi-Server: nothing in Manga works while the server is not running, your
+  own files included (they are read through its Local source). It starts in a few seconds when
+  Manga is opened and uses a few hundred megabytes of memory while it runs.
+- Extensions are Android program code that Suwayomi runs inside its own process, with your user's
+  rights and without a sandbox. They never run inside DebridOne, and the server can be reached by
+  DebridOne only, but an extension can do what any program you start can do. Earlier versions of
+  Manga ran their (different) extensions with file access switched off; this is a real change.
+- Only the Komga extension and the Local source were proven to work. Sources behind a browser
+  check (Cloudflare and the like) fail with Suwayomi's message: its embedded browser is off (and
+  does not exist on macOS). A FlareSolverr of your own can be named in the server's settings.
+- Each profile has its own server folder, so an extension store, an extension or a tracker
+  sign-in set up in one profile is not there in another.
+- Other devices cannot use the server DebridOne starts. A server of your own is supported with
+  Suwayomi's "basic" sign-in or none; while a profile uses it, files of this computer and cloud
+  archives cannot be opened in Manga.
+- A tracker sign-in in the browser passes through Suwayomi's own page (`suwayomi.org`), which
+  sends the browser back to DebridOne on this computer. If that page is unreachable, paste the
+  address the browser ended at.
+- Series from sources of the earlier version are not fetched again automatically: they are listed
+  and carried over when you have added them from a new source (matching chapters by number).
+  Chapters the earlier version downloaded stay where they were but cannot be used.
+- 7-Zip archives are not opened. Pinch-to-zoom is not available (Cmd + scroll and keys are).
+- The download is about 405 MB: the app carries Suwayomi-Server (its jar alone is 183 MB) and a
+  Java 21 runtime.
+- The bundled Java is the official, publisher-signed build inside an unsigned app; whether macOS
+  asks about it separately on a downloaded copy has not been checked on a personal Mac.
+- MyAnimeList lookups need your own API client ID (its API has no anonymous access).
 
 Upstream compatibility notes for later phases
 - Hydra's main process depends on Electron, a Rust native addon and Hydra's hosted API, and its

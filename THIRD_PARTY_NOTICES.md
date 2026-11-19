@@ -26,36 +26,39 @@ Nuvio Media.
   included yet. Code ported from Hydra will carry this notice and be listed in
   `debridone/docs/UPSTREAM.md`.
 
-## Houdoku
+## Suwayomi-Server
 
-- Source: https://github.com/xgi/houdoku
-- Licence: MIT
-- Copyright: xgi and the Houdoku contributors
-- Use in DebridOne: reference for the Manga module (how extensions are installed and loaded, the
-  reader's behaviour, how chapter and volume numbers are read from file names). No Houdoku source
-  file is included; Manga's code is DebridOne's own.
+- Source: https://github.com/Suwayomi/Suwayomi-Server (release `v2.4.2366`; the source of exactly
+  that release is at https://github.com/Suwayomi/Suwayomi-Server/tree/v2.4.2366)
+- Licence: Mozilla Public License 2.0 (https://www.mozilla.org/MPL/2.0/)
+- Copyright: Contributors to the Suwayomi project
+- Use in DebridOne: Manga's backend. The release jar is **bundled unmodified** in the macOS app
+  and run as a separate program; DebridOne talks to it over its GraphQL API and contains none of
+  its source. Under the MPL you may obtain, change and redistribute Suwayomi-Server's source from
+  the address above; DebridOne places no further restriction on it. The libraries inside the jar
+  keep their own licences, which ship inside it.
 
-## Tiyo and the legacy Houdoku extensions
+## Eclipse Temurin (OpenJDK 21 runtime)
 
-- Source: https://github.com/xgi/tiyo (npm: `@tiyo/core`, `@tiyo/common`) and
-  https://github.com/xgi/houdoku-extensions (npm: `@houdoku/extension-*`, `houdoku-extension-lib`)
-- Licence: MIT
-- Copyright: xgi and the Tiyo / Houdoku contributors
-- Use in DebridOne: Manga runs these packages unmodified. They are **not bundled**: the user
-  installs them from the npm registry, and each installed package keeps its own licence files in
-  DebridOne's Manga plugin folder. A list of the archives that make up `@tiyo/core` 1.0.3 (names,
-  versions, download addresses and checksums — no code) is included in
-  `debridone/modules/manga/src/main/resources/manga/plans/`.
+- Source: https://adoptium.net (builds `21.0.13.1+2` for Apple Silicon and `21.0.13+9` for Intel); OpenJDK sources at https://github.com/adoptium/jdk21u
+- Licence: GNU General Public License, version 2, with the Classpath Exception
+- Use in DebridOne: the Java runtime Suwayomi-Server runs on. The official build is **bundled
+  unmodified** beside it, with its own `legal/` folder (the licence texts of the runtime and of
+  everything in it) and `NOTICE`.
 
-## Aki Plugin Manager
+## Mihon/Tachiyomi extensions
 
-- Source: https://github.com/xgi/aki-plugin-manager (npm: `aki-plugin-manager` 1.3.3)
-- Licence: MIT
-- Copyright: xgi
-- Use in DebridOne: bundled, unmodified, inside Manga's extension host to list, load and unload
-  extension packages exactly as Houdoku does.
+- Not bundled, named or preconfigured. An extension is installed by the user, into their
+  Suwayomi-Server, from an extension store whose address they add. Each extension keeps its own
+  licence; what it fetches is between the user, the extension and its site.
 
-### MIT License (Hydra Launcher, Houdoku, Tiyo, Aki Plugin Manager)
+## Houdoku and Tiyo
+
+- Source: https://github.com/xgi/houdoku and https://github.com/xgi/tiyo (MIT, xgi and contributors)
+- Use in DebridOne: none any more. Earlier versions of Manga were built on them; they are no
+  longer used, bundled or downloaded. A library made with those versions is carried over.
+
+### MIT License (Hydra Launcher)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -93,20 +96,16 @@ Music plays audio through the libmpv and FFmpeg libraries that Nuvio Desktop alr
 video (their licences are among Nuvio's attributions, see "Nuvio Desktop" above); DebridOne adds no
 other decoder.
 
-## Bundled with Manga's extension host
+## Bundled with Manga
 
-The macOS app contains, under `Contents/app/resources/manga-host/`:
+The macOS app contains, under `Contents/app/resources/suwayomi/`:
 
 | Component | Licence | Use |
 |---|---|---|
-| Node.js 22.23.4, official build from nodejs.org, unmodified | MIT, with the licences of the components it includes (V8, libuv, OpenSSL, ICU and others) — the complete text ships next to it as `NODE-LICENSE.txt` | Runs extension code in a separate process |
-| `aki-plugin-manager` 1.3.3 | MIT | Loads extension packages (see above) |
-| `semver` 7.7.2 | ISC | Resolving a package's dependency versions before download |
-| Dependencies of the two: `tar` 6.2.1, `minipass` 3.3.6 and 5.0.0, `fs-minipass` 2.1.0, `chownr` 2.0.0, `yallist` 4.0.0, `glob` 7.2.3, `minimatch` 3.1.5, `inflight` 1.0.6, `once` 1.4.0, `wrappy` 1.0.2, `inherits` 2.0.4, `fs.realpath` 1.0.0, `rimraf` 3.0.2 | ISC | |
-| `minizlib` 2.1.2, `mkdirp` 1.0.4, `balanced-match` 1.0.2, `brace-expansion` 1.1.22, `concat-map` 0.0.1, `path-is-absolute` 1.0.1 | MIT | |
+| `server/Suwayomi-Server.jar`: Suwayomi-Server `v2.4.2366`, the official release, unmodified (checksum in `scripts/debridone/fetch-suwayomi-runtime.sh`) | MPL-2.0; the libraries it contains under their own licences, inside the jar | Manga's backend, run as a separate process |
+| `jre/`: Eclipse Temurin JRE 21 (`21.0.13.1+2` for Apple Silicon, `21.0.13+9` for Intel), the official build, unmodified | GPL-2.0 with Classpath Exception; full texts in `jre/legal/` | Runs Suwayomi-Server |
 
-Each of these packages is included with its own licence file (`manga-host/host/node_modules/<name>/`).
-Their exact versions are fixed by `debridone/modules/manga/host/package-lock.json`.
+Nothing else is added to either. The earlier Node.js runtime and npm packages are no longer shipped.
 
 ## Online services used by Manga
 
@@ -115,10 +114,12 @@ DebridOne's:
 
 | Service | Used for | Terms |
 |---|---|---|
-| npm registry (`registry.npmjs.org`) | Listing and downloading extension packages you choose to install | npm's terms of use |
-| AniList (`graphql.anilist.co`) | The trending rows on Manga's Home, looking up details you ask for, and — only with an account you connect — updating your reading list | AniList API terms |
+| The extension stores you add | Listing and downloading the extensions they offer, by your Suwayomi-Server | Each store's own terms |
+| AniList (`graphql.anilist.co`) | The trending rows on Manga's Home and looking up details you ask for | AniList API terms |
 | MangaDex (`api.mangadex.org`) | Looking up details you ask for | MangaDex API terms; covers are hot-linked as its API intends |
-| MyAnimeList (`api.myanimelist.net`) | Looking up details and updating your list, only with your own API client ID and sign-in | MyAnimeList API licence |
+| MyAnimeList (`api.myanimelist.net`) | Looking up details, only with your own API client ID | MyAnimeList API licence |
+| The trackers you sign in to (AniList, MyAnimeList, Kitsu, MangaUpdates, Shikimori, Bangumi) | Contacted by your Suwayomi-Server, with your sign-in, to keep your reading list up to date | Each tracker's own terms |
+| `suwayomi.org/tracker-oauth` | During a tracker sign-in in your browser: the tracker sends the browser there, and that page sends it on to DebridOne on your computer | Suwayomi's website |
 | The sites of the sources you enable | Whatever the extension you installed requests | Each site's own terms |
 
 ## Online services used by Music

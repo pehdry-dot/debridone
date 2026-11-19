@@ -63,7 +63,7 @@ Music (see `MUSIC.md`; these are the points only a person at the Mac can confirm
 Plugins isolation
 1. Plugins has three tabs: Streaming, Music, Manga. Plugins › Music shows Music's integrations; Manga shows its own packages, sources and metadata providers.
 2. Disable a Streaming addon: nothing changes in the other tabs.
-3. Install Tiyo in Plugins › Manga: it is listed under Manga only. Switch it off: Manga's sources disappear; Streaming and Music are unchanged.
+3. Add an extension store and install an extension in Plugins › Manga: its sources are listed under Manga only. Remove it: Manga's sources disappear; Streaming and Music are unchanged.
 
 Storage
 1. Settings › Storage & backups shows the folders. "Back up accounts now" writes a snapshot.
@@ -102,12 +102,25 @@ Live checks against the real services: `DEBRIDONE_LIVE_TESTS=1 ./gradlew :debrid
 
 Automated: `./gradlew :debridone:modules:manga:test` (needs the pinned Suwayomi-Server and Java 21
 runtime once: `./scripts/debridone/fetch-suwayomi-runtime.sh`). The tests start the real
-Suwayomi-Server through DebridOne's own server manager and work through it: every GraphQL document
-DebridOne sends is validated by the server; sample comics are read through its Local source
-(pages, progress, library, categories, bookmarks, a restart, two profiles with separate
-libraries); starting, stopping, a second DebridOne on the same data and a server whose DebridOne
-died are covered. With `DEBRIDONE_REQUIRE_SUWAYOMI=1` a missing server fails the run instead of
-skipping those tests.
+Suwayomi-Server through DebridOne's own server manager and work through it:
+
+- every GraphQL document DebridOne sends is validated by the server;
+- sample comics are read through its Local source: pages, progress, library, categories,
+  bookmarks, a restart, two profiles with separate libraries and server folders;
+- starting, stopping, a second DebridOne on the same data and a server whose DebridOne died;
+- trackers: the server's list, and a browser sign-in coming back through DebridOne's listener and
+  being refused when it carries no sign-in (no tracker is contacted);
+- the server's own settings changed through it and still there after a restart;
+- the server's own check for new chapters, with and without its rule about unread series;
+- a backup carrying the library and DebridOne's extras into another profile, and never the
+  server's password or settings;
+- a profile reading from a second real server as "a server of your own": wrong password, its
+  library, pages, progress kept by that server, files of this computer refused; and, against a
+  stand-in, a server that goes away and comes back;
+- the migration: a database in the earlier format is written, and the backup, the carried-over
+  series, the report and the untouched earlier rows are checked.
+
+With `DEBRIDONE_REQUIRE_SUWAYOMI=1` a missing server fails the run instead of skipping those tests.
 
 Live check with a real Mihon/Tachiyomi extension (adds an extension store, installs the Komga
 extension from it, configures it, and reads from Komga's public demo server):
@@ -123,17 +136,25 @@ By hand — online source (use a server or site you are allowed to read from; Ko
 at `https://demo.komga.org`, user `demo@komga.org`, password `komga-demo`, has public-domain
 comics):
 
-1. Manga shows Home, Discover, Search, Library, Downloads and a cogwheel, and no "in development"
-   card. With nothing installed, Home offers "Add Source" and "Add files".
-2. Plugins › Manga › Browse: Tiyo is listed with its versions; Install 1.0.3; read the review;
-   confirm. Installed shows it as Running and Verified; Sources lists 44 sources, "Not tested".
-3. Sources › Komga › settings: enter the server and login; Test: the five steps pass.
-4. Manga › Search: type a title; results are grouped by source, failures are named per source.
+1. Manga shows Home, Discover, Search, Library, Downloads and a cogwheel. The first time it shows
+   "Starting…" for a few seconds. With nothing set up, Home offers "Add extensions" and "Add files".
+2. Plugins › Manga › Stores: paste the address of an extension store you trust; read the notice;
+   Add. Extensions lists what it offers; filter by language; Install the Komga extension.
+3. Sources › Komga › Configure: the panel opens in the tab; enter the address and sign-in; Test:
+   the five steps pass.
+4. Manga › Search: type a title; results come in source by source, failures are named per source.
 5. Open a series: cover, details, chapters. Start Reading: pages appear.
 6. Turn pages with the arrow keys; press `M` for the modes, `S` for the settings, `F` for full
    screen; Esc leaves the reader.
 7. Quit with Cmd+Q, reopen: Home › Continue Reading has the series; it opens on the same page.
-8. Download a chapter (chapter menu), watch Downloads, open it from there with the network off.
+   Activity Monitor shows no `java` process of DebridOne after quitting.
+8. Download a chapter (chapter menu), watch Downloads, open it from there with the network off;
+   a chapter that was not saved says it cannot be opened.
+9. Settings › Trackers: sign in to a tracker; on a series, Track Series: find the entry, link it,
+   change its status, unlink.
+10. Settings › Server: change a setting, Save; restart DebridOne: it is still set.
+11. Switch to another profile: Manga is empty there (its own server); switch back: the library is
+    as it was.
 
 By hand — local files:
 
@@ -256,3 +277,61 @@ library, download for offline, play from Downloads), Streaming › Library › C
 For development, `DEBRIDONE_REAL_DEBRID_API=http://127.0.0.1:<port>` and
 `DEBRIDONE_TORBOX_API=http://127.0.0.1:<port>` point the app at local test servers (loopback
 addresses only; the cards show a red notice). See `CLOUD.md`.
+
+## Manga on Suwayomi-Server and settings inside each section
+
+### The acceptance list, and how each point was checked
+
+"App" means the running app (from source, on Linux, virtual display), driven by hand; "tests"
+means the automated tests on the real, pinned Suwayomi-Server. Nothing on this list was tried on a
+Mac by a person; what CI checked on macOS is in `LIMITATIONS.md`.
+
+Suwayomi
+
+| Point | Checked |
+|---|---|
+| Start DebridOne, open Manga | App: "Starting…" for a few seconds, then Manga's pages |
+| Connect to the managed Suwayomi server | App and tests: started by DebridOne, on this computer only, answering only with DebridOne's password |
+| View installed extensions | App: Plugins › Manga › Extensions and Manga's settings |
+| Add a compatible extension store | App: a store's index address added (with the one-time notice); about 1,700 extensions listed. Also in the opt-in live test |
+| Install a compatible source extension | App and the opt-in live test: the Komga extension |
+| Search for a manga | App and live test: a title found on Komga's public demo server |
+| Open series details | App: cover, synopsis, tags, five chapters |
+| Load a chapter, render its pages | App: 53 pages in the native reader |
+| Save reading progress | App and tests |
+| Restart the app and resume | App: quit, no server process left, reopened on the same page |
+
+Inline configuration
+
+| Point | Checked |
+|---|---|
+| Open Streaming settings without redirecting | App: a panel over the tab that was showing; the navigation bar stays |
+| Close settings and retain Streaming position | App: Escape and the Close button return to the Library tab as it was |
+| Open Music settings without redirecting | App: wide window (side panel) and narrow window (overlay inside Music) |
+| Close settings without stopping audio | App: the position went on advancing while the panel was open and after it closed |
+| Open Manga settings without redirecting | App |
+| Configure a manga extension inside Plugins › Manga | App: Sources › Komga › Configure opens a panel in the tab, with the fields the extension defines |
+| Close its configuration and return to the same plugin list | App: Escape returns to the same list, where it was |
+| All three modules have separate settings | App; the architecture tests check that no section's code navigates to the Plugins or Settings section |
+
+Profiles
+
+| Point | Checked |
+|---|---|
+| Create two profiles | App: two profiles of one account |
+| Give each a different Manga library | App: five series in one, one series in the other. Tests: two profiles, two server folders |
+| Read different chapters in each profile | App |
+| Restart the app | App |
+| Both libraries and progress histories remain isolated | App: each profile shows its own library and its own "Continue Reading" after the restart; only the active profile's server runs |
+
+Existing functionality
+
+| Point | Checked |
+|---|---|
+| Streaming still plays supported media | App: a video opened from Continue Watching; the time advanced. The picture itself is not visible on the virtual display, so nobody saw it |
+| Music playback remains functional | App: local songs played (silent output: nobody heard it); the Music tests pass |
+| Existing streaming plugins work | App: an addon installed from a local stand-in, listed with its catalogue, reconfigured from the new panel. No real addon was used |
+| Existing music plugins work | App: the installed plugin and addon are listed with their state; the addon's settings open in the panel. The Music tests (which include plugins and addons) pass. No real plugin server was running |
+| Games remain removed | App: no Games section; architecture tests |
+| Debrid account connections remain intact | App: both stand-in accounts shown as connected in the Connected Accounts panel |
+| Other settings remain persistent | App: each profile's appearance and reading position after restarts; tests: the server's settings after a restart |

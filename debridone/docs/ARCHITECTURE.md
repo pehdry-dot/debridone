@@ -9,20 +9,42 @@ Games is dormant: its module stays in the repository, is not linked into the app
 | Streaming | Nuvio Desktop itself (`:composeApp`) | Working: Nuvio's features, running on on-device accounts |
 | Music | Original code (`:debridone:modules:music`), audio through libmpv | Working: library, player, playlists, sources, metadata. See [MUSIC.md](MUSIC.md) |
 | Games | Dormant. `:debridone:modules:gaming` is kept but not part of the application | Not in the app |
-| Manga | Original reader, library and metadata code (`:debridone:modules:manga`); sources are Houdoku's unmodified Tiyo extensions, run in a separate Node.js helper process | Working: sources, search, reader, library, local files, downloads, metadata. See [MANGA.md](MANGA.md) and [MANGA_PLUGINS.md](MANGA_PLUGINS.md) |
+| Manga | DebridOne's own screens and reader (`:debridone:modules:manga`); the backend is the unmodified Suwayomi-Server, one separate process per profile, reached through its GraphQL API; sources are the Mihon/Tachiyomi extensions the user installs in it | Working: extensions and stores, sources, search, reader, library, local files, downloads, trackers, metadata, migration from the earlier engine. See [MANGA.md](MANGA.md) and [MANGA_PLUGINS.md](MANGA_PLUGINS.md) |
 
-### Manga's extension host
+### Manga's server
 
 ```
-Manga screens → Manga services (Kotlin) → ExtensionHost → Node.js helper → aki-plugin-manager → @tiyo/core
+Manga screens and reader → Manga engine (Kotlin) → typed GraphQL client → Suwayomi-Server (own process) → extensions
 ```
 
-Third-party extension code never runs inside the app. `ExtensionHost` starts one helper process
-(`debridone/modules/manga/host/`, on the Node.js bundled with the app), talks to it in JSON lines
-over its standard input and output (no network port), limits every call in time, and restarts the
-helper if it dies. The helper runs under Node's permission model: it may read its own folder and
-the plugin folder, write one scratch folder, and nothing else. Reading local files, the library,
-the reader, downloads and metadata are Kotlin and work without the helper.
+Manga's backend is Suwayomi-Server, the unmodified release jar, with a Java 21 runtime; both are
+inside the application. `SuwayomiServerManager` starts one server per profile, in that profile's
+own data folder, bound to `127.0.0.1` on a free port, with the web interface, tray icon and
+embedded browser off and a password made anew at every start. `SuwayomiApi` is the typed client:
+one function per GraphQL operation DebridOne uses, each document validated against the pinned
+server in the tests. `MangaServer` is the one connection (the managed server, or a server the
+person runs themselves), `MangaRepository` and the classes around it give the screens the library,
+chapters, pages, downloads, sources, extensions, trackers and server settings. Suwayomi is the
+system of record; what it has no field for (reading status, favourite, hand edits, bookmarks with
+notes) is kept in Suwayomi's own per-series "meta", so it stays with the profile's data and
+travels in its backups. Extension code runs in the server's process, never in DebridOne's.
+
+### Settings and configuration panels
+
+A section's settings open inside the section, over the page that is showing, and a "Configure"
+opens in the tab it was clicked in. Three shared pieces do this:
+
+- `core/ui/SideDrawer`: a panel drawn over its area rather than instead of it (a side drawer on a
+  wide window, an overlay filling the section on a narrow one), with Close, Escape and a click
+  outside. The page underneath keeps its scroll position, text, selection and playback.
+- `shell/ModuleSettingsPanel`: the categories of a section's settings (Music, Manga); Streaming
+  hosts Nuvio's own settings pages in the same drawer (`StreamingSettingsOverlay`).
+- `core/ui/PluginConfigurationPanel`: one panel for configuring an addon, plugin, extension source,
+  tracker or server, filled per module.
+
+Only the shell navigates to the application's own Settings section; a link from a section to one
+of its pages (Connected Accounts, Download settings) shows that page as a panel over the section.
+The architecture tests check that section code does not navigate to Plugins or Settings.
 
 ## Layout
 
@@ -92,9 +114,9 @@ macOS locations (`AppPaths`):
   modules/streaming/             Nuvio's own stores (.properties files)
   modules/music/music.db
   modules/gaming/gaming.db
-  modules/manga/manga.db
-  modules/manga/plugins/         extension packages the user installed (Houdoku's layout)
-  modules/manga/downloads/       chapters saved for offline reading
+  modules/manga/manga.db         Manga's settings; the earlier library, kept for migration
+  modules/manga/suwayomi/profile-<id>/   one profile's Suwayomi-Server data: library, downloads,
+                                 extensions, stores, tracker sign-ins, links to the person's own files
   backups/<database>/            rolling snapshots; backups/<database>/corrupt/ keeps damaged files
 ~/Library/Caches/DebridOne/<module>/
 ```
