@@ -668,4 +668,78 @@ class MangaEngineTest {
             theirs.close()
         }
     }
+
+    @Test
+    fun aStoreIsAddedByTheAddressOfItsIndexJson(): Unit = runBlocking {
+        // A store as Tachiyomi/Mihon repositories publish it, served from this computer: the list
+        // twice (readable as index.json, compact as index.min.json) and repo.json about the store.
+        val entry = """{"name":"Tachiyomi: Stand-in","pkg":"eu.kanade.tachiyomi.extension.en.standin","apk":"tachiyomi-en.standin-v1.4.1.apk","lang":"en","code":1,"version":"1.4.1","nsfw":0,""" +
+            """"sources":[{"name":"Stand-in","lang":"en","id":"1234567890123456789","baseUrl":"https://stand-in.invalid"}]}"""
+        val seen = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val shop = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        shop.createContext("/") { exchange ->
+            val path = exchange.requestURI.path
+            seen += path
+            val body = when (path) {
+                "/full/index.json" -> "[\n  $entry\n]\n"
+                "/full/index.min.json" -> "[$entry]"
+                "/full/repo.json" -> """{"meta":{"name":"Stand-in Store","shortName":"standin","website":"http://127.0.0.1","signingKeyFingerprint":"${"0".repeat(64)}"}}"""
+                // A folder where somebody put nothing but the readable list.
+                "/bare/index.json" -> "[\n  $entry\n]\n"
+                else -> null
+            }
+            if (body == null) exchange.reply(404, "not here".toByteArray(), "text/plain") else exchange.reply(200, body.toByteArray(), "application/json")
+        }
+        shop.start()
+        val base = "http://127.0.0.1:${shop.address.port}"
+        try {
+            assertTrue(services.extensions.stores().isEmpty())
+
+            // The address people have: the readable list. The server itself refuses it for its name…
+            val refused = assertFailsWith<com.debridone.manga.suwayomi.SuwayomiException> { services.server.api().addStore("$base/full/index.json") }
+            assertTrue(refused.message!!.contains("legacy store url is not valid"), refused.message)
+            assertTrue(services.extensions.stores().isEmpty())
+            seen.clear()
+
+            // …and DebridOne adds the store through the compact list beside it.
+            val added = services.extensions.addStoreFrom("  $base/full/index.json ")
+            assertEquals("Stand-in Store", added.store.name)
+            assertEquals("$base/full/index.min.json", added.readFrom)
+            assertEquals("index.min.json", added.otherFile)
+            assertEquals(listOf("/full/index.json", "/full/index.min.json", "/full/repo.json"), seen.distinct().take(3), "tried as typed first, then the neighbours the server takes")
+            val stores = services.extensions.stores()
+            assertEquals(listOf("Stand-in Store"), stores.map { it.name })
+            val offered = services.extensions.list().filter { it.storeIndexUrl == stores.single().indexUrl }
+            assertEquals(listOf("eu.kanade.tachiyomi.extension.en.standin"), offered.map { it.pkgName })
+            assertFalse(offered.single().installed)
+
+            // Adding it again by any of its addresses does not make a second store.
+            services.extensions.addStoreFrom("$base/full/index.min.json").let { assertNull(it.otherFile); assertFalse(it.changed) }
+            services.extensions.addStoreFrom("$base/full/index.json")
+            assertEquals(1, services.extensions.stores().size)
+            services.extensions.removeStore(stores.single().indexUrl)
+            assertTrue(services.extensions.stores().isEmpty())
+
+            // repo.json typed directly is taken as typed.
+            val byRepo = services.extensions.addStoreFrom("$base/full/repo.json")
+            assertEquals("Stand-in Store", byRepo.store.name)
+            assertFalse(byRepo.changed)
+            services.extensions.removeStore(byRepo.store.indexUrl)
+
+            // A folder with nothing but index.json cannot be a store for the server: said in a sentence, nothing added.
+            val bare = assertFailsWith<com.debridone.manga.suwayomi.SuwayomiException> { services.extensions.addStoreFrom("$base/bare/index.json") }
+            assertTrue(bare.message!!.contains("index.min.json and repo.json"), bare.message)
+            assertFalse(bare.message!!.contains("\tat "), bare.message)
+            assertTrue(services.extensions.stores().isEmpty())
+
+            // An address that is no store at all is refused with the server's own reason, tried once.
+            seen.clear()
+            assertFailsWith<com.debridone.manga.suwayomi.SuwayomiException> { services.extensions.addStoreFrom("$base/nothing/index.min.json") }
+            assertEquals(listOf("/nothing/index.min.json"), seen.distinct())
+            assertFailsWith<IllegalArgumentException> { services.extensions.addStoreFrom("index.json") }
+        } finally {
+            runCatching { services.extensions.stores().forEach { services.extensions.removeStore(it.indexUrl) } }
+            shop.stop(0)
+        }
+    }
 }

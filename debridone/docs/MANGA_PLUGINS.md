@@ -30,6 +30,15 @@ understands are accepted:
 - the older `index.min.json` repositories, which Suwayomi upgrades itself when the store offers
   the new format.
 
+**An address ending in `index.json` works too.** Such repositories publish their list twice:
+compact as `index.min.json` and readable as `index.json`. Suwayomi takes the list only from the
+first name and refuses the second ("Provided legacy store url is not valid"), so DebridOne tries
+the address as you typed it and, when the server refuses it, `index.min.json` and then `repo.json`
+in the same folder; the message says which file the store was read from. A folder that has
+nothing but `index.json` cannot be used: Suwayomi needs `repo.json` beside the list, for the
+store's name and signing key. A link copied from GitHub's page about a file
+(`github.com/…/blob/…`) is turned into the file's own address.
+
 What Suwayomi refuses is shown with Suwayomi's own reason. Removing a store removes its offers;
 extensions already installed stay installed and are marked as no longer offered.
 
@@ -74,6 +83,10 @@ With the real, pinned Suwayomi-Server (v2.4.2366) and its bundled Java:
   restart of the server, and removed again. The same was done by hand in the running app, where a
   chapter was also saved by the server and read with no network connection.
 - A store with about 1,700 extensions was listed and filtered in the app.
+- Adding a store by an `index.json` address, against a stand-in store served from the same
+  computer to the real server (in the test suite and by hand in the app): refused by the server
+  itself, added by DebridOne through the files beside it, and refused with a sentence when those
+  are not there.
 
 Not tried:
 

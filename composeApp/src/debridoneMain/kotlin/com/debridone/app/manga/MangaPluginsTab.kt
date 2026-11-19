@@ -378,13 +378,14 @@ internal fun StoresTab() {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Extension stores", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
                 Text(
-                    "A store is a list of extensions published at a web address. The manga server reads the store formats Suwayomi supports: the current one, and older \"index.min.json\" repositories. " +
+                    "A store is a list of extensions published at a web address. The manga server reads the store formats Suwayomi supports: the current one, and older \"index.min.json\" repositories " +
+                        "(an address ending in index.json works too: the server is given the index.min.json beside it). " +
                         "DebridOne includes no store: you add the address of one you trust, for this profile.",
                     style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
                 )
                 Notice(EXTENSION_NOTICE, PillTone.WARNING)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MangaTextField(address, { address = it }, "Address of the store's index", Modifier.weight(1f), onSubmit = ::add, hint = "It starts with https:// and usually ends in repo.json, index.pb or index.min.json.")
+                    MangaTextField(address, { address = it }, "Address of the store's index", Modifier.weight(1f), onSubmit = ::add, hint = "It starts with https:// and usually ends in repo.json, index.pb, index.min.json or index.json.")
                     MangaButton("Add store", ::add, icon = Icons.Rounded.Add, enabled = address.isNotBlank() && MangaPluginsState.progress == null)
                 }
                 PluginsMessages()
@@ -420,10 +421,16 @@ internal fun StoresTab() {
 
 private fun addStore(manga: MangaContext, address: String, onAdded: () -> Unit) {
     pluginWork("Adding the store and reading its list…") {
-        val store = manga.services.extensions.addStore(address)
+        val added = manga.services.extensions.addStoreFrom(address)
+        val store = added.store
         val offered = runCatching { manga.services.extensions.list().count { it.storeIndexUrl == store.indexUrl } }.getOrDefault(0)
         withContext(Dispatchers.Main) { onAdded() }
-        "${store.name.ifBlank { "The store" }} was added" + if (offered > 0) ": ${plural(offered, "extension")} to choose from in Extensions." else "."
+        val readFrom = when {
+            added.otherFile != null -> " It was read from ${added.otherFile} in the same folder: the manga server does not take a store's index.json itself."
+            added.changed -> " It was read from the file's own address rather than the page about it."
+            else -> ""
+        }
+        "${store.name.ifBlank { "The store" }} was added" + (if (offered > 0) ": ${plural(offered, "extension")} to choose from in Extensions." else ".") + readFrom
     }
 }
 

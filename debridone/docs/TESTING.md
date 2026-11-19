@@ -108,6 +108,9 @@ Suwayomi-Server through DebridOne's own server manager and work through it:
 - sample comics are read through its Local source: pages, progress, library, categories,
   bookmarks, a restart, two profiles with separate libraries and server folders;
 - starting, stopping, a second DebridOne on the same data and a server whose DebridOne died;
+- an extension store added by the address of its `index.json` (a stand-in store on this
+  computer): the server's own refusal, the store added through `index.min.json` beside it, and
+  the sentence when a folder has nothing but `index.json`;
 - trackers: the server's list, and a browser sign-in coming back through DebridOne's listener and
   being refused when it carries no sign-in (no tracker is contacted);
 - the server's own settings changed through it and still there after a restart;
@@ -138,8 +141,9 @@ comics):
 
 1. Manga shows Home, Discover, Search, Library, Downloads and a cogwheel. The first time it shows
    "Starting…" for a few seconds. With nothing set up, Home offers "Add extensions" and "Add files".
-2. Plugins › Manga › Stores: paste the address of an extension store you trust; read the notice;
-   Add. Extensions lists what it offers; filter by language; Install the Komga extension.
+2. Plugins › Manga › Stores: paste the address of an extension store you trust (ending in
+   `repo.json`, `index.pb`, `index.min.json` or `index.json`); read the notice; Add. Extensions
+   lists what it offers; filter by language; Install the Komga extension.
 3. Sources › Komga › Configure: the panel opens in the tab; enter the address and sign-in; Test:
    the five steps pass.
 4. Manga › Search: type a title; results come in source by source, failures are named per source.
