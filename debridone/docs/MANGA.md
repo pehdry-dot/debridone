@@ -132,7 +132,50 @@ bookmarks); it never holds the server's own settings, and restoring never change
 server also backs the library up to its own folder on its own.
 
 **Settings**, behind the cogwheel, open in a panel inside Manga: Appearance, Reading, Library,
-Extensions, Extension stores, Sources, Trackers, Metadata, Server.
+Installed, Available, Sources, Import, Trackers, Metadata, Server. Extensions — Mihon/Tachiyomi
+ones and Mangayomi JavaScript sources — are added under Import from the address of an index; see
+[MANGA_PLUGINS.md](MANGA_PLUGINS.md).
+
+## When a page comes out black, or does not come
+
+A page is checked before it is shown, and a page that cannot be shown says why; it is never
+replaced by a picture of something else.
+
+- **What arrives is checked.** JPEG, PNG, GIF, WebP, BMP, AVIF, HEIF and JPEG XL are recognised by
+  their bytes, not by the name or the type the site claims, and checked to the end (a JPEG must
+  reach its end marker, a PNG its last chunk, a WebP or AVIF its declared size). A web page, a
+  browser check, an SVG, JSON or text where a picture was expected is named as such.
+- **A cut-off or wrong copy kept by the server is replaced.** The server keeps the pages it fetched
+  in a cache and served a cut-off copy for ever. When the copy is damaged, DebridOne removes that
+  copy (only that file, matched byte for byte) and asks once more; a page that is still wrong
+  says so, with **Try again**. The top bar's **Load this chapter's pages again** clears the
+  chapter's cached pages and fetches them anew. A damaged page of a *downloaded* chapter offers
+  **Download again**.
+- **Decoding is complete.** A picture is decoded in full before it is drawn (a partly decoded WebP
+  used to draw as nothing, i.e. black), very tall pages (webtoon strips of tens of thousands of
+  pixels) are cut into pieces the graphics card can hold, a transparent page is drawn on white,
+  and AVIF/HEIF/JPEG XL, which the app's own decoder does not read, are decoded by macOS.
+- **A blank page is told apart from a broken one**: a page that decodes and really is all one
+  colour is shown as it is.
+
+## When a source cannot be reached
+
+A failure says what kind it is — name not found (DNS), no network route, timed out, site
+unavailable, secure connection failed, HTTP error with its code, sign-in needed, browser check,
+needs its settings, extension error — with a sentence on what to do; the technical report opens on
+request, without passwords, tokens or query strings. Passing failures (timeouts, a site down for a
+moment, HTTP 5xx and 429) are retried with a growing pause; searches can be cancelled.
+
+**Diagnose connection** (in Sources, Installed › Diagnosis, Search, Discover and the series page)
+tries, from this computer and from the manga server's own Java program: the site's name with your
+DNS and with a public one, a connection to each address, the secure handshake and one request. It
+then names the layer that fails: a DNS that does not know the site, hides it or points it at a
+local or unusable address; no route to the address (firewall, VPN, network or provider block);
+the server's program alone not being allowed to connect (a firewall rule for Java); a browser
+check; or a site that answers, in which case the extension is the problem. DebridOne does not
+route around a block: it does not switch DNS servers or use a proxy for you. If the diagnosis
+shows your DNS is the cause, change it in System Settings › Network › your connection › Details
+› DNS.
 
 ## If you used the earlier version
 

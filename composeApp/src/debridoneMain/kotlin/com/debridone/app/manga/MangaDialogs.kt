@@ -119,7 +119,9 @@ internal object MangaPickers {
 
     fun chooseImage(): Path? = chooseFiles("Choose a cover", "Images", arrayOf("jpg", "jpeg", "png", "webp"), multiple = false).firstOrNull()
 
-    fun choosePackage(): Path? = chooseFiles("Choose an extension package", "Mihon/Tachiyomi extension packages (.apk)", arrayOf("apk"), multiple = false).firstOrNull()
+    fun choosePackage(): Path? = chooseFiles("Choose an extension package", "Mihon/Tachiyomi extension packages (.apk, .jar)", arrayOf("apk", "jar"), multiple = false).firstOrNull()
+
+    fun chooseIndexFile(): Path? = chooseFiles("Choose an index of extensions", "Extension indexes (.json)", arrayOf("json"), multiple = false).firstOrNull()
 
     fun chooseBackup(): Path? = chooseFiles("Choose a Manga library backup", "Suwayomi and Mihon backups (.tachibk, .proto.gz)", arrayOf("tachibk", "gz"), multiple = false).firstOrNull()
 

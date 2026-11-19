@@ -33,6 +33,9 @@ enum class FailureKind(val label: String, val temporary: Boolean) {
     /** The site put up a browser check (Cloudflare and the like). */
     BROWSER_CHECK("Browser check", false),
 
+    /** The source needs something filled in by the person first (an address, an API key, a sign-in). */
+    NEEDS_SETTINGS("Needs its settings", false),
+
     /** The extension's own code failed: the site answered, but not the way the extension expects. */
     EXTENSION("Extension error", false),
 
@@ -107,6 +110,8 @@ data class SourceFailure(
                     make(FailureKind.TLS, "The secure connection to $site failed. Its certificate is not trusted on this computer, or something in between (an antivirus, a company proxy) intercepts secure connections.")
                 lower.contains("cloudflare") || lower.contains("cf_clearance") || lower.contains("cf-mitigated") || lower.contains("webview") || lower.contains("captcha") || lower.contains("ddos-guard") || lower.contains("bypass") ->
                     make(FailureKind.BROWSER_CHECK, "$site asks for a browser check (Cloudflare or similar) before it answers. The manga server has no browser to pass it with; a FlareSolverr of your own, named in Manga settings › Server, can do it.")
+                NEEDS_SETTINGS.containsMatchIn(short) ->
+                    make(FailureKind.NEEDS_SETTINGS, "$sourceName needs its settings filled in before it can be used: \"${short.trim().take(160)}\". Open Configure, fill in what it asks for, then test again.")
                 has(lower, exception, "connectexception", "connection refused", "failed to connect") ->
                     make(FailureKind.UNAVAILABLE, "$site refused the connection: the site is down or does not accept connections on that address right now.")
                 status != null && status >= 500 ->
@@ -131,6 +136,13 @@ data class SourceFailure(
                     make(FailureKind.EXTENSION, "$site answered, but $sourceName's extension could not read what came back" + (short.takeIf { it.isNotBlank() }?.let { ": ${it.take(200)}" } ?: ".") + " The site probably changed; an update of the extension may fix it.")
             }
         }
+
+        /** What extensions say when the person has not filled in their settings yet ("Set Address in Settings", "Please configure the API key"…). */
+        private val NEEDS_SETTINGS = Regex(
+            "\\b(set|enter|fill in|add|provide|configure)\\b[^.\\n]{0,60}\\b(in|from|under) (the )?(source |extension )?(settings|preferences|configuration)\\b" +
+                "|\\b(not configured|please configure|configure the source|missing (server )?(address|url|api key|credentials))\\b",
+            RegexOption.IGNORE_CASE,
+        )
 
         private fun has(lower: String, exception: String?, vararg needles: String): Boolean =
             needles.any { lower.contains(it) || exception?.lowercase()?.contains(it) == true }

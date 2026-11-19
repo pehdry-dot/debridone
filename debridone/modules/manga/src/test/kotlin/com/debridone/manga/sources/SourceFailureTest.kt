@@ -48,6 +48,9 @@ class SourceFailureTest {
         assertEquals(FailureKind.HTTP, kind("http403"))
         assertEquals(FailureKind.HTTP, kind("http429"))
         assertEquals(FailureKind.BROWSER_CHECK, kind("cloudflare"))
+        // A second Komga source whose address was never filled in, as the real server reported it.
+        assertEquals(FailureKind.NEEDS_SETTINGS, kind("needs_settings"))
+        assertTrue(SourceFailure.of("Komga (3)", reported("needs_settings")).explanation.contains("Configure"))
     }
 
     @Test

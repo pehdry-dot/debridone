@@ -77,7 +77,7 @@ internal object SearchState {
  * Opens where extension stores, extensions, sources and the like are managed: Manga's own settings
  * panel, on the matching page. The reader stays in Manga, on the page they were on.
  */
-internal fun openMangaPlugins(tab: MangaPluginsTab = MangaPluginsTab.EXTENSIONS) {
+internal fun openMangaPlugins(tab: MangaPluginsTab = MangaPluginsTab.INSTALLED) {
     MangaPluginsState.tab = tab
     MangaNav.openSettings(MangaSettingsSections.of(tab))
 }

@@ -52,6 +52,19 @@ Nuvio Media.
   Suwayomi-Server, from an extension store whose address they add. Each extension keeps its own
   licence; what it fetches is between the user, the extension and its site.
 
+## Mangayomi
+
+- Source: https://github.com/kodjodevf/mangayomi
+- Licence: Apache License 2.0; Copyright the Mangayomi contributors
+- Use in DebridOne: the API a Mangayomi JavaScript source expects (`MProvider`, `Client`,
+  `Document`/`Element`, `SharedPreferences`, filter and preference shapes, helper names) is
+  reproduced in Manga's bridge (`debridone/modules/manga-bridge/src/main/resources/debridone-mangayomi/runtime.js`),
+  following the shape of Mangayomi's own `lib/eval/javascript`; the class-selector and attribute
+  semantics of its selector library (`pseudom`, by the same author) are reproduced in Kotlin. No
+  Mangayomi code is run, and no source or index is shipped: sources are fetched from the indexes
+  the person imports. The bridge runs the sources in GraalJS and parses pages with jsoup, both of
+  which are part of Suwayomi-Server and are not bundled again.
+
 ## Houdoku and Tiyo
 
 - Source: https://github.com/xgi/houdoku and https://github.com/xgi/tiyo (MIT, xgi and contributors)
@@ -115,6 +128,7 @@ DebridOne's:
 | Service | Used for | Terms |
 |---|---|---|
 | The extension stores you add | Listing and downloading the extensions they offer, by your Suwayomi-Server | Each store's own terms |
+| The Mangayomi indexes you import | Reading the index and each source's code, by DebridOne; the sources then reach their sites through your Suwayomi-Server | Each index's and site's own terms |
 | AniList (`graphql.anilist.co`) | The trending rows on Manga's Home and looking up details you ask for | AniList API terms |
 | MangaDex (`api.mangadex.org`) | Looking up details you ask for | MangaDex API terms; covers are hot-linked as its API intends |
 | MyAnimeList (`api.myanimelist.net`) | Looking up details, only with your own API client ID | MyAnimeList API licence |

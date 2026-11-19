@@ -238,9 +238,24 @@ Manga
   rights and without a sandbox. They never run inside DebridOne, and the server can be reached by
   DebridOne only, but an extension can do what any program you start can do. Earlier versions of
   Manga ran their (different) extensions with file access switched off; this is a real change.
-- Only the Komga extension and the Local source were proven to work. Sources behind a browser
-  check (Cloudflare and the like) fail with Suwayomi's message: its embedded browser is off (and
-  does not exist on macOS). A FlareSolverr of your own can be named in the server's settings.
+- Proven to work here: the Komga extension, the Local source, and the Mangayomi JavaScript
+  sources Mangapill, Weeb Central and MangaDex (unlocked) through the bridge (on their real sites,
+  19 Nov 2026). Any other source is as good as its last test on your computer says. Sources behind
+  a browser check (Cloudflare and the like; ReadComicOnline was one) fail and say so: Suwayomi's
+  embedded browser is off (and does not exist on macOS). A FlareSolverr of your own can be named
+  in the server's settings.
+- Mangayomi **Dart** sources cannot run (most entries of large Mangayomi indexes): they need
+  Mangayomi's own Dart interpreter. They are listed with that reason and not installed. Mangayomi
+  JavaScript sources run through DebridOne's bridge, without Mangayomi's in-app web view; a source
+  that relies on it fails at that point. Anime and novel sources are not supported.
+- "No route to host" and similar failures were classified on real reports of the server and the
+  diagnosis was tried here, but this test machine cannot produce a real "no route"; whether the
+  diagnosis names the right layer on your network is for your Mac to show. DebridOne never works
+  around a block by changing DNS or using a proxy.
+- Black pages: the causes found here were cut-off copies in the server's page cache, partial
+  decoding, transparency drawn on a dark background and AVIF pages; all are fixed and were tried
+  with real and damaged pages here. A page that is wrong at the site itself is reported, not
+  repaired. AVIF/HEIF/JPEG XL decoding by macOS is checked in CI on a Mac, not on a personal one.
 - Each profile has its own server folder, so an extension store, an extension or a tracker
   sign-in set up in one profile is not there in another.
 - Other devices cannot use the server DebridOne starts. A server of your own is supported with

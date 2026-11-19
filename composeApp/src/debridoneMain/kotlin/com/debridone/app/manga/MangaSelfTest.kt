@@ -14,9 +14,11 @@ import com.debridone.module.storage.ModuleStorage
 import com.debridone.platform.AppPaths
 import com.debridone.platform.secrets.FileSecretStore
 import kotlinx.coroutines.runBlocking
+import com.sun.net.httpserver.HttpServer
 import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -33,9 +35,12 @@ import kotlin.system.exitProcess
  *  2. starts the server for a profile and checks that only DebridOne can talk to it;
  *  3. reads a comic archive through the server's Local source, closes DebridOne, starts it again
  *     and resumes where it stopped;
- *  4. checks that no server process is left behind.
+ *  4. imports a Mangayomi index served from this computer, installs its JavaScript source through
+ *     DebridOne's bridge, and reads a page through it (the bridge runs inside the server, on the
+ *     server's JavaScript engine: this proves it does on each Mac);
+ *  5. checks that no server process is left behind.
  *
- * It needs no network and adds no extension store: DebridOne ships none. (Installing a real
+ * It needs no network and adds no extension store or index: DebridOne ships none. (Installing a real
  * extension from a store and reading through it is covered by the opt-in live test of the Manga
  * module, which names a store on the command line.) The build runs this inside the packaged macOS
  * app, so the DMG is known to carry a server and a Java runtime that start.
@@ -163,7 +168,10 @@ object MangaSelfTest {
                 check(manga.pages.page(reopened, 8).contentEquals(pages[8]), "the last page reads after the restart")
             }
 
-            println("\n4. Nothing left behind")
+            println("\n4. A Mangayomi JavaScript source, through the bridge")
+            mangayomi(manga)
+
+            println("\n5. Nothing left behind")
             val second = manga.server.manager.runningProcess
             module.close()
             check(second != null && ProcessHandle.of(second).map { !it.isAlive }.orElse(true), "no server process remains")
@@ -172,6 +180,88 @@ object MangaSelfTest {
         } finally {
             runCatching { current?.close() }
             runCatching { workspace.toFile().deleteRecursively() }
+        }
+    }
+
+    /** A stand-in Mangayomi index and site on this computer, imported and read the way the Import tab does it. */
+    private fun mangayomi(manga: MangaServices) {
+        val png = pageImage("bridge")
+        val site = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val base = "http://127.0.0.1:${site.address.port}"
+        val code = """
+            class DefaultExtension extends MProvider {
+              getHeaders(url) { return { Referer: this.source.baseUrl + "/" }; }
+              async getPopular(page) {
+                const doc = new Document((await new Client().get(this.source.baseUrl + "/list", this.getHeaders())).body);
+                return { list: doc.select("div.item a").map((a) => ({ name: a.text.trim(), link: a.getHref, imageUrl: "" })), hasNextPage: false };
+              }
+              async getLatestUpdates(page) { return await this.getPopular(page); }
+              async search(query, page, filters) { return await this.getPopular(page); }
+              async getDetail(url) {
+                const doc = new Document((await new Client().get(this.source.baseUrl + url, this.getHeaders())).body);
+                return { name: doc.selectFirst("h1").text, description: "", status: 1, genre: [], chapters: doc.select("li a").map((a) => ({ name: a.text, url: a.getHref, dateUpload: "1700000000000" })) };
+              }
+              async getPageList(url) {
+                const doc = new Document((await new Client().get(this.source.baseUrl + url, this.getHeaders())).body);
+                return doc.select("img.page").map((img) => img.getSrc);
+              }
+              getFilterList() { return []; }
+              getSourcePreferences() { return []; }
+            }
+        """.trimIndent()
+        val index = """[{"name":"Self Test Comics","id":777001,"baseUrl":"$base","lang":"en","typeSource":"single","iconUrl":"","isNsfw":false,"hasCloudflare":false,
+            "sourceCodeUrl":"$base/src/selftest.js","version":"1.0.0","itemType":0,"sourceCodeLanguage":1},
+            {"name":"Self Test Dart","id":777002,"baseUrl":"$base","lang":"en","typeSource":"madara","iconUrl":"","isNsfw":false,"hasCloudflare":false,
+            "sourceCodeUrl":"$base/src/selftest.dart","version":"1.0.0","itemType":0,"sourceCodeLanguage":0}]"""
+        site.createContext("/") { exchange ->
+            val path = exchange.requestURI.path
+            val (status, type, body) = when (path) {
+                "/index.json" -> Triple(200, "application/json", index.toByteArray())
+                "/src/selftest.js" -> Triple(200, "text/javascript", code.toByteArray())
+                "/list" -> Triple(200, "text/html", """<div class="item"><a href="/series/1">Bridge Saga</a></div>""".toByteArray())
+                "/series/1" -> Triple(200, "text/html", """<h1>Bridge Saga</h1><ul><li><a href="/chapter/1">Chapter 1</a></li></ul>""".toByteArray())
+                "/chapter/1" -> Triple(200, "text/html", """<img class="page" src="$base/img/1.png"><img class="page" src="$base/img/2.png">""".toByteArray())
+                "/img/1.png", "/img/2.png" ->
+                    if (exchange.requestHeaders.getFirst("Referer") == "$base/") Triple(200, "image/png", png) else Triple(403, "text/plain", "no".toByteArray())
+                else -> Triple(404, "text/plain", "not here".toByteArray())
+            }
+            exchange.responseHeaders.add("Content-Type", type)
+            exchange.sendResponseHeaders(status, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        site.start()
+        try {
+            val preview = runCatching { manga.imports.inspect("$base/index.json") }
+            check(preview.isSuccess, "the index is read and recognised" + (preview.exceptionOrNull()?.let { " (${it.message})" } ?: ""))
+            val items = preview.getOrNull()?.items.orEmpty().associateBy { it.name }
+            check(items["Self Test Comics"]?.installable == true, "its JavaScript source can run here")
+            check(items["Self Test Dart"]?.installable == false, "its Dart source is refused, with its reason")
+            val report = runCatching { manga.imports.install(preview.getOrThrow(), items.values.map { it.key }) }
+            check(report.getOrNull()?.installed == listOf("Self Test Comics"), "the JavaScript source is installed by the server: ${report.getOrNull() ?: report.exceptionOrNull()?.message}")
+            val source = manga.sources.list(PROFILE, refresh = true).firstOrNull { it.name == "Self Test Comics" }
+            check(source != null, "the server lists it as a source")
+            if (source == null) {
+                manga.server.manager.log().takeLast(20).forEach { println("      | $it") }
+                return
+            }
+            val health = manga.sources.test(source.id)
+            check(health.ok, "its test passes: " + health.steps.joinToString { it.name + (if (it.ok) " ok" else " FAILED: ${it.detail}") })
+            val listed = runCatching { manga.sources.browse(source.id, com.debridone.manga.sources.BrowseMode.POPULAR).series }
+            val series = listed.getOrNull()?.firstOrNull()
+            check(series?.title == "Bridge Saga", "it lists the site's series")
+            if (series != null) {
+                manga.sources.refresh(series.id)
+                val chapter = manga.repository.chapters(series.id).firstOrNull()
+                check(chapter != null, "the series has its chapter")
+                if (chapter != null) runBlocking {
+                    val opened = manga.pages.open(chapter.id)
+                    check(opened.pageCount == 2 && manga.pages.page(opened, 0).contentEquals(png), "a page is read through it, with the headers the source asks for")
+                }
+            }
+            runCatching { manga.imports.uninstall(manga.imports.installedRecords().keys.first()) }
+            check(manga.sources.list(PROFILE, refresh = true).none { it.name == "Self Test Comics" }, "it is removed again")
+        } finally {
+            site.stop(0)
         }
     }
 

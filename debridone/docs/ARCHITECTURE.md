@@ -29,6 +29,15 @@ system of record; what it has no field for (reading status, favourite, hand edit
 notes) is kept in Suwayomi's own per-series "meta", so it stays with the profile's data and
 travels in its backups. Extension code runs in the server's process, never in DebridOne's.
 
+Mangayomi JavaScript sources reach the same server through the **Mangayomi bridge**
+(`:debridone:modules:manga-bridge`): a Kotlin `HttpSource` compiled against the server's own jar,
+packed by DebridOne with one source's index entry and code into a `.jar` extension that the server
+installs (`ExtensionImports`, `MangayomiPackage`). Inside the server, each source's code runs in a
+GraalJS context with host access, I/O, threads and class lookup switched off; Mangayomi's API is a
+JavaScript layer (`runtime.js`) over a single host function that the bridge answers (HTTP through
+the server's client, jsoup parsing, preferences, dates, crypto). `ExtensionIndexDetector` and
+`MangayomiCompatibility` recognise an index and judge each entry before anything is installed.
+
 ### Settings and configuration panels
 
 A section's settings open inside the section, over the page that is showing, and a "Configure"

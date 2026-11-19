@@ -7,15 +7,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AddLink
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Label
 import androidx.compose.material.icons.rounded.Storefront
@@ -70,9 +67,10 @@ internal object MangaSettingsSections {
     const val APPEARANCE = "appearance"
     const val READING = "reading"
     const val LIBRARY = "library"
-    const val EXTENSIONS = "extensions"
-    const val STORES = "stores"
+    const val INSTALLED = "extensions"
+    const val AVAILABLE = "available"
     const val SOURCES = "sources"
+    const val IMPORT = "import"
     const val TRACKERS = "trackers"
     const val METADATA = "metadata"
     const val SERVER = "server"
@@ -81,9 +79,10 @@ internal object MangaSettingsSections {
         SettingsCategory(APPEARANCE, "Appearance", Icons.Rounded.Palette),
         SettingsCategory(READING, "Reading", Icons.Rounded.AutoStories),
         SettingsCategory(LIBRARY, "Library", Icons.Rounded.CollectionsBookmark),
-        SettingsCategory(EXTENSIONS, "Extensions", Icons.Rounded.Extension),
-        SettingsCategory(STORES, "Extension stores", Icons.Rounded.Storefront),
+        SettingsCategory(INSTALLED, "Installed extensions", Icons.Rounded.Extension),
+        SettingsCategory(AVAILABLE, "Available extensions", Icons.Rounded.Storefront),
         SettingsCategory(SOURCES, "Sources", Icons.Rounded.Public),
+        SettingsCategory(IMPORT, "Import extensions", Icons.Rounded.AddLink),
         SettingsCategory(TRACKERS, "Trackers", Icons.Rounded.Sync, saving = "sign-ins are kept by this profile's manga server"),
         SettingsCategory(METADATA, "Metadata", Icons.Rounded.Label),
         SettingsCategory(SERVER, "Server", Icons.Rounded.Dns, saving = "the server's own settings are saved with their Save button"),
@@ -91,9 +90,10 @@ internal object MangaSettingsSections {
 
     /** The pages that are also tabs of Plugins › Manga: one implementation, shown in both places. */
     fun of(tab: MangaPluginsTab): String = when (tab) {
-        MangaPluginsTab.EXTENSIONS -> EXTENSIONS
-        MangaPluginsTab.STORES -> STORES
+        MangaPluginsTab.INSTALLED -> INSTALLED
+        MangaPluginsTab.AVAILABLE -> AVAILABLE
         MangaPluginsTab.SOURCES -> SOURCES
+        MangaPluginsTab.IMPORT -> IMPORT
         MangaPluginsTab.TRACKERS -> TRACKERS
         MangaPluginsTab.METADATA -> METADATA
         MangaPluginsTab.SERVER -> SERVER
@@ -120,21 +120,23 @@ internal fun MangaSettingsPanel(modifier: Modifier = Modifier) {
         accent = manga.style.accent,
         modifier = modifier,
         selfScrolling = setOf(
-            MangaSettingsSections.EXTENSIONS, MangaSettingsSections.STORES, MangaSettingsSections.SOURCES, MangaSettingsSections.TRACKERS,
+            MangaSettingsSections.INSTALLED, MangaSettingsSections.AVAILABLE, MangaSettingsSections.SOURCES, MangaSettingsSections.IMPORT, MangaSettingsSections.TRACKERS,
             MangaSettingsSections.METADATA, MangaSettingsSections.SERVER,
         ),
     ) { section ->
         // What lives in the manga server can only be shown while it runs; the rest is always there.
-        val needsServer = section == MangaSettingsSections.EXTENSIONS || section == MangaSettingsSections.STORES || section == MangaSettingsSections.SOURCES ||
-            section == MangaSettingsSections.TRACKERS
+        val needsServer = section in setOf(
+            MangaSettingsSections.INSTALLED, MangaSettingsSections.AVAILABLE, MangaSettingsSections.SOURCES, MangaSettingsSections.IMPORT, MangaSettingsSections.TRACKERS,
+        )
         when {
             needsServer && connection !is com.debridone.manga.suwayomi.MangaConnection.Ready -> MangaServerStatus(connection)
             section == MangaSettingsSections.APPEARANCE -> ModuleAppearanceEditor(ModuleId.MANGA)
             section == MangaSettingsSections.READING -> ReadingSettings()
             section == MangaSettingsSections.LIBRARY -> LibrarySettings()
-            section == MangaSettingsSections.EXTENSIONS -> ExtensionsTab()
-            section == MangaSettingsSections.STORES -> StoresTab()
+            section == MangaSettingsSections.INSTALLED -> InstalledTab()
+            section == MangaSettingsSections.AVAILABLE -> AvailableTab()
             section == MangaSettingsSections.SOURCES -> SourcesTab()
+            section == MangaSettingsSections.IMPORT -> ImportTab()
             section == MangaSettingsSections.TRACKERS -> TrackersTab()
             section == MangaSettingsSections.METADATA -> MetadataTab()
             section == MangaSettingsSections.SERVER -> ServerTab()
@@ -142,7 +144,7 @@ internal fun MangaSettingsPanel(modifier: Modifier = Modifier) {
     }
     // A source's own settings open over the panel, and close back to it.
     MangaSourceConfigurationPanel(modifier)
-    MangaPluginsState.pendingStore?.let { address -> ExtensionNoticeDialog(address) }
+    ImportNoticeDialog()
 }
 
 /** The settings of the source chosen with "Configure", wherever that was clicked. */

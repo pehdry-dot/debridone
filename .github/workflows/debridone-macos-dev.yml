@@ -63,6 +63,7 @@ jobs:
           :debridone:accounts:test
           :debridone:cloud:test
           :debridone:modules:music:test
+          :debridone:modules:manga-bridge:test
           :debridone:modules:manga:test
           :debridone:architecture-tests:test
           --no-configuration-cache

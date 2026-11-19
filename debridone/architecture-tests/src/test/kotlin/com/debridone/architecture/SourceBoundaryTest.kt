@@ -19,22 +19,49 @@ class SourceBoundaryTest {
     /** Package each engine lives in, and the UI package that may host it inside the app. */
     private val enginePackage = mapOf("music" to "com.debridone.music", "gaming" to "com.debridone.gaming", "manga" to "com.debridone.manga")
 
+    /**
+     * A module's own parts: projects beside it named `<module>-<part>` (Manga's Mangayomi bridge,
+     * which is built into a separate jar because it runs inside Manga's server, not in the app).
+     */
+    private fun partsOf(key: String): List<String> =
+        File(root, "debridone/modules").listFiles().orEmpty().filter { it.isDirectory && it.name.startsWith("$key-") }.map { it.name }
+
     @Test
     fun moduleBuildFilesDependOnlyOnSharedInfrastructure() {
         val projectReference = Regex("""projects\.debridone\.([A-Za-z0-9.]+)|project\(\s*"(:[^"]+)"\s*\)""")
         val allowed = setOf("moduleApi", "platform", ":debridone:module-api", ":debridone:platform")
         val violations = ArrayList<String>()
-        for (key in moduleKeys) {
-            val buildFile = File(root, "debridone/modules/$key/build.gradle.kts")
+        fun check(owner: String, directory: String, alsoAllowed: Set<String>) {
+            val buildFile = File(root, "debridone/modules/$directory/build.gradle.kts")
             assertTrue(buildFile.isFile, "missing ${buildFile.path}")
             buildFile.readLines().filterNot { it.trim().startsWith("//") }.forEach { line ->
                 projectReference.findAll(line).forEach { match ->
                     val reference = match.groupValues[1].ifEmpty { match.groupValues[2] }
-                    if (reference !in allowed) violations += "$key -> $reference"
+                    if (reference !in allowed && reference !in alsoAllowed) violations += "$owner -> $reference"
                 }
             }
         }
-        if (violations.isNotEmpty()) fail("Modules may depend only on :debridone:platform and :debridone:module-api: $violations")
+        for (key in moduleKeys) {
+            val parts = partsOf(key)
+            // A module may use its own parts; a part may use nothing but the shared infrastructure.
+            check(key, key, parts.map { ":debridone:modules:$it" }.toSet())
+            parts.forEach { part -> check(part, part, emptySet()) }
+        }
+        if (violations.isNotEmpty()) fail("Modules may depend only on :debridone:platform, :debridone:module-api and their own parts: $violations")
+    }
+
+    @Test
+    fun aModulesPartsDoNotImportOtherModulesOrStreaming() {
+        val violations = ArrayList<String>()
+        for (key in moduleKeys) {
+            val forbidden = enginePackage.filterKeys { it != key }.values + listOf("com.nuvio.", "com.debridone.accounts", "com.debridone.cloud")
+            partsOf(key).forEach { part ->
+                kotlinFiles(File(root, "debridone/modules/$part/src/main")).forEach { file ->
+                    imports(file).filter { import -> forbidden.any(import::startsWith) }.forEach { violations += "${file.relativeTo(root)}: $it" }
+                }
+            }
+        }
+        if (violations.isNotEmpty()) fail("A module's parts must not know other modules:\n" + violations.joinToString("\n"))
     }
 
     @Test

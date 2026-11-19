@@ -343,14 +343,14 @@ class MangaSources(
         val first = listed?.series?.firstOrNull()
         if (listed != null && first == null) stop("Discovery", FailureKind.EXTENSION, "The source listed nothing, so nothing further could be tried. It may need to be configured first.")
         if (first != null) {
-            step<SeriesPage>("Search", { "${it.series.size} results for \"${word(first.title)}\"" }) { retrying(source.name, source.baseUrl) { browse(sourceId, BrowseMode.SEARCH, word(first.title)) } }
+            step<SeriesPage>("Search", { "${count(it.series.size, "result")} for \"${word(first.title)}\"" }) { retrying(source.name, source.baseUrl) { browse(sourceId, BrowseMode.SEARCH, word(first.title)) } }
             // The first series may be ones without chapters (e-books on a Komga server, licensed titles): try several.
             var readable: Pair<Series, Int>? = null
             step<Series>("Series metadata", { "\"${it.title}\"" + (it.authors.firstOrNull()?.let { a -> " by $a" } ?: "") }) {
                 retrying(source.name, source.baseUrl) { repository.remember(api.refresh(first.id.toInt(), details = true, chapters = false).first) }
                 repository.series(first.id) ?: first
             }
-            step<Pair<Series, Int>>("Chapters", { "${it.second} chapters of \"${it.first.title}\"" }, FailureKind.CHAPTER) {
+            step<Pair<Series, Int>>("Chapters", { "${count(it.second, "chapter")} of \"${it.first.title}\"" + if (it.first.id != first.id) " (the first series listed none)" else "" }, FailureKind.CHAPTER) {
                 var last: Pair<Series, Int>? = null
                 for (candidate in listed.series.take(TEST_CANDIDATES)) {
                     retrying(source.name, source.baseUrl) { refresh(candidate.id) }
@@ -363,7 +363,7 @@ class MangaSources(
             val chapter = readable?.takeIf { it.second > 0 }?.let { repository.rawChapters(it.first.id.toInt()).firstOrNull() }
             if (readable != null && chapter == null) stop("Chapters", FailureKind.CHAPTER, "None of the first ${minOf(TEST_CANDIDATES, listed.series.size)} series lists a chapter.")
             if (chapter != null) {
-                val pages = step<List<String>>("Page request", { "${it.size} pages listed" }, FailureKind.CHAPTER) {
+                val pages = step<List<String>>("Page request", { "${count(it.size, "page")} listed" }, FailureKind.CHAPTER) {
                     val (opened, pages) = retrying(source.name, source.baseUrl) { api.chapterPages(chapter.id) }
                     repository.reloadChapters(opened.mangaId)
                     if (pages.isEmpty()) error("The chapter has no pages.")
@@ -420,3 +420,6 @@ class MangaSources(
         fun defaultLanguages(): Set<String> = setOf(Locale.getDefault().language.ifBlank { "en" }, "en")
     }
 }
+
+/** "1 page", "31 pages". */
+private fun count(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"

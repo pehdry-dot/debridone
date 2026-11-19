@@ -18,7 +18,17 @@ java {
     targetCompatibility = JavaVersion.VERSION_11
 }
 
+// The Mangayomi bridge's classes (compiled against Suwayomi-Server in :debridone:modules:manga-bridge),
+// carried as a resource: DebridOne packs them, with one source's code, into an extension jar that the
+// manga server installs. They are never loaded by DebridOne itself.
+val mangayomiBridge: Configuration by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+}
+
 dependencies {
+    mangayomiBridge(project(":debridone:modules:manga-bridge"))
     api(projects.debridone.moduleApi)
     // Suwayomi-Server's GraphQL API and the metadata providers speak JSON.
     api(libs.kotlinx.serialization.json)
@@ -27,6 +37,13 @@ dependencies {
     testImplementation(libs.kotlin.testJunit)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+}
+
+tasks.processResources {
+    from(mangayomiBridge) {
+        into("mangayomi")
+        rename { "bridge.jar" }
+    }
 }
 
 // ---- Suwayomi-Server (the Manga backend) -----------------------------------------------------------

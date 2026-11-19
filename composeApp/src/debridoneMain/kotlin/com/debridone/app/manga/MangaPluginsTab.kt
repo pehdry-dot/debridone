@@ -1,8 +1,6 @@
 package com.debridone.app.manga
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +8,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -19,28 +16,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.InsertDriveFile
-import androidx.compose.material.icons.rounded.OpenInNew
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
-import androidx.compose.material.icons.rounded.Storefront
-import androidx.compose.material.icons.rounded.SystemUpdateAlt
-import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,38 +33,32 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.debridone.app.shell.Notice
 import com.debridone.app.shell.PillTone
 import com.debridone.app.shell.StatusPill
-import com.debridone.manga.MangaAppSettings
 import com.debridone.manga.MangaPreferences
 import com.debridone.manga.suwayomi.MangaConnection
 import com.debridone.manga.suwayomi.MangaServer
 import com.debridone.manga.suwayomi.RemoteServer
-import com.debridone.manga.suwayomi.SwExtension
-import com.debridone.manga.suwayomi.SwStore
 import com.nuvio.app.core.ui.nuvio
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 internal enum class MangaPluginsTab(val label: String) {
-    EXTENSIONS("Extensions"),
-    STORES("Stores"),
+    INSTALLED("Installed"),
+    AVAILABLE("Available"),
     SOURCES("Sources"),
+    IMPORT("Import"),
     TRACKERS("Trackers"),
     METADATA("Metadata"),
     SERVER("Server"),
@@ -88,7 +66,7 @@ internal enum class MangaPluginsTab(val label: String) {
 
 /** State of Plugins › Manga that outlives leaving the tab: the sub-tab, what is being worked on, and the last outcome. */
 internal object MangaPluginsState {
-    var tab by mutableStateOf(MangaPluginsTab.EXTENSIONS)
+    var tab by mutableStateOf(MangaPluginsTab.INSTALLED)
 
     /** Package names of extensions being installed, updated or removed right now. */
     val working = mutableStateMapOf<String, String>()
@@ -106,9 +84,6 @@ internal object MangaPluginsState {
 
     /** The source whose settings are open. */
     var configuring by mutableStateOf<String?>(null)
-
-    /** A store address waiting for the person to confirm they have read what an extension may do. */
-    var pendingStore by mutableStateOf<String?>(null)
 
     /** Goes to another of these pages, wherever they are shown: in Plugins › Manga or in Manga's settings panel. */
     fun show(target: MangaPluginsTab) {
@@ -152,9 +127,10 @@ fun MangaPluginsTab() {
                 if (needsServer && connection !is MangaConnection.Ready) {
                     MangaServerStatus(connection)
                 } else when (MangaPluginsState.tab) {
-                    MangaPluginsTab.EXTENSIONS -> ExtensionsTab()
-                    MangaPluginsTab.STORES -> StoresTab()
+                    MangaPluginsTab.INSTALLED -> InstalledTab()
+                    MangaPluginsTab.AVAILABLE -> AvailableTab()
                     MangaPluginsTab.SOURCES -> SourcesTab()
+                    MangaPluginsTab.IMPORT -> ImportTab()
                     MangaPluginsTab.TRACKERS -> TrackersTab()
                     MangaPluginsTab.METADATA -> MetadataTab()
                     MangaPluginsTab.SERVER -> ServerTab()
@@ -164,7 +140,7 @@ fun MangaPluginsTab() {
         // "Configure" opens here, in this tab, over the list it was clicked in.
         MangaSourceConfigurationPanel()
         }
-        MangaPluginsState.pendingStore?.let { address -> ExtensionNoticeDialog(address) }
+        ImportNoticeDialog()
         MangaDialogs()
     }
 }
@@ -204,256 +180,12 @@ private fun PluginsMessages() {
     }
 }
 
-// ---------------------------------------------------------------------------- Extensions
+// ---------------------------------------------------------------------------- what extensions may do
 
-/** What the server knows about extensions: the installed ones, and what the stores offer. */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-internal fun ExtensionsTab() {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val revision by manga.services.extensions.revision.collectAsState()
-    val generation by manga.services.server.generation.collectAsState()
-    val extensions by produceState<List<SwExtension>?>(null, revision, generation) {
-        value = withContext(Dispatchers.IO) { runCatching { manga.services.extensions.list() }.getOrNull() }
-    }
-    val stores by produceState<List<SwStore>>(emptyList(), revision, generation) {
-        value = withContext(Dispatchers.IO) { runCatching { manga.services.extensions.stores() }.getOrDefault(emptyList()) }
-    }
-    val all = extensions.orEmpty()
-    val installed = all.filter { it.installed }
-    val outdated = installed.filter { it.hasUpdate }
-    val languages = all.map { it.lang }.filter { it.isNotBlank() }.distinct().sortedBy(::languageName)
-    val needle = MangaPluginsState.query.trim().lowercase()
-    val shown = all.filter { extension ->
-        (needle.isEmpty() || extension.name.lowercase().contains(needle) || extension.pkgName.lowercase().contains(needle)) &&
-            (MangaPluginsState.language == null || extension.lang == MangaPluginsState.language) &&
-            (!MangaPluginsState.installedOnly || extension.installed) &&
-            (MangaPluginsState.showAdult || extension.installed || extension.contentWarning != "NSFW")
-    }
-
-    fun change(extension: SwExtension, doing: String, done: String, action: (String) -> Unit) {
-        if (extension.pkgName in MangaPluginsState.working) return
-        MangaPluginsState.working[extension.pkgName] = doing
-        pluginScope.launch {
-            try {
-                action(extension.pkgName)
-                MangaPluginsState.say("${extension.name} $done.")
-            } catch (failure: Throwable) {
-                MangaPluginsState.fail("${extension.name}: ${failure.message ?: "that did not work."}")
-            } finally {
-                MangaPluginsState.working.remove(extension.pkgName)
-            }
-        }
-    }
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Extensions", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
-                Text(
-                    "A source is provided by an extension: the same extension packages Mihon and Tachiyomi use. The manga server installs them from the stores you added, or from a package file, and runs them itself.",
-                    style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MangaButton("Check the stores", {
-                        pluginWork("Asking the stores for their lists…") {
-                            val fresh = manga.services.extensions.list(refresh = true)
-                            val updates = fresh.count { it.installed && it.hasUpdate }
-                            "${plural(fresh.size, "extension")} listed" + if (updates > 0) ", ${plural(updates, "update")} available." else "."
-                        }
-                    }, primary = false, icon = Icons.Rounded.Refresh, enabled = stores.isNotEmpty() && MangaPluginsState.progress == null)
-                    if (outdated.isNotEmpty()) {
-                        MangaButton("Update all (${outdated.size})", {
-                            pluginWork("Updating ${plural(outdated.size, "extension")}…") { "${plural(manga.services.extensions.updateAll(), "extension")} updated." }
-                        }, icon = Icons.Rounded.SystemUpdateAlt, enabled = MangaPluginsState.progress == null)
-                    }
-                    MangaButton("Install from a file…", {
-                        MangaPickers.choosePackage()?.let { file ->
-                            pluginWork("Installing ${file.fileName}…") { "${manga.services.extensions.installFile(file).name} installed from ${file.fileName}." }
-                        }
-                    }, primary = false, icon = Icons.Rounded.InsertDriveFile, enabled = MangaPluginsState.progress == null)
-                    MangaButton("Stores (${stores.size})", { MangaPluginsState.show(MangaPluginsTab.STORES) }, primary = false, icon = Icons.Rounded.Storefront)
-                }
-                PluginsMessages()
-                if (extensions != null && stores.isEmpty() && installed.isEmpty()) {
-                    MangaEmptyState(
-                        Icons.Rounded.Extension, "No extension store yet",
-                        "DebridOne comes with no store and no sources of its own. Add the address of an extension store you trust, then install the extensions you want from it. Your own files need none of this: add them from Manga's Library.",
-                    ) {
-                        MangaButton("Add a store", { MangaPluginsState.show(MangaPluginsTab.STORES) }, icon = Icons.Rounded.Storefront)
-                    }
-                }
-                if (all.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MangaSearchField(MangaPluginsState.query, { MangaPluginsState.query = it }, Modifier.width(300.dp), placeholder = "Find an extension")
-                        MangaChip("Installed (${installed.size})", MangaPluginsState.installedOnly) { MangaPluginsState.installedOnly = !MangaPluginsState.installedOnly }
-                        LanguagePicker(languages, MangaPluginsState.language) { MangaPluginsState.language = it }
-                        MangaChip("Show 18+", MangaPluginsState.showAdult) { MangaPluginsState.showAdult = !MangaPluginsState.showAdult }
-                    }
-                    Text(
-                        "${plural(shown.size, "extension")} shown of ${all.size}" + if (!MangaPluginsState.showAdult) " · extensions their store marks as 18+ are hidden" else "",
-                        style = small(), color = tokens.colors.textMuted,
-                    )
-                }
-            }
-        }
-        items(shown, key = { it.pkgName }) { extension ->
-            ExtensionRow(
-                extension, MangaPluginsState.working[extension.pkgName],
-                onInstall = { change(extension, "Installing…", "installed") { manga.services.extensions.install(it) } },
-                onUpdate = { change(extension, "Updating…", "updated") { manga.services.extensions.update(it) } },
-                onRemove = { change(extension, "Removing…", "removed") { manga.services.extensions.uninstall(it) } },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ExtensionRow(extension: SwExtension, working: String?, onInstall: () -> Unit, onUpdate: () -> Unit, onRemove: () -> Unit) {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(tokens.colors.surface).border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        ServerIcon(extension.iconUrl, Modifier.size(40.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(extension.name, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                listOf(languageName(extension.lang), "version ${extension.versionName}", extension.storeName.orEmpty(), extension.pkgName).filter { it.isNotBlank() }.joinToString("  ·  "),
-                style = small(), color = tokens.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (extension.contentWarning == "NSFW") StatusPill("18+", PillTone.WARNING)
-        if (extension.obsolete) StatusPill("No longer in a store", PillTone.WARNING)
-        when {
-            working != null -> {
-                CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                Text(working, style = small(), color = tokens.colors.textSecondary)
-            }
-            extension.installed -> {
-                if (extension.hasUpdate) MangaButton("Update", onUpdate, icon = Icons.Rounded.SystemUpdateAlt) else StatusPill("Installed", PillTone.SUCCESS)
-                MangaIconButton(Icons.Rounded.Delete, "Remove ${extension.name}", onRemove, size = 34.dp)
-            }
-            else -> MangaButton("Install", onInstall, primary = false, icon = Icons.Rounded.Download)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------- Stores
-
-private const val EXTENSION_NOTICE =
+internal const val EXTENSION_NOTICE =
     "An extension is a small program written by someone else. The manga server runs it with your own rights on this computer: " +
         "it can reach the internet and read and write your files. It runs inside the manga server, never inside DebridOne itself, " +
-        "and neither DebridOne nor Suwayomi reviews what a store offers. Add only stores you trust."
-
-/** Extension stores: addresses the person adds. None is shipped or suggested. */
-@Composable
-internal fun StoresTab() {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val revision by manga.services.extensions.revision.collectAsState()
-    val generation by manga.services.server.generation.collectAsState()
-    val stores by produceState<List<SwStore>?>(null, revision, generation) {
-        value = withContext(Dispatchers.IO) { runCatching { manga.services.extensions.stores() }.getOrNull() }
-    }
-    val settings by manga.services.appSettings.values.collectAsState()
-    var address by remember { mutableStateOf("") }
-    // The store was added (also when that went through the notice): the field starts empty again.
-    LaunchedEffect(stores?.size) { if (stores?.any { it.indexUrl == address.trim() } == true) address = "" }
-
-    fun add() {
-        val wanted = address.trim()
-        if (wanted.isEmpty() || MangaPluginsState.progress != null) return
-        if (settings[MangaAppSettings.EXTENSION_NOTICE_SEEN] != "true") {
-            MangaPluginsState.pendingStore = wanted
-        } else {
-            addStore(manga, wanted) { address = "" }
-        }
-    }
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 40.dp, end = 40.dp, top = 14.dp, bottom = 56.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Extension stores", style = MaterialTheme.typography.titleLarge, color = tokens.colors.textPrimary)
-                Text(
-                    "A store is a list of extensions published at a web address. The manga server reads the store formats Suwayomi supports: the current one, and older \"index.min.json\" repositories " +
-                        "(an address ending in index.json works too: the server is given the index.min.json beside it). " +
-                        "DebridOne includes no store: you add the address of one you trust, for this profile.",
-                    style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary,
-                )
-                Notice(EXTENSION_NOTICE, PillTone.WARNING)
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MangaTextField(address, { address = it }, "Address of the store's index", Modifier.weight(1f), onSubmit = ::add, hint = "It starts with https:// and usually ends in repo.json, index.pb, index.min.json or index.json.")
-                    MangaButton("Add store", ::add, icon = Icons.Rounded.Add, enabled = address.isNotBlank() && MangaPluginsState.progress == null)
-                }
-                PluginsMessages()
-            }
-        }
-        val list = stores
-        if (list != null && list.isEmpty()) {
-            item { Text("No store has been added for this profile.", style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textMuted) }
-        }
-        items(list.orEmpty(), key = { it.indexUrl }) { store ->
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(tokens.colors.surface).border(1.dp, tokens.colors.borderSubtle, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Icon(Icons.Rounded.Storefront, contentDescription = null, tint = manga.style.accent, modifier = Modifier.size(26.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(store.name.ifBlank { "Unnamed store" }, style = MaterialTheme.typography.titleSmall, color = tokens.colors.textPrimary)
-                    SelectionContainer { Text(store.indexUrl, style = small(), color = tokens.colors.textMuted, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    if (store.signingKey.isNotBlank()) Text("Signing key ${store.signingKey.take(24)}…", style = small(), color = tokens.colors.textMuted, maxLines = 1)
-                }
-                if (store.legacy) StatusPill("Older format") else StatusPill("Current format", PillTone.SUCCESS)
-                store.website?.let { site -> MangaButton("Its site", { openInBrowser(site) }, primary = false, icon = Icons.Rounded.OpenInNew) }
-                MangaButton("Remove", {
-                    pluginWork("Removing ${store.name}…") {
-                        manga.services.extensions.removeStore(store.indexUrl)
-                        "${store.name.ifBlank { "The store" }} was removed. Extensions installed from it stay until you remove them."
-                    }
-                }, primary = false, danger = true, icon = Icons.Rounded.Delete, enabled = MangaPluginsState.progress == null)
-            }
-        }
-    }
-}
-
-private fun addStore(manga: MangaContext, address: String, onAdded: () -> Unit) {
-    pluginWork("Adding the store and reading its list…") {
-        val added = manga.services.extensions.addStoreFrom(address)
-        val store = added.store
-        val offered = runCatching { manga.services.extensions.list().count { it.storeIndexUrl == store.indexUrl } }.getOrDefault(0)
-        withContext(Dispatchers.Main) { onAdded() }
-        val readFrom = when {
-            added.otherFile != null -> " It was read from ${added.otherFile} in the same folder: the manga server does not take a store's index.json itself."
-            added.changed -> " It was read from the file's own address rather than the page about it."
-            else -> ""
-        }
-        "${store.name.ifBlank { "The store" }} was added" + (if (offered > 0) ": ${plural(offered, "extension")} to choose from in Extensions." else ".") + readFrom
-    }
-}
-
-/** Shown once, before the first store is added: what an extension is allowed to do. */
-@Composable
-internal fun ExtensionNoticeDialog(address: String) {
-    val manga = LocalManga.current
-    val tokens = MaterialTheme.nuvio
-    val dismiss = { MangaPluginsState.pendingStore = null }
-    MangaDialogFrame("Before you add a store", dismiss, width = 560) {
-        Text(EXTENSION_NOTICE, style = MaterialTheme.typography.bodyMedium, color = tokens.colors.textSecondary)
-        Text(
-            "Earlier versions of DebridOne ran Houdoku's extensions in a restricted helper. Mihon/Tachiyomi extensions cannot be restricted that way: this is how Suwayomi runs them.",
-            style = small(), color = tokens.colors.textMuted,
-        )
-        SelectionContainer { Text(address, style = small().copy(fontFamily = FontFamily.Monospace), color = tokens.colors.textPrimary) }
-        MangaDialogButtons("I understand, add the store", dismiss) {
-            manga.services.appSettings.set(MangaAppSettings.EXTENSION_NOTICE_SEEN, "true")
-            dismiss()
-            addStore(manga, address) {}
-        }
-    }
-}
+        "and neither DebridOne nor Suwayomi reviews what a store offers. Add only stores and indexes you trust."
 
 // ---------------------------------------------------------------------------- Server
 

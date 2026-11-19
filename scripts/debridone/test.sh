@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
-tasks=(:debridone:platform:test :debridone:accounts:test :debridone:cloud:test :debridone:modules:music:test :debridone:modules:manga:test :debridone:architecture-tests:test)
+tasks=(:debridone:platform:test :debridone:accounts:test :debridone:cloud:test :debridone:modules:music:test :debridone:modules:manga-bridge:test :debridone:modules:manga:test :debridone:architecture-tests:test)
 if [[ "${1:-}" == "--all" ]]; then
   shift
   tasks+=(:composeApp:desktopTest)

@@ -148,8 +148,8 @@ internal fun SourcesTab() {
             item {
                 MangaEmptyState(
                     Icons.Rounded.Extension, "No online sources",
-                    "Sources come with extensions. Add an extension store, then install the extensions you want; each brings one or more sources.",
-                ) { MangaButton("Extensions", { MangaPluginsState.show(MangaPluginsTab.EXTENSIONS) }, icon = Icons.Rounded.Extension) }
+                    "Sources come with extensions. Paste the address of a store or a Mangayomi index under Import, then install the extensions you want; each brings one or more sources.",
+                ) { MangaButton("Import", { MangaPluginsState.show(MangaPluginsTab.IMPORT) }, icon = Icons.Rounded.Extension) }
             }
         }
         items(listed, key = { it.id }) { source ->

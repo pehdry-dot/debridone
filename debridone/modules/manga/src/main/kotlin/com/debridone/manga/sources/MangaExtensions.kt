@@ -65,6 +65,9 @@ class MangaExtensions(private val server: MangaServer, private val sources: Mang
     /** Changes when the stores or extensions changed. */
     val revision: StateFlow<Long> = _revision.asStateFlow()
 
+    /** Tells the screens that extensions changed (after an installation made elsewhere). */
+    fun refreshed() = changed()
+
     private fun changed() {
         _revision.update { it + 1 }
         sources.invalidate()
@@ -168,7 +171,9 @@ class MangaExtensions(private val server: MangaServer, private val sources: Mang
     /** Installs an extension from a package file (`.apk`) on this computer. Suwayomi checks that it is one. */
     fun installFile(file: Path): SwExtension {
         val name = file.fileName.toString()
-        require(name.endsWith(".apk", ignoreCase = true)) { "\"$name\" is not an extension package. Mihon/Tachiyomi extensions are .apk files." }
+        require(name.endsWith(".apk", ignoreCase = true) || name.endsWith(".jar", ignoreCase = true)) {
+            "\"$name\" is not an extension package. Mihon/Tachiyomi extensions are .apk files (or .jar files made for Suwayomi)."
+        }
         val size = Files.size(file)
         require(size in 1..MAX_PACKAGE_BYTES) { "\"$name\" is ${size / (1024 * 1024)} MB, which is too large to be an extension package." }
         return api.installExtensionFile(name, Files.readAllBytes(file)).also { changed() }

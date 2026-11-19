@@ -68,6 +68,8 @@ class MangaServices internal constructor(
     val coversDir: Path,
     /** Finds where a connection to a source's site stops, from DebridOne and from the manga server's Java. */
     val diagnosis: com.debridone.manga.net.NetworkDiagnosis = com.debridone.manga.net.NetworkDiagnosis({ server.managedJava() }),
+    /** Adding extensions from an index (a store's list or a Mangayomi index) pasted or chosen in Extensions. */
+    val imports: com.debridone.manga.mangayomi.ExtensionImports = com.debridone.manga.mangayomi.ExtensionImports(server, extensions),
 )
 
 /**

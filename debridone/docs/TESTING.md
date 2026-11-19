@@ -339,3 +339,35 @@ Existing functionality
 | Games remain removed | App: no Games section; architecture tests |
 | Debrid account connections remain intact | App: both stand-in accounts shown as connected in the Connected Accounts panel |
 | Other settings remain persistent | App: each profile's appearance and reading position after restarts; tests: the server's settings after a restart |
+
+## Manga: connections, black pages, index import and Mangayomi sources
+
+Automated (on the real, pinned Suwayomi-Server):
+
+| Suite | What it proves |
+|---|---|
+| `:debridone:modules:manga:test` › `SourceFailureTest` | Each kind of failure is told apart on the real server's reports, captured by pointing a source at addresses that fail in each way (DNS, refused, timeout, TLS, 503, 404, 403, 429, browser check, a source that needs its settings); "No route to host" (which this machine cannot produce) on a report built from them; only passing failures are retried; technical text keeps no credential; the connection probe really connects and reports each step; the diagnosis names the failing layer |
+| `PageImageCheckTest`, `MangaDecoderTest` (`:composeApp:desktopTest`), `SystemImageDecoderTest` (`:debridone:platform:test`, its AVIF part on macOS only) | Pictures are recognised by their bytes and checked to the end; cut-off JPEG/PNG/WebP, web pages, browser checks, SVG and JSON are named; a truncated WebP that used to draw as nothing is caught; tall pages are cut into pieces; transparency is drawn on white; a truly blank page is not called broken; macOS decodes AVIF |
+| `MangaEngineTest` | A cut-off page in the server's cache is removed and fetched again; a chapter's cache is cleared on request; the source test runs its nine steps |
+| `:debridone:modules:manga-bridge:test` › `JsBridgeTest` | The Mangayomi API on the server's own GraalJS and Java 21: lists, details, pages with the source's Referer, settings defaults, filters and a JSON POST, network failures keeping their nature, Mangayomi's selector semantics, browser checks reported, date/crypto/unpacker helpers |
+| `MangayomiImportTest` | A Mangayomi index from a stand-in site: recognised; JavaScript source runnable, Dart and anime refused with reasons; installed through the bridge by the real server; listed, browsed, opened, a page read with the source's headers; source test passes; kept with the profile; a new version found and installed under the same source id; removed. What is not an index is said plainly |
+| `SourceBoundaryTest` | A module may use only shared infrastructure and its own parts (the bridge), and the bridge knows no other module |
+
+Inside the packaged app (CI, on each Mac): `--manga-self-test` now also imports a Mangayomi index
+served from the same computer, installs its JavaScript source through the bridge, runs its test
+and reads a page through it, and checks that its Dart source is refused.
+
+Opt-in, against real sites: `DEBRIDONE_LIVE_TESTS=1 DEBRIDONE_MANGAYOMI_SOURCES=<folder with index
+files and the sources' .js files> ./gradlew :debridone:modules:manga-bridge:test --tests '*MangayomiLiveTest*'`.
+
+### The request's mandatory tests, and how each was done (19 Nov 2026)
+
+"App" is the running app from source on Linux (virtual display), driven by hand.
+
+| Test | Done |
+|---|---|
+| Connectivity: failing sources are classified, with host, step, time, HTTP code, exception, and DNS/TCP/TLS checks | Tests on captured real reports; app: a source pointed at an address that fails showed its kind, the technical report and **Diagnose connection**. A real "No route to host" cannot be produced here; the classification of that report and the diagnosis are tested, the result on the person's network is not known |
+| Black images | App: a series of real and damaged pages (cut-off WebP and JPEG, an HTML page in place of a picture, a transparent PNG, a 30,000-pixel strip, AVIF); an online page whose cut-off copy sat in the server's cache was replaced automatically (688,715 → 1,377,430 bytes); a damaged downloaded page was restored with **Download again**. Tests as above |
+| The two `index.json` addresses of the request | App: both imported through Import. First: 4 JavaScript sources, all installable, installed. Second: 272 entries, 47 can run (JavaScript), 225 Dart refused with the reason, MangaDex (unlocked) English installed |
+| Sources working | App, on their real sites, with the step-by-step test: Mangapill ✓, Weeb Central ✓, MangaDex (unlocked) ✓; ReadComicOnline reported as a browser check; a Mangapill chapter read in the reader (49 pages) |
+| Restart | App closed and opened again: the imported indexes, the installed sources with their test results and the library were still there |
