@@ -33,8 +33,30 @@ class OpenChapter internal constructor(
     internal val generation: Int,
 )
 
+/** Why a page could not be shown, so the reader can offer what helps. */
+enum class PageProblem {
+    /** The manga server could not be reached, or was restarted. */
+    SERVER,
+    /** The source (the site behind the extension) failed to provide it. */
+    SOURCE,
+    /** Bytes arrived, but they are a cut-off picture or something else than a picture. */
+    DAMAGED,
+    /** A downloaded chapter's copy of the page is damaged: downloading the chapter again helps. */
+    DAMAGED_DOWNLOAD,
+    /** A file of the person's own is damaged. */
+    DAMAGED_FILE,
+    /** A whole picture in a format this computer cannot draw. */
+    UNSUPPORTED,
+    OTHER,
+}
+
 /** The page could not be shown. [message] is written for the reader; [temporary] means trying again may help. */
-class PageException(message: String, val temporary: Boolean, cause: Throwable? = null) : IOException(message, cause)
+class PageException(
+    message: String,
+    val temporary: Boolean,
+    cause: Throwable? = null,
+    val problem: PageProblem = PageProblem.OTHER,
+) : IOException(message, cause)
 
 /**
  * Turns "page 7 of this chapter" into image bytes. Every page comes from Suwayomi-Server: it
@@ -50,6 +72,8 @@ class MangaPages(
     private val cacheDir: Path,
     /** Bytes of page images kept in memory. */
     private val memoryBudget: Long = 160L * 1024 * 1024,
+    /** The copies of pages the server DebridOne runs keeps for itself. */
+    private val cache: ServerPageCache = ServerPageCache { server.managedDirectory() },
 ) {
     private val fetches = Semaphore(6)
     private val pageLocks = ConcurrentHashMap<String, Mutex>()
@@ -81,7 +105,16 @@ class MangaPages(
         )
     }
 
-    /** The image of one page (zero-based). */
+    /**
+     * The image of one page (zero-based), checked to be a whole picture before it is handed out.
+     *
+     * A picture decoder reads only the header of the bytes at first and the rest when it draws:
+     * bytes that stop short (a connection the source closed early, a copy the server kept while it
+     * was still arriving) or a web page where a picture should be would otherwise reach the screen
+     * as a black page with no error. Such bytes are never handed out. For a page of an online
+     * source, the server's broken copy of that one page is removed and the page asked for again
+     * once; if the source sends the same again, the reason is reported.
+     */
     suspend fun page(open: OpenChapter, index: Int): ByteArray = withContext(Dispatchers.IO) {
         if (index !in 0 until open.pageCount) throw PageException("This chapter has no page ${index + 1}.", false)
         val key = key(open, index)
@@ -90,14 +123,13 @@ class MangaPages(
         try {
             lock.withLock {
                 remembered(key) ?: fetches.withPermit {
-                    if (open.generation != server.generation.value) throw PageException("The manga server was restarted. Open the chapter again.", true)
-                    val bytes = try {
-                        server.transport().bytes(open.pages[index], timeoutSeconds = PAGE_TIMEOUT_SECONDS)
-                    } catch (failure: SuwayomiException) {
-                        throw problem(open.series, failure)
+                    var bytes = fetchPage(open, index)
+                    var checked = PageImageCheck.inspect(bytes)
+                    if (checked !is PageBytes.Whole && open.origin == "online" && cache.forgetPage(index, bytes, open.chapter.title)) {
+                        bytes = fetchPage(open, index)
+                        checked = PageImageCheck.inspect(bytes)
                     }
-                    if (!looksLikeImage(bytes)) throw PageException("Page ${index + 1} is not an image the reader can show.", false)
-                    if (!isComplete(bytes)) throw PageException("Page ${index + 1} arrived incomplete. Try again.", true)
+                    if (checked !is PageBytes.Whole) throw damaged(open, index, checked)
                     remember(key, bytes)
                     bytes
                 }
@@ -105,6 +137,62 @@ class MangaPages(
         } finally {
             pageLocks.remove(key, lock)
         }
+    }
+
+    private fun fetchPage(open: OpenChapter, index: Int): ByteArray {
+        if (open.generation != server.generation.value) {
+            throw PageException("The manga server was restarted. Open the chapter again.", true, problem = PageProblem.SERVER)
+        }
+        return try {
+            server.transport().bytes(open.pages[index], timeoutSeconds = PAGE_TIMEOUT_SECONDS)
+        } catch (failure: SuwayomiException) {
+            throw problem(open.series, failure)
+        }
+    }
+
+    private fun damaged(open: OpenChapter, index: Int, checked: PageBytes): PageException {
+        val what = PageImageCheck.problem(checked, index + 1) ?: "Page ${index + 1} could not be read."
+        return when (open.origin) {
+            "downloaded" -> PageException(
+                "$what The downloaded copy of this chapter is damaged; download it again to repair it.",
+                temporary = false, problem = PageProblem.DAMAGED_DOWNLOAD,
+            )
+            "local" -> PageException("$what The file itself is damaged.", temporary = false, problem = PageProblem.DAMAGED_FILE)
+            else -> PageException(
+                what + when (checked) {
+                    is PageBytes.Cut -> " It was asked for again and came back the same way: the source is not sending it whole right now."
+                    is PageBytes.NotImage -> if (checked.what == PageBytes.Content.BROWSER_CHECK) " A FlareSolverr of your own (Manga settings › Server) can get past such checks." else ""
+                    else -> ""
+                },
+                temporary = true, problem = PageProblem.DAMAGED,
+            )
+        }
+    }
+
+    /**
+     * Bytes that are a whole picture but could not be drawn. The kept copies are forgotten (here and,
+     * for an online page, the server's copy), so trying again asks the source afresh.
+     */
+    fun forgetUndrawable(open: OpenChapter, index: Int, bytes: ByteArray) {
+        synchronized(remembered) {
+            remembered.remove(key(open, index))?.let { rememberedBytes -= it.size }
+        }
+        if (open.origin == "online") runCatching { cache.forgetPage(index, bytes, open.chapter.title) }
+    }
+
+    /**
+     * Forgets every kept copy of one chapter's pages — the ones in memory and the server's own
+     * copies of an online chapter — so the next read asks the source for each page again. Nothing
+     * else is touched: other chapters, the library and downloaded chapters stay as they are.
+     * Returns how many of the server's page copies were removed.
+     */
+    suspend fun reloadChapter(open: OpenChapter): Int = withContext(Dispatchers.IO) {
+        forgetChapter(open.chapter.id)
+        if (open.origin != "online") return@withContext 0
+        val stored = runCatching { server.api().chapter(open.chapter.id.toInt()) }.getOrNull() ?: return@withContext 0
+        val manga = runCatching { server.api().manga(stored.mangaId) }.getOrNull() ?: return@withContext 0
+        val source = listOfNotNull(manga.sourceName, manga.sourceLang?.uppercase()?.let { "($it)" }).joinToString(" ")
+        cache.forgetChapter(source, manga.title, stored.name, stored.scanlator)
     }
 
     /** True when the page will show without a request. */
@@ -128,14 +216,16 @@ class MangaPages(
 
     private fun problem(series: Series, failure: SuwayomiException): PageException {
         val detail = failure.message.orEmpty()
+        val source = series.sourceName.ifBlank { "The source" }
         return when (failure.kind) {
-            SuwayomiException.Kind.UNREACHABLE -> PageException(detail.ifBlank { "The manga server is not running." }, true, failure)
-            SuwayomiException.Kind.TIMEOUT -> PageException("${series.sourceName.ifBlank { "The source" }} did not answer in time.", true, failure)
-            SuwayomiException.Kind.UNAUTHORIZED -> PageException(detail, false, failure)
-            else -> PageException(
-                if (series.isLocal) "The file could not be read: $detail" else "${series.sourceName.ifBlank { "The source" }} could not provide this: $detail",
-                temporary = true, cause = failure,
-            )
+            SuwayomiException.Kind.UNREACHABLE -> PageException(detail.ifBlank { "The manga server is not running." }, true, failure, PageProblem.SERVER)
+            SuwayomiException.Kind.TIMEOUT -> PageException("$source did not answer in time.", true, failure, PageProblem.SOURCE)
+            SuwayomiException.Kind.UNAUTHORIZED -> PageException(detail, false, failure, PageProblem.SERVER)
+            else -> if (series.isLocal) {
+                PageException("The file could not be read: $detail", temporary = true, cause = failure, problem = PageProblem.DAMAGED_FILE)
+            } else {
+                PageException("$source could not provide this: $detail", temporary = true, cause = failure, problem = PageProblem.SOURCE)
+            }
         }
     }
 
@@ -247,42 +337,13 @@ class MangaPages(
         private const val PAGE_TIMEOUT_SECONDS = 90
         private const val COVER_ATTEMPTS = 4
 
-        /**
-         * False for a JPEG or PNG that stops before its end marker: a file that was read while it
-         * was still being written. Other formats are taken as they are.
-         */
-        fun isComplete(bytes: ByteArray): Boolean {
-            fun at(index: Int) = bytes[index].toInt() and 0xff
-            return when (imageExtension(bytes)) {
-                "jpg" -> {
-                    // The end-of-image marker, allowing for a few bytes of padding after it.
-                    var end = bytes.size - 2
-                    val floor = maxOf(2, bytes.size - 64)
-                    while (end >= floor && !(at(end) == 0xFF && at(end + 1) == 0xD9)) end--
-                    end >= floor
-                }
-                "png" -> bytes.size >= 20 && String(bytes, bytes.size - 8, 4, Charsets.ISO_8859_1) == "IEND"
-                else -> true
-            }
-        }
+        /** False for a picture that stops before its end (see [PageImageCheck]). Bytes that are not a picture count as complete here. */
+        fun isComplete(bytes: ByteArray): Boolean = PageImageCheck.inspect(bytes) !is PageBytes.Cut
 
-        /** JPEG, PNG, GIF, WebP, BMP or AVIF/HEIF, by their first bytes. */
+        /** JPEG, PNG, GIF, WebP, BMP, AVIF/HEIF or JPEG XL, by their first bytes. */
         fun looksLikeImage(bytes: ByteArray): Boolean = imageExtension(bytes) != null
 
         /** The file extension matching the image's real format, or null when it is not an image. */
-        fun imageExtension(bytes: ByteArray): String? {
-            if (bytes.size < 12) return null
-            fun at(index: Int) = bytes[index].toInt() and 0xff
-            return when {
-                at(0) == 0xFF && at(1) == 0xD8 -> "jpg"
-                at(0) == 0x89 && at(1) == 'P'.code && at(2) == 'N'.code && at(3) == 'G'.code -> "png"
-                at(0) == 'G'.code && at(1) == 'I'.code && at(2) == 'F'.code && at(3) == '8'.code -> "gif"
-                at(0) == 'R'.code && at(1) == 'I'.code && at(2) == 'F'.code && at(3) == 'F'.code &&
-                    at(8) == 'W'.code && at(9) == 'E'.code && at(10) == 'B'.code && at(11) == 'P'.code -> "webp"
-                at(0) == 'B'.code && at(1) == 'M'.code -> "bmp"
-                at(4) == 'f'.code && at(5) == 't'.code && at(6) == 'y'.code && at(7) == 'p'.code -> "avif"
-                else -> null
-            }
-        }
+        fun imageExtension(bytes: ByteArray): String? = if (bytes.size < 12) null else PageImageCheck.format(bytes)?.extension
     }
 }

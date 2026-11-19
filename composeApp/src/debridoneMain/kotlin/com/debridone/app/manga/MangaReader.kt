@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import kotlinx.coroutines.sync.withPermit
+import com.debridone.manga.reader.PageProblem
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -34,6 +38,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.Bookmark
 import androidx.compose.material.icons.rounded.BookmarkBorder
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
@@ -112,8 +117,8 @@ import kotlinx.coroutines.withContext
 
 internal sealed interface PageState {
     data object Loading : PageState
-    class Ready(val bitmap: ImageBitmap) : PageState
-    class Failed(val message: String, val temporary: Boolean) : PageState
+    class Ready(val page: DecodedPage) : PageState
+    class Failed(val message: String, val temporary: Boolean, val problem: PageProblem = PageProblem.OTHER) : PageState
 }
 
 /**
@@ -143,6 +148,9 @@ internal class ReaderSession(private val manga: MangaContext, val chapterId: Lon
     var offset by mutableFloatStateOf(0f)
     var finished by mutableStateOf(false)
     private val jobs = HashMap<Int, Job>()
+
+    /** Pages decoded at once: a long strip takes a lot of memory while it is being cut into pieces. */
+    private val decoding = kotlinx.coroutines.sync.Semaphore(2)
     private var maxWidth = 1800
     private var maxHeight = 3600
 
@@ -197,17 +205,25 @@ internal class ReaderSession(private val manga: MangaContext, val chapterId: Lon
         jobs[index] = scope.launch(Dispatchers.IO) {
             val state = try {
                 val bytes = manga.services.pages.page(opened, index)
-                val bitmap = MangaDecoder.decode(bytes, maxWidth, maxHeight)
-                if (bitmap == null) PageState.Failed("This page is not an image DebridOne can show.", false) else PageState.Ready(bitmap)
+                decoding.withPermit {
+                    when (val decoded = MangaDecoder.decodePage(bytes, maxWidth, maxHeight)) {
+                        is Decoding.Done -> PageState.Ready(decoded.page)
+                        is Decoding.Failed -> {
+                            // Whole bytes that would not draw: the kept copies go, so "Try again" asks the source afresh.
+                            manga.services.pages.forgetUndrawable(opened, index, bytes)
+                            PageState.Failed(decoded.message, true, PageProblem.UNSUPPORTED)
+                        }
+                    }
+                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (problem: PageException) {
-                PageState.Failed(problem.message ?: "The page could not be loaded.", problem.temporary)
+                PageState.Failed(problem.message ?: "The page could not be loaded.", problem.temporary, problem.problem)
             } catch (other: Throwable) {
                 PageState.Failed(other.message ?: "The page could not be loaded.", true)
             }
             withContext(Dispatchers.Main) {
-                if (state is PageState.Ready) ratios[index] = state.bitmap.height.toFloat() / state.bitmap.width.coerceAtLeast(1)
+                if (state is PageState.Ready) ratios[index] = state.page.ratio
                 pages[index] = state
             }
         }
@@ -217,6 +233,36 @@ internal class ReaderSession(private val manga: MangaContext, val chapterId: Lon
         pages.remove(index)
         jobs.remove(index)?.cancel()
         want(index)
+    }
+
+    /**
+     * The downloaded copy of this chapter is damaged: it is deleted and downloaded again by the
+     * server; meanwhile the chapter opens again from its source.
+     */
+    fun downloadAgain() {
+        val id = chapterId
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                manga.services.downloads.delete(listOf(id))
+                manga.services.downloads.enqueue(listOf(id))
+            }
+            withContext(Dispatchers.Main) { reload() }
+        }
+    }
+
+    /**
+     * Asks the source for every page of this chapter again: the pages kept in memory are forgotten,
+     * and for an online chapter so are the server's own copies of them. Nothing else is touched.
+     */
+    fun reload() {
+        val opened = open
+        jobs.values.forEach { it.cancel() }
+        jobs.clear()
+        pages.clear()
+        scope.launch(Dispatchers.IO) {
+            if (opened != null) runCatching { manga.services.pages.reloadChapter(opened) }
+            withContext(Dispatchers.Main) { start(current) }
+        }
     }
 
     /** The reader is on [index]: load ahead, and release what is far behind or ahead. */
@@ -621,7 +667,7 @@ private fun PagedPages(
                         PageFit.WIDTH -> slotWidth to slotWidth * ratio
                         PageFit.HEIGHT -> viewHeight / ratio to viewHeight
                         PageFit.ORIGINAL -> {
-                            val pixels = (state as? PageState.Ready)?.bitmap?.width ?: 0
+                            val pixels = (state as? PageState.Ready)?.page?.width ?: 0
                             val natural = with(density) { pixels.toDp() }.takeIf { pixels > 0 } ?: slotWidth
                             natural to natural * ratio
                         }
@@ -659,22 +705,51 @@ private fun PageSlot(session: ReaderSession, index: Int, state: PageState?, widt
     val manga = LocalManga.current
     Box(Modifier.width(width).height(maxOf(height, if (state is PageState.Ready) 0.dp else minOf(minHeight, height))), contentAlignment = Alignment.Center) {
         when (state) {
-            is PageState.Ready -> Image(
-                bitmap = state.bitmap, contentDescription = "Page ${index + 1}", contentScale = ContentScale.Fit,
-                filterQuality = FilterQuality.High, modifier = Modifier.fillMaxSize(),
-            )
-            is PageState.Failed -> PageProblem(index, state, onBackground) { session.retry(index) }
+            is PageState.Ready -> PagePicture(state.page, index, Modifier.fillMaxSize(), fit = true)
+            is PageState.Failed -> PageProblem(index, state, onBackground, session)
             else -> CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(28.dp).semantics { contentDescription = "Loading page ${index + 1}" })
         }
     }
 }
 
+/**
+ * A decoded page: its pieces stacked top to bottom, together filling [modifier]'s box. With [fit]
+ * the whole keeps its proportions inside the box; otherwise it fills the box, which the caller sized
+ * to the page's proportions already.
+ */
 @Composable
-private fun PageProblem(index: Int, state: PageState.Failed, onBackground: Color, onRetry: () -> Unit) {
-    Column(Modifier.padding(24.dp).widthIn(max = 420.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun PagePicture(page: DecodedPage, index: Int, modifier: Modifier, fit: Boolean) {
+    val described = modifier.semantics { contentDescription = "Page ${index + 1}" }
+    if (page.pieces.size == 1) {
+        Image(
+            bitmap = page.pieces[0], contentDescription = null, contentScale = if (fit) ContentScale.Fit else ContentScale.FillBounds,
+            filterQuality = FilterQuality.High, modifier = described,
+        )
+        return
+    }
+    Box(described, contentAlignment = Alignment.Center) {
+        Column(if (fit) Modifier.fillMaxHeight().aspectRatio(1f / page.ratio, matchHeightConstraintsFirst = true) else Modifier.fillMaxSize()) {
+            page.pieces.forEach { piece ->
+                Image(
+                    bitmap = piece, contentDescription = null, contentScale = ContentScale.FillBounds, filterQuality = FilterQuality.High,
+                    modifier = Modifier.fillMaxWidth().weight(piece.height.toFloat()),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PageProblem(index: Int, state: PageState.Failed, onBackground: Color, session: ReaderSession) {
+    Column(Modifier.padding(24.dp).widthIn(max = 460.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Page ${index + 1} could not be shown", style = MaterialTheme.typography.titleMedium, color = onBackground)
         Text(state.message, style = MaterialTheme.typography.bodyMedium, color = onBackground.copy(alpha = 0.72f), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-        MangaButton("Try again", onRetry, primary = false, icon = Icons.Rounded.Refresh)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            MangaButton("Try again", { session.retry(index) }, primary = false, icon = Icons.Rounded.Refresh)
+            if (state.problem == PageProblem.DAMAGED_DOWNLOAD) {
+                MangaButton("Download again", { session.downloadAgain() }, primary = true, icon = Icons.Rounded.Download)
+            }
+        }
     }
 }
 
@@ -761,7 +836,8 @@ private fun StripPages(
             list.scrollToItem(startIndex, (columnWidthPx * ratio * startOffset).toInt())
             restored = true
         }
-        LaunchedEffect(session.open) { session.focus(startIndex, settings.preloadPages) }
+        // When the chapter opens again (its pages loaded afresh), the reader stays where the strip already is.
+        LaunchedEffect(session.open) { session.focus(if (restored) list.firstVisibleItemIndex else startIndex, settings.preloadPages) }
 
         LazyColumn(state = list, modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(gap)) {
             items(count, key = { it }) { index ->
@@ -770,11 +846,8 @@ private fun StripPages(
                 val ratio = session.ratios[index] ?: typical
                 Box(Modifier.width(columnWidth).height(columnWidth * ratio), contentAlignment = Alignment.Center) {
                     when (state) {
-                        is PageState.Ready -> Image(
-                            bitmap = state.bitmap, contentDescription = "Page ${index + 1}", contentScale = ContentScale.FillBounds,
-                            filterQuality = FilterQuality.High, modifier = Modifier.fillMaxSize(),
-                        )
-                        is PageState.Failed -> PageProblem(index, state, onBackground) { session.retry(index) }
+                        is PageState.Ready -> PagePicture(state.page, index, Modifier.fillMaxSize(), fit = false)
+                        is PageState.Failed -> PageProblem(index, state, onBackground, session)
                         else -> CircularProgressIndicator(color = manga.style.accent, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
                     }
                 }
@@ -849,6 +922,10 @@ private fun ReaderTopBar(
             if (bookmarked) Icons.Rounded.Bookmark else Icons.Rounded.BookmarkBorder, if (bookmarked) "Remove the bookmark" else "Bookmark this page", onBookmark,
             tint = if (bookmarked) manga.style.accent else Color.White, background = Color.White.copy(alpha = 0.12f), enabled = session.open != null,
         )
+        if (session.open?.origin == "online") {
+            // The source's pages afresh: what this computer and the manga server kept of this chapter is dropped first.
+            MangaIconButton(Icons.Rounded.Refresh, "Load this chapter's pages again", { session.reload() }, tint = Color.White, background = Color.White.copy(alpha = 0.12f))
+        }
         MangaIconButton(Icons.Rounded.Tune, "Reading settings", onSettings, tint = Color.White, background = Color.White.copy(alpha = 0.12f))
         MangaIconButton(if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen, if (fullscreen) "Leave full screen" else "Full screen", onFullscreen, tint = Color.White, background = Color.White.copy(alpha = 0.12f))
     }
